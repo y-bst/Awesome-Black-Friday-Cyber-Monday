@@ -1,0 +1,70 @@
+- id: backend-3
+  case: >-
+    The owner's own clarification says "A Report produces one output covering all selected videos", and spec line 35
+    admits that entry statuses and "what opening an entry shows ... when failed" are still unspecified. Together those
+    two lines guarantee the build team must invent partial-failure semantics on its own, because a silent or
+    transcript-empty video can pass ingestion ("uploaded videos get ingested" is the only ingestion rule) and still
+    contribute nothing. Left open, an engineer picks one of two defaults, and both hurt the researcher: fail-whole
+    throws away 19 good videos and a long wait after a redirect with "no loading page", while succeed-silently returns
+    a report that implicitly claims to cover 20 sessions when it covers 19, which is exactly the kind of overclaim that
+    ends up in a stakeholder readout. This is not an edge case of exotic content; screen recordings with muted mics or
+    think-aloud sessions where the participant stayed quiet are routine in user testing (p_typical 0.15). The fix is one
+    rule and one status (Done-with-warnings, skipped videos listed by name with reason), cost_to_address is the lowest
+    in this batch at 2, and it also forces the status list the spec already flags as missing. Deciding after build
+    means changing the status model, the History entry UI and the backend error contract at once, so it is far cheaper
+    to write the line now.
+- id: cost-1
+  case: >-
+    The spec makes a deliberate design choice, "There is no loading page, to save the user's time. On submit the user
+    is redirected to the History tab", and simultaneously leaves "Minimum and maximum number of videos per run; video
+    length and size limits" unspecified (line 34). The combination means the single most expensive operation the
+    product can perform, a Report over dozens of multi-hour videos, is one click away with no cap, no estimate and no
+    confirmation, and the redirect removes even the moment where a user might notice the scale. The evidence here is a
+    direct quote, not an inference, and the occurrence estimate (p_typical 0.3) is the highest in this batch: selecting
+    "all videos with tag X" in the pop-up is the natural way to scope a study. Who gets hurt is concrete: Finance and
+    the PM cannot state a worst-case cost per run, the user cannot predict whether results arrive in two minutes or two
+    hours, and an accidental 100-video-hour run burns budget that cannot be recovered. A threshold-based confirm
+    (for example above 10 video-hours) and a duration/cost band beside Submit are small UI additions, but the threshold
+    itself is a product and pricing decision only the PM can make, so it must be decided before build rather than
+    discovered on the first invoice.
+- id: review-19
+  case: >-
+    The spec defines inputs and navigation for both modes but contains no quality section at all: nothing says what a
+    correct report or answer is, and the ingestion output itself is undefined ("uploaded videos get ingested"). For a
+    feature whose entire value is an AI summary of user-research evidence, that means there is no acceptance criterion
+    the team can test against before launch, and the first quality signal will be a customer discovering an invented
+    quote in a readout they already shared. Without a baseline eval set, every later model or prompt change is shipped
+    blind, so a regression that doubles fabricated quotes is undetectable until users report it, and by then trust in
+    the feature is spent. The proposed set (about 30 sessions spanning 1, 5 and 20 videos, silent, non-English and
+    3-hour cases, plus 50 reference questions) also doubles as the test fixture for the other open gaps in this run,
+    such as partial-failure handling and limits. This must be specified now because an eval set has to exist before
+    the first version ships to have any value as a baseline; building it after launch only measures drift from an
+    unmeasured starting point. Even if occurrence is rated low, the severity is high and detectability is poor without
+    it, which is exactly the profile that justifies a pre-build requirement.
+- id: popup-5
+  case: >-
+    The spec puts selection, tag filtering and name search in one surface: "The pop-up supports filtering by the tags
+    the user has applied to videos, and searching by name." It says nothing about what happens to already-ticked
+    videos that the current filter hides, and six independent reviewers (QA, tag librarian, low-vision and
+    accessibility perspectives) raised the same gap, which is strong signal that it will be hit. The failure is silent
+    and in the worst direction: a user who ticks 8 videos, filters to 'onboarding' and sees 3 ticks will believe the
+    report covers 3 sessions while it actually covers 8, so off-topic sessions contaminate a Report that the spec says
+    is "one output covering all selected videos", and nothing on the History entry reveals it. For screen-reader users
+    the mismatch is worse because the hidden selections are not announced at all. The fix is trivially cheap
+    (cost_to_address 1): a counter that reads "8 selected (3 shown)" and a "Show selected only" toggle, with an
+    acceptance criterion that the count is independent of the filter. Because the Add video pop-up is shared by both
+    modes, specifying this once now prevents two inconsistent implementations and a confusing behaviour that is hard
+    to change once users have learned it.
+- id: modality-14
+  case: >-
+    The spec never says what ingestion extracts or at what fidelity ("uploaded videos get ingested" is the only line),
+    yet Ask question mode invites exactly the questions user researchers ask most, such as "did any error appear during
+    checkout?". If frames are sampled every few seconds, a one-second error toast is simply never seen, and an agent
+    with no instruction to qualify negatives will answer "no error appeared" as a fact. That is the most dangerous
+    output shape this feature can produce: a confident negative is not checkable from the answer, the researcher
+    passes "no errors in checkout" to the product team, and a real bug goes unfiled, which is the opposite of what a
+    user-testing tool is for. Detectability is rated 5, the worst possible, because nothing in the History entry tells
+    the reader the evidence was sampled. The fix is two spec lines at low cost: state the sampling rate in a Sources
+    line on the answer, and require negative answers to read "not observed at this sampling rate". This must be fixed
+    before build because the answer format and the ingestion contract are set in the first implementation, and
+    retrofitting evidence-qualification language later means re-auditing every answer users have already relied on.

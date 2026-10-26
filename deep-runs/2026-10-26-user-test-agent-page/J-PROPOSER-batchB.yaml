@@ -1,0 +1,58 @@
+- id: privacy-19
+  case: >-
+    The spec's only sentence about what happens to a video after upload is "users upload videos; uploaded videos get ingested",
+    and ingesting spoken user-test audio almost certainly means a speech-to-text service runs on it, possibly at a different vendor and
+    in a different region from the agent model. That transfer happens the moment a participant's recording is uploaded, before anyone
+    opens the Agent page or presses Submit, so any data-residency or consent answer written for the agent provider does not cover it.
+    User-test videos contain participants' faces, voices and often names, so they are personal data, and non-English audio is the case
+    most likely to go to a specialist transcription vendor. Without a spec line, engineering will pick whichever STT API is convenient,
+    and the first time a customer's DPO asks "where does participant audio go and how long is it kept?", the honest answer will be
+    "we don't know", with a library of 50 videos already transferred. This is cheap to settle now (cost_to_address 2) and expensive after
+    the fact: a vendor or region change after launch means re-ingesting every video and re-papering every customer DPA.
+    Because detectability is 5, nothing in the UI will ever reveal the gap; only an audit or a breach will. The PM should add one line
+    naming the ingestion vendor, region and raw-audio retention before build, alongside the agent provider's data-flow statement.
+- id: contract-4
+  case: >-
+    The clarification "A Report produces one output covering all selected videos, not one per video" means every count in the report is
+    computed over the whole selection, and nothing in the spec says what happens when a selected video contributes nothing, such as a
+    recording with no audio track. With 12 selected and 1 silent, a finding that is really a majority (6 of 11) is printed as a minority
+    (6 of 12), and the run still shows as done, so the researcher has no reason to doubt it. Proportions are exactly what stakeholders lift
+    from a usability report into slides ("half of users failed checkout"), so the wrong denominator moves product decisions, not just
+    wording. Detectability is 5: the reader cannot reconstruct the denominator from the report, and the spec gives them no per-video
+    coverage to check against. The fix is one acceptance criterion: denominators count usable videos and a Coverage line names any
+    excluded video and why. If the report contract ships without it, the model will choose a denominator per run, and the same 12
+    videos may produce "of 12" in one report and "of 11" in the next, which no one can test or explain afterwards.
+- id: popup-25
+  case: >-
+    The spec says the Add video pop-up lists the user's "ingested videos" and leaves open "whether a video that is still ingesting, or
+    failed ingestion, can be selected"; it says nothing about a video that ingested successfully but has no speech, which is common for
+    unmoderated screen recordings where the participant never talks. Such a video passes every check the spec implies (it is ingested), so
+    the pop-up will show it as an ordinary row, the user selects it for Ask question, and the answer is either empty or invented from
+    nothing, with no signal anywhere that the input was hollow. Because there is no loading page and the user is redirected straight to
+    History, the first and only place they could have been warned is the pop-up row. The evidence is speculative, but the
+    consequence is a confident wrong answer the user cannot trace back to its cause, which is the worst failure for a research tool.
+    The proposed fix is small and a designer can draw it today: a "No speech detected" badge on the row, still selectable, plus a warning
+    under the selected list. Deciding it now also forces ingestion to output a "has speech" flag, which is far cheaper to add before the
+    ingestion pipeline is built than to backfill across every existing library later.
+- id: backend-16
+  case: >-
+    The spec says only "Follow-up questions are supported after the first answer", which leaves the most important engineering choice open:
+    does a follow-up re-read the selected videos' transcripts, or does it see only the conversation so far? The cheap implementation, a
+    chat thread that carries the prior answer text, will be the default unless the spec says otherwise, and it fails exactly on the
+    follow-ups researchers ask most: after a summary, "What exactly did the user say at the checkout step?" cannot be answered from the
+    summary, so the model fabricates a plausible quote. A fabricated verbatim quote is worse than a vague answer, because quotes are what
+    go into readouts as evidence and nothing on the follow-up thread distinguishes a real quote from an invented one (detectability 5).
+    This is also a cost and architecture decision (also flagged as cost-4): re-reading transcripts on every follow-up multiplies token
+    spend, so backend and finance need the answer before they size the system, not after users complain. One spec line, "every follow-up
+    has access to the same video set's transcripts as the first question", settles the design, the cost model and the test case at once.
+- id: contract-17
+  case: >-
+    The Report form makes "Prompt / instructions" optional, so with an empty prompt the agent decides what the report contains, and the
+    spec gives no rule for a section the selected videos cannot support. If the default report shape includes something like task success
+    rate and the 12 selected videos are open-ended interviews with no tasks, the model's pressure to fill every section produces
+    "Task completion: 75%", a number derived from nothing that looks exactly like a real metric on the History entry detail. A stakeholder
+    reading that entry has no way to tell it was invented (detectability 5), and a single fabricated headline metric discredits the whole
+    tool once someone checks it. The empty-prompt path is the one first-time users and busy researchers will take most, so this is the
+    default experience, not an edge case. The fix is one content rule with literal copy: an unsupported section renders "Not answerable
+    from the selected videos: <reason>". It must be in the report contract before prompts and evaluation sets are written, because it
+    defines what a correct output is; added later, every existing report in History stays uncorrected.

@@ -1,0 +1,57 @@
+- id: modality-1
+  case: >-
+    This is a model-and-ingestion quality problem, not a gap in the agent page spec. The evidence is an inference from
+    "uploaded videos get ingested" (grounded: inferred, p_typical 0.12), and what ingestion extracts belongs to the
+    Videos page and ingestion pipeline, not to the Report and Ask question forms the PM is finalising. The proposed fix,
+    an answer that says "inferred from speech, clicks not observed", is a system-prompt and answer-template change: it
+    needs no new surface, field, state or redirect, so it can ship in a point release once evals show how often
+    action questions come up. In a think-aloud study the participant's speech is usually the evidence researchers want
+    anyway, and the timestamped citation the answer already gives lets them check the clip in seconds, which limits
+    the "wrong fact in the readout" outcome. At most the spec needs one line saying "answers are grounded in the
+    transcript". A full modality contract for ingestion is a separate document, owned by another team, and should not
+    hold up this build.
+- id: backend-1
+  case: >-
+    The scenario is the outer edge of the input space. Twenty 3-hour sessions in one report is not a typical user-test
+    run: moderated sessions usually last 30-60 minutes, and studies commonly use about 5-8 participants. So
+    p_typical 0.25 for this cell is generous. How to split work across contexts (cap, map-reduce, per-video summaries
+    then a merge) is an engineering design choice. Any competent backend team building multi-video summarisation will
+    use chunk-and-merge by default, and a PM-written token budget would be a guess that engineering then has to
+    override. The owner has already listed "minimum and maximum number of videos per run; video length and size limits"
+    as an open item, so nobody is unaware of the gap. It will be closed as a config constant, which is cheap to tune
+    after launch from real usage data. Overflow that fails loudly is covered by the assumed Failed status. The one part
+    I cannot fully dismiss is silent truncation that still claims to cover all 20 videos. But that is a correctness bug
+    that any reasonable implementation and QA pass would reject, not something the PM must write before build.
+- id: firsttime-30
+  case: >-
+    Defer and merge. This leaf is speculative (evidence: none, p_typical 0.04, the lowest in the batch), and it is
+    essentially the same gap as output-10 (silent video, empty transcript) seen from Ask question mode instead of
+    Report mode. Ranking it separately double-counts one root cause. User-test recordings are almost always made with a
+    microphone on, because think-aloud is the method, so a screen-only first video is a rare setup mistake, not a
+    first-run path. The reasonable default costs nothing to add later (cost_to_address 2): ingestion marks
+    "transcript empty", and the answer prompt says "no speech found in <video>" instead of guessing. That is one
+    template line plus a flag the ingestion pipeline almost certainly produces already, and it can go in after launch
+    without UI rework. If the PM wants it covered now, one shared spec line under output-10 covers both leaves.
+- id: output-10
+  case: >-
+    Of the two silent-video leaves this is the stronger, but it is still speculative (evidence: none, p_typical 0.1)
+    and has a cheap, obvious default. The spec already lists "whether a video that is still ingesting, or failed
+    ingestion, can be selected" as open. Deciding that ingestion with a zero-word transcript counts as a failed or
+    flagged state folds this case into an item the owner is already tracking, so it needs no separate add-to-spec
+    decision. For a researcher, a report on a silent video coming back empty is visible straight away and costs one
+    re-run, not a hidden wrong conclusion. Invented quotes are a general hallucination-guard requirement (quotes must
+    match transcript text) that applies to every report, not something specific to this cell. The fix is also cheap
+    after launch (cost_to_address 2): a pop-up badge and one report-template line. Accept as covered by the existing
+    ingestion-state unknown, or defer.
+- id: speaker-2
+  case: >-
+    This is a research-methodology and output-quality concern, not a spec gap that a PM can close with a testable line.
+    Telling a leading-question assent apart from a real participant finding takes judgement that expert researchers
+    argue about. An acceptance criterion like "mark findings supported only by assent as prompted" cannot be checked
+    reliably, so it belongs in model evaluation, not in the build spec. The leaf has p_typical 0.05 and no direct
+    evidence. Its inference ("moderated sessions contain moderator speech") is true, but it says nothing about how often
+    leading questions drive findings. The spec already gives the user a lever: the optional "Prompt / instructions"
+    field in Report mode. A researcher who worries about this can write "separate prompted from unprompted findings".
+    The researcher who ran the session is also the one best placed to spot their own leading question when reading a
+    timestamped finding. Defer to post-launch output-quality evals, where speaker attribution can be improved without
+    changing any surface the PM is finalising now.
