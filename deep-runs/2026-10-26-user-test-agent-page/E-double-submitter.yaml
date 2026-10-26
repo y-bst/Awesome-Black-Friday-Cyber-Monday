@@ -1,0 +1,493 @@
+- id: dup-1
+  title: Submit clicked twice within 500 ms in Report mode with 3 videos selected - spec does not say whether the result is one entry, two entries, or an error
+  level: L4
+  cell: {surface: submit-button, action: double-submit, mode: report, videos-selected: "2-5", run-status: submitted-not-yet-visible-in-history}
+  object: "Submit" button on the Report form; "On submit the user is redirected to the History tab, where a new entry appears"
+  situation: User double-clicks Submit (or clicks again because the page has not moved yet); two identical requests carrying the same run name, prompt and 3 video ids reach the server about 300 ms apart
+  consequence: Two Report runs execute over the same 3 videos (double compute, possibly double quota), or the second request returns an error that surfaces as a toast on top of the History tab the user was just redirected to; the user cannot tell which happened
+  p_typical: 0.30
+  grounded: inferred
+  evidence: "On submit the user is redirected to the **History** tab, where a new entry appears with whatever was submitted."
+  proposed: State the rule: second Submit within N seconds with an identical payload is collapsed into the first entry (single entry), and the button is disabled after the first click
+  shallow: false
+
+- id: dup-2
+  title: Pressing Enter in the question field and then clicking Submit - spec does not say whether Enter submits, and if it does, whether the click creates a second entry
+  level: L4
+  cell: {surface: question-field, action: submit, mode: ask-question, text-input-state: question-picked-from-suggested, run-status: submitted-not-yet-visible-in-history}
+  object: "A question about the selected videos, typed by the user" (Ask question mode, question field) and Submit
+  situation: User types a question, presses Enter out of habit, sees no visible change for about 1 s, then clicks Submit
+  consequence: If Enter submits, the click is a second submission of the same question (two Ask question entries, two answers, two separate follow-up threads); if Enter inserts a newline, the question text silently gains a trailing newline
+  p_typical: 0.08
+  grounded: speculative
+  evidence: none
+  proposed: Specify Enter = submit, Shift+Enter = newline in the question field, and apply the same in-flight lock to both triggers
+  shallow: false
+
+- id: dup-3
+  title: Same Ask question submission fired from two tabs within one second - no rule for dedup across tabs
+  level: L3
+  cell: {actor: same-user-second-tab, action: double-submit, history-state: two-entries-same-second, mode: ask-question, surface: submit-button}
+  object: "History is per user" and the Submit button on the Ask question form
+  situation: The user has the agent page open in tab A and tab B (restored session), both with the same 2 videos and the same question; clicks Submit in A and in B within 1 s
+  consequence: Per-user History receives two entries created in the same second with identical content; a client-side button lock cannot prevent this, so only a server-side rule would
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "History is per user, currently."
+  proposed: Decide whether the server dedups on (user, mode, video set, text) within a window of N seconds; if not, state that two entries are expected
+  shallow: false
+
+- id: dup-4
+  title: Ordering of two History entries created in the same second is unspecified
+  level: L4
+  cell: {surface: history-tab, history-state: two-entries-same-second, history-state: sorted-not-by-newest, action: double-submit}
+  object: "History tab - Lists past and current submissions from both modes"
+  situation: Two entries have created_at values that are equal at 1 s resolution (for example 14:03:07 and 14:03:07)
+  consequence: Row order can flip between page loads or between the two tabs, so the entry the user just opened or is following up on moves position; no tie-breaker is specified (sort key, sort direction, secondary key such as id)
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Specify sort = created_at descending with a secondary key of entry id descending
+  shallow: false
+
+- id: dup-5
+  title: Two History rows with blank run name and the same creation minute are visually indistinguishable
+  level: L4
+  cell: {surface: history-entry-row, history-state: entries-with-blank-run-name, history-state: two-entries-same-second, text-input-state: run-name-empty}
+  object: "Run name (optional)" and the History entry row label
+  situation: User leaves Run name empty and double-submits; both rows are labelled with whatever fallback the spec leaves undefined and show a timestamp to the minute
+  consequence: User cannot tell which row to open, delete or ask a follow-up on; the spec gives no fallback label (for example "Report - 3 videos - 14:03:07")
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Run name (optional)"
+  proposed: Define the default row label, including seconds in the timestamp and the video count
+  shallow: false
+
+- id: dup-6
+  title: Second request resolves while the browser is already on the History tab - what that response does to the page is unspecified
+  level: L3
+  cell: {surface: redirect-transition, action: double-submit, time-and-connection: redirect-lands-before-entry-exists, run-status: submitted-not-yet-visible-in-history, observer-location-at-status-change: on-history-tab-top}
+  object: "On submit the user is redirected to the **History** tab"
+  situation: Click 1 response triggers the redirect; click 2 response (error "already submitted" or a second created entry) arrives 200 ms after the History tab has rendered
+  consequence: An error toast appears over History for a submission that actually succeeded, or a second redirect re-renders History and resets scroll or filter; user concludes the first run failed
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "On submit the user is redirected to the **History** tab, where a new entry appears with whatever was submitted."
+  proposed: Specify that a duplicate-rejected response is silent and the redirect target is History top, for both responses
+  shallow: false
+
+- id: dup-7
+  title: User retries Submit after "nothing happened" on a slow or offline connection - the first request may already have created an entry
+  level: L3
+  cell: {surface: submit-button, time-and-connection: offline-at-submit, run-status: submit-accepted-but-entry-never-created, action: submit, videos-selected: "6-20"}
+  object: "There is no loading page, to save the user's time."
+  situation: Connection drops after the request left the browser; no spinner exists, the form stays on screen for 10 s; the user clicks Submit again once the connection returns
+  consequence: The server may hold the first run (created, not yet visible) plus a second run; the spec has no offline message, no retry rule, and no idempotency key, so a retry of the same payload creates a second Report across 6-20 videos
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "There is no loading page, to save the user's time."
+  proposed: Attach a client-generated idempotency key per form instance, reused on retry; server returns the original entry for a repeated key
+  shallow: false
+
+- id: dup-8
+  title: Idempotency key scope and lifetime are undefined (per click, per form load, per payload hash, per N seconds)
+  level: L4
+  cell: {surface: submit-button, action: double-submit, run-status: submit-accepted-but-entry-never-created, text-input-state: run-name-duplicate-of-existing, history-state: two-entries-same-second}
+  object: Submit request on both the Report form and the Ask question form
+  situation: User intentionally submits the same Report payload a second time 5 minutes later (legitimate re-run) versus 300 ms later (accidental)
+  consequence: A key per form load would block the legitimate re-run while the form is still open; a key per click would not block the accidental double; the PM must choose a window (for example 5 s) and whether the form resets its key after redirect
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  proposed: Spec line: dedup window of 5 s on identical (user, mode, run name, prompt/question, sorted video ids); outside the window a new entry is always created
+  shallow: false
+
+- id: dup-9
+  title: Browser Back after the redirect returns to the agent form - whether it is pre-filled or empty decides if a re-submit duplicates the run
+  level: L3
+  cell: {action: back-button-after-redirect, surface: report-form, entry-point-and-lifecycle-phase: post-submit-same-screen, history-state: 1-entry, videos-selected: "2-5"}
+  object: "On submit the user is redirected to the **History** tab"
+  situation: User presses Back from History, lands on the Report form; the run name, prompt and 3 selected videos are either still filled (bfcache) or cleared
+  consequence: If filled, clicking Submit again creates a second identical entry with no warning; if cleared, the user loses the prompt they just used and may re-type it; neither behaviour is specified, and the redirect type (replace vs push) is also unspecified
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "On submit the user is redirected to the **History** tab, where a new entry appears with whatever was submitted."
+  proposed: Use a replace-style redirect and clear the form after a successful submit, so Back goes to the page before the form
+  shallow: false
+
+- id: dup-10
+  title: Refresh on the History tab after redirect - spec does not say that it cannot re-post the submission
+  level: L4
+  cell: {action: refresh-after-redirect, surface: redirect-transition, time-and-connection: submit-succeeds-redirect-fails, run-status: submitted-not-yet-visible-in-history, history-state: 1-entry}
+  object: "redirected to the **History** tab"
+  situation: The submit and redirect are implemented as one navigation carrying a form POST; the user presses F5 on History within 2 s
+  consequence: Browser offers "Confirm form resubmission"; accepting creates a duplicate entry; the spec does not require submit and History load to be separate requests
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: Acceptance criterion: after submit, the History URL is a plain GET; F5 on it creates no new entry
+  shallow: false
+
+- id: dup-11
+  title: Redirect lands on a History page where the new entry is not visible, so the user resubmits
+  level: L3
+  cell: {surface: history-tab, history-state: scrolled-to-page-3-at-redirect, history-state: filtered-so-new-entry-hidden, observer-location-at-status-change: on-history-tab-scrolled-or-filtered, action: submit}
+  object: "a new entry appears with whatever was submitted"
+  situation: User had previously filtered History to Ask question entries or was on page 3 of 100 entries; submits a Report; redirect restores that filter/page and the new Report is not in view
+  consequence: The user sees no change after submit, believes nothing happened, goes back and submits again; two Reports exist; the spec does not say the redirect resets filter, page and scroll to top
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "a new entry appears with whatever was submitted"
+  proposed: Redirect always lands on History with filters cleared, page 1, and the new entry highlighted for a few seconds
+  shallow: false
+
+- id: dup-12
+  title: Redirect lands before the entry exists on a first-ever use, History shows its empty state and the user resubmits
+  level: L3
+  cell: {surface: empty-state, time-and-connection: redirect-lands-before-entry-exists, time-and-connection: first-ever-use, history-state: empty, action: submit}
+  object: "History tab" empty state and the redirect
+  situation: First ever Report; History query runs 150 ms before the entry write is visible, so the tab shows "No runs yet" (copy not specified)
+  consequence: User reads an empty History right after pressing Submit as a failure and submits again; the empty-state copy and the rule that History must include the submitted entry synchronously (read-your-write) are both unspecified
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "On submit the user is redirected to the **History** tab, where a new entry appears"
+  proposed: Create the entry in the same request that returns the redirect, so History always contains it on first render
+  shallow: false
+
+- id: dup-13
+  title: Follow-up sent twice (double click or Enter plus click) - one answer, two answers, or two thread messages with the same text
+  level: L4
+  cell: {surface: follow-up-thread, action: ask-follow-up, thread-state: follow-up-1, mode: ask-question, run-status: running}
+  object: "Follow-up questions are supported after the first answer."
+  situation: User types a follow-up and double-clicks send (or presses Enter and clicks); two identical follow-up requests 400 ms apart
+  consequence: The thread shows the same question twice with two answers (each costing an agent run) or one answer; the spec says nothing about a send lock, thread message ordering or dedup for follow-ups, and follow-ups have no redirect to hide the duplicate
+  p_typical: 0.09
+  grounded: quote
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: Disable the follow-up send control until the answer to the previous message has started, and dedup identical text within 5 s
+  shallow: false
+
+- id: dup-14
+  title: Follow-ups sent from two tabs at the same moment with different text - thread order and which answer pairs with which question
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-from-second-tab-simultaneously, actor: same-user-second-tab, action: follow-up-from-two-tabs, mode: ask-question}
+  object: "Follow-up questions are supported after the first answer."
+  situation: The same entry thread is open in tabs A and B; A sends "and the second video?" while B sends "summarise the first video" within 1 s, both after answer 1
+  consequence: Thread can show Q2a, Q2b, A2b, A2a, answers can attach to the wrong question, and each tab shows a different thread until refreshed; the spec gives no serialization rule (one in-flight follow-up per thread) nor live sync
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: Server accepts one in-flight follow-up per thread; the second returns a "wait for the current answer" message and keeps the typed text
+  shallow: false
+
+- id: dup-15
+  title: Follow-up submitted twice while the first answer is still running - queue, reject, or run in parallel
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-while-first-still-running, action: ask-follow-up, run-status: running, observer-location-at-status-change: inside-entry-detail}
+  object: "Follow-up questions are supported after the first answer."
+  situation: Answer 1 has been running 40 s; the user sends follow-up 1, nothing visible changes, and sends the same follow-up again
+  consequence: The spec conditions follow-ups on "after the first answer", so it is unspecified whether the control is disabled until Done; if it is not, two follow-ups are queued against an unfinished answer and the thread context for each is undefined
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: Hide or disable the follow-up input until the entry status is Done, with the text "Available when the answer is ready"
+  shallow: false
+
+- id: dup-16
+  title: After a double-submitted question creates two entries, the follow-up attaches to whichever entry the user opened - the rows give no cue which one has the thread
+  level: L3
+  cell: {surface: history-entry-row, history-state: two-entries-same-second, thread-state: thread-opened-from-history, action: open-history-entry, mode: ask-question}
+  object: "Follow-up questions are supported after the first answer." and History entry rows
+  situation: Two identical Ask question entries E1 and E2 exist; the user asks a follow-up in E2, later opens E1 and sees no follow-up
+  consequence: Threads diverge: the conversation is split across two entries and neither row shows a follow-up count; the user thinks the follow-up was lost
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Show follow-up count on each Ask question row and offer merge or delete for the duplicate
+  shallow: false
+
+- id: dup-17
+  title: Picking a suggested question twice - unspecified whether a pick fills the field or submits immediately
+  level: L4
+  cell: {surface: suggested-questions, text-input-state: question-picked-from-suggested, action: pick-suggested-question, mode: ask-question, run-status: submitted-not-yet-visible-in-history}
+  object: "Suggested questions are shown and can be picked"
+  situation: User double-clicks a suggested question chip, or clicks the chip and then Submit
+  consequence: If a pick submits, a double click creates two entries; if a pick only fills the field, clicking the chip twice has no effect but the user might still expect submit; the spec says "picked" and then lists Submit as a separate step, which suggests fill only, but does not say so
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Suggested questions are shown and can be picked\n- Submit"
+  proposed: Spec: picking fills the question field and focuses Submit; it never submits by itself
+  shallow: false
+
+- id: dup-18
+  title: Double-click on a video row inside the Add video pop-up toggles selection twice and leaves it unselected
+  level: L4
+  cell: {surface: add-video-popup, action: select-video, popup-session-state: first-open, videos-selected: 1, popup-selection-count: "uncounted"}
+  object: "Add video pop-up - the user selects videos from their ingested videos"
+  situation: User double-clicks one video row (select, then deselect within 300 ms); no spec for click target (row vs checkbox) or for confirm button
+  consequence: Selection count shows 0 after the user believes they chose 1 video; the selected-videos list stays empty; clicking Submit with 0 videos has an undefined result
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: Single click on row toggles; double click is ignored for 300 ms after a toggle; count in the footer updates synchronously
+  shallow: false
+
+- id: dup-19
+  title: Submit pressed twice with 0 videos selected - two validation errors stacked, or one
+  level: L4
+  cell: {surface: error-toast-or-banner, videos-selected: 0, action: double-submit, mode: report, run-status: failed-before-start-validation}
+  object: "Submit" and "Minimum and maximum number of videos per run" (listed unspecified)
+  situation: User clicks Submit twice with no videos selected; minimum is unspecified, so the form may accept 0 videos
+  consequence: Either two identical error toasts stack and obscure the form, or two empty Report runs are created and both land in History as Failed
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Minimum and maximum number of videos per run; video length and size limits."
+  proposed: Disable Submit while 0 videos are selected; one inline message under Add video
+  shallow: false
+
+- id: dup-20
+  title: Two accepted runs on the same videos running concurrently - concurrency cap and queued status are unspecified
+  level: L3
+  cell: {surface: history-entry-status-badge, history-state: several-running-at-once, run-status: rate-limited-waiting, action: double-submit, videos-selected: "21-100"}
+  object: "History tab - past and current submissions" and "Statuses an entry can have on the History tab" (unspecified)
+  situation: Double submit of a Report over 40 videos; both runs start; each needs about the same model throughput
+  consequence: Both runs take about twice as long, or the second sits Queued with no explanation; the user sees two identical rows with the same status badge and may cancel (not in spec) the wrong one
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed."
+  proposed: Define per-user concurrency (for example 2 running) and show "Queued behind 1 run" on the later entry
+  shallow: false
+
+- id: dup-21
+  title: Quota remaining is 1 and two submissions arrive together - one succeeds, both succeed, or both fail
+  level: L3
+  cell: {permission-and-plan: quota-remaining, action: double-submit, surface: quota-or-limit-message, run-status: rate-limited-waiting, history-state: two-entries-same-second}
+  object: Submit on either form; no quota or limit is mentioned in the spec
+  situation: The plan allows 10 runs per day, 9 used; two submissions in the same second
+  consequence: Quota can overrun to 11, or the second returns a quota error toast on the History tab after the first redirect; the spec has no quota concept so neither message nor accounting rule exists
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  proposed: Spec the atomic decrement and the exact copy of the second user-visible message ("Daily limit reached")
+  shallow: false
+
+- id: dup-22
+  title: Second submission fires after a selected video was deleted between the two clicks
+  level: L3
+  cell: {video-state: deleted-after-selection-before-run, action: double-submit, run-status: failed-before-start-validation, per-video-outcome-within-run: video-skipped-because-deleted, surface: history-entry-row}
+  object: Selected videos list and the entry created by Submit
+  situation: Click 1 at 14:03:07 creates entry E1 with videos A, B, C; a colleague deletes C at 14:03:07.4; click 2 at 14:03:07.8 submits A, B, C
+  consequence: E1 and E2 differ in outcome (E1 Done over 3 videos, E2 Failed or Done over 2) although the user sees two identical rows; spec has no rule for deleted videos at validation time
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Videos are selected from already-uploaded, ingested videos via the Add video pop-up"
+  proposed: Validate at submit; if any video is gone, reject with a message naming the video, creating no entry
+  shallow: false
+
+- id: dup-23
+  title: Video finishes ingesting between two submissions, so the "same" double submit produces two Reports with different content
+  level: L3
+  cell: {video-state: still-ingesting, action: double-submit, per-video-outcome-within-run: one-video-unusable, mode: report, run-status: partial-some-videos-unusable}
+  object: "Whether a video that is still ingesting, or failed ingestion, can be selected." (listed unspecified)
+  situation: Video C is still ingesting at click 1 (skipped or waited on) and Ingested at click 2, 700 ms later
+  consequence: E1 covers 2 videos with status partial, E2 covers 3 videos; the user compares the two rows and sees different outputs for identical-looking submissions
+  p_typical: 0.03
+  grounded: quote
+  evidence: "Whether a video that is still ingesting, or failed ingestion, can be selected."
+  proposed: Snapshot the video states at accept time and display the count of used videos on the row ("2 of 3 videos")
+  shallow: false
+
+- id: dup-24
+  title: Two devices, same user, same payload - History does not show the second entry until refresh
+  level: L3
+  cell: {time-and-connection: two-devices-same-user, observer-location-at-status-change: other-device, history-state: two-entries-same-second, action: double-submit, surface: history-tab}
+  object: "History is per user."
+  situation: User submits on laptop and on phone within 1 s; each device's History view loads from its own request
+  consequence: Each device shows one entry, then jumps to two on the next poll; no live-update rule or refresh interval is specified, so one device may keep showing one entry for hours (page open for hours)
+  p_typical: 0.04
+  grounded: quote
+  evidence: "History is per user, currently."
+  proposed: Poll History every 10 s while any entry is Queued or Running, and on tab focus
+  shallow: false
+
+- id: dup-25
+  title: Session expires during submit, user logs in again and the pending submit is replayed or lost, then submitted again
+  level: L3
+  cell: {time-and-connection: session-expired-at-submit, text-input-state: prompt-5000-chars, action: submit, entry-point-and-lifecycle-phase: returning-mid-compose, run-status: submit-accepted-but-entry-never-created}
+  object: Prompt / instructions field and Submit
+  situation: User composes a 5000-char prompt over 45 minutes; session expires; clicks Submit; sees a login page; after login lands on the agent page
+  consequence: Form is empty (prompt lost) or pre-filled and replayed automatically; if replayed and the user also clicks Submit, two entries exist; the spec says nothing about draft retention on expiry
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Keep the draft in local storage keyed per mode and clear it only after a successful submit response
+  shallow: false
+
+- id: dup-26
+  title: Enter in the single-line Run name field submits the Report form before videos are added
+  level: L4
+  cell: {surface: run-name-field, text-input-state: run-name-empty, action: type-run-name, mode: report, videos-selected: 1}
+  object: "Run name (optional)"
+  situation: User types a run name and presses Enter to finish the field (implicit form submission), with 1 video selected and the prompt not yet typed
+  consequence: Report is created without the intended prompt; pressing Enter again or then clicking Submit creates a second entry; the spec does not state that Enter in Run name is inert
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Run name (optional)"
+  proposed: Enter in Run name moves focus to the next field and never submits
+  shallow: false
+
+- id: dup-27
+  title: Enter in the multi-line Prompt field - newline, or submit
+  level: L4
+  cell: {surface: prompt-field, text-input-state: prompt-5000-chars, action: type-prompt, mode: report, text-input-state: newline-pasted-into-run-name}
+  object: "Prompt / instructions (optional)"
+  situation: User enters a 4-line prompt with Enter between lines; each Enter either inserts "\n" or submits
+  consequence: If Enter submits, a prompt is sent truncated after line 1 and a double Enter creates two entries; if Enter inserts newlines, a user who expects Enter to send sees no reaction and clicks Submit (which is fine); spec does not state the key map
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Prompt field: Enter = newline, Ctrl/Cmd+Enter = submit; question field: Enter = submit, Shift+Enter = newline
+  shallow: false
+
+- id: dup-28
+  title: Enter pressed to confirm IME composition in the question field submits mid-word
+  level: L4
+  cell: {surface: question-field, text-input-state: non-english-text, text-input-state: emoji-or-rtl, action: type-question, mode: ask-question}
+  object: "A question about the selected videos, typed by the user"
+  situation: A Japanese-input user presses Enter to commit an IME candidate; if Enter submits, the half-composed question is sent, and the committing Enter followed by a second Enter sends a duplicate
+  consequence: An entry exists with a truncated question and the user submits again with the full question, leaving two entries with different questions in the same second
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  proposed: Ignore Enter while the IME is composing (isComposing true)
+  shallow: false
+
+- id: dup-29
+  title: No in-flight feedback on Submit - the spec removes the loading page and names no button state, so the user cannot tell the click registered
+  level: L4
+  cell: {surface: submit-button, time-and-connection: steady-state, action: submit, run-status: submitted-not-yet-visible-in-history, entry-point-and-lifecycle-phase: post-submit-same-screen}
+  object: "There is no loading page, to save the user's time."
+  situation: Submit request takes 2.5 s (for example upload of a 5000-char prompt plus 20 video ids on a slow connection) before the redirect fires
+  consequence: For 2.5 s nothing changes on screen; the typical user clicks again after about 1 s; this is the root of dup-1; the spec gives no disabled or progress state
+  p_typical: 0.12
+  grounded: quote
+  evidence: "There is no loading page, to save the user's time."
+  proposed: On click, disable Submit and change its label to "Submitting..." until the response or an 8 s timeout, after which the button re-enables with "Still working - check History before retrying"
+  shallow: false
+
+- id: dup-30
+  title: Same payload from Report and Ask question tabs - whether dedup keys include mode
+  level: L3
+  cell: {mode: switching-mode-after-selecting-videos, action: double-submit, actor: same-user-second-tab, surface: submit-button, videos-selected: "2-5"}
+  object: "Agent page: two modes" and the two Submit buttons
+  situation: Tab A is in Report mode and tab B in Ask question mode with the same 3 videos; the prompt field in A holds "what are the main pain points?" and the question field in B holds the identical text; both are submitted within 1 s
+  consequence: A server dedup on (user, text, video ids) without mode would silently drop one of two different kinds of run; the spec gives no key definition
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  proposed: Include mode in the dedup key
+  shallow: false
+
+- id: dup-31
+  title: Entry timestamp granularity and timezone cannot distinguish same-second duplicates
+  level: L4
+  cell: {surface: history-entry-row, time-and-connection: timezone-of-entry-timestamp, history-state: two-entries-same-second, run-status: queued, observer-location-at-status-change: on-history-tab-top}
+  object: "History tab - Lists past and current submissions" (row timestamp, format not specified)
+  situation: Rows display "Oct 26, 14:03" in the browser timezone (minute resolution), two entries created at 14:03:07 and 14:03:07
+  consequence: Two rows with an identical visible label, timestamp and status; user cannot tell the older from the newer, and the timezone of a shared screenshot differs between users
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Show seconds on hover and relative time ("3 s ago") for the first minute; store UTC
+  shallow: false
+
+- id: dup-32
+  title: After a Failed entry, user retries by re-submitting the form - entry is superseded or a new twin is created
+  level: L3
+  cell: {run-status: failed, action: retry-whole-run, history-state: mix-of-done-and-failed-across-recent-runs, surface: history-entry-detail, run-status: superseded-by-re-run}
+  object: "what opening an entry shows while running, when done, and when failed" (unspecified)
+  situation: Entry E1 shows Failed; the spec has no retry control, so the user goes back to the agent page and submits the same videos and prompt again within 20 s
+  consequence: E1 (Failed) and E2 (Queued) sit as near-duplicates; if E1 was actually a timeout of a run still progressing, both may finish Done; no link between E1 and E2 exists
+  p_typical: 0.06
+  grounded: quote
+  evidence: "what opening an entry shows while running, when done, and when failed"
+  proposed: Add Retry on a Failed entry that creates a new entry marked "Retry of E1"
+  shallow: false
+
+- id: dup-33
+  title: Two simultaneous runs complete within seconds - two notifications and a global badge count are unspecified
+  level: L3
+  cell: {surface: global-running-indicator-or-badge, history-state: several-running-at-once, run-status: done-but-unread, observer-location-at-status-change: other-page-in-app, actor: background-agent-job}
+  object: "History tab - past and current submissions"
+  situation: A double submit produces E1 and E2, both finishing at 14:07:41 while the user is on the Videos page
+  consequence: The user receives two identical alerts or one badge showing "2", though the spec has no notifications, badge or unread concept; opening one entry leaves the other unread
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: Decide whether completion alerts exist; if yes, group by minute ("2 runs finished")
+  shallow: false
+
+- id: dup-34
+  title: Deleting one duplicate entry - deletion is not in the spec, and its thread and the twin are affected unknown
+  level: L3
+  cell: {action: delete-entry-not-in-spec, history-state: two-entries-same-second, surface: history-entry-row, thread-state: follow-up-1, run-status: deleted-entry}
+  object: "History tab" row actions (none specified)
+  situation: User wants to remove the accidental twin E2 but E1 has a follow-up thread and E2 has none; both rows look identical
+  consequence: Without delete the History permanently carries both rows; with delete a user may remove the entry with the thread instead of the empty one
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Decide delete in or out of v1; if in, confirm dialog showing run name, timestamp and follow-up count
+  shallow: false
+
+- id: dup-35
+  title: Follow-up resent after a failed answer - attaches after the failed message or replaces it, duplicating the question text
+  level: L3
+  cell: {thread-state: thread-where-an-answer-failed, action: ask-follow-up, surface: follow-up-thread, run-status: failed, mode: ask-question}
+  object: "Follow-up questions are supported after the first answer."
+  situation: Answer to follow-up 2 fails after 30 s; the user, seeing "nothing happened", pastes and sends the same follow-up again
+  consequence: Thread now reads Q2, (failed), Q2, A2; the model context for the second Q2 may or may not include the failed turn; the spec has no retry-in-place on a failed follow-up and no rule for what history the retry sees
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Show a Retry link on the failed answer that reuses the same message slot
+  shallow: false
+
+- id: dup-36
+  title: Follow-up count limit reached while two sends are in flight - counter ends at the limit plus one
+  level: L4
+  cell: {thread-state: follow-up-limit-reached, thread-state: follow-up-10, action: ask-follow-up, surface: follow-up-thread, actor: same-user-second-tab}
+  object: "Follow-up questions are supported after the first answer." (no limit stated)
+  situation: A limit of 10 follow-ups is later introduced; 9 are used; the user sends follow-up 10 from tab A and follow-up 10 from tab B within the same second
+  consequence: 11 follow-ups are stored or one is rejected with an undefined message; the spec has no limit now, so no place for the counter, the message copy, or the race rule
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  proposed: When the limit is added, specify enforcement at the server with the message "This conversation has reached 10 follow-ups; start a new question"
+  shallow: false
+
+- id: dup-37
+  title: After Back, the Ask question form still shows the submitted question and a new Submit looks like a follow-up but creates a new entry
+  level: L3
+  cell: {action: back-button-after-redirect, mode: ask-question, thread-state: first-question, entry-point-and-lifecycle-phase: post-submit-same-screen, surface: ask-question-form}
+  object: "Ask question mode ... Submit" versus "Follow-up questions are supported after the first answer."
+  situation: User submits a question, reads the answer in History, presses Back, types "and what about the second video?" in the question field and submits
+  consequence: A new unrelated Ask question entry is created with no prior context instead of a follow-up on the earlier thread; the user is not told that follow-ups live only in the entry's thread
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: After a submit, reset the form and show hint text "To continue this conversation, open the entry in History"
+  shallow: false
+
+- id: dup-38
+  title: Two users in the same workspace submit the same Report on the same shared videos - History is per user, so duplicated compute and no cross-visibility
+  level: L3
+  cell: {actor: other-user-same-workspace, history-state: 1-entry, video-state: owned-by-another-user, permission-and-plan: video-owned-by-other-user, mode: report}
+  object: "History is per user."
+  situation: User A and user B in a workspace both submit a Report over the same 4 team videos within a minute; each sees only their own entry
+  consequence: Two identical outputs are produced; neither user sees the other run; the spec's "per user, currently" does not say whether a "similar run exists" hint will ever be shown
+  p_typical: 0.02
+  grounded: quote
+  evidence: "History is per user, currently."
+  proposed: Accept as v1 behaviour and record it as an open decision for shared History
+  shallow: false
