@@ -1,0 +1,665 @@
+- id: modality-1
+  title: '''Where did they click first?'' on a narrated screen recording: a transcript-only agent answers from what the participant said (''I''ll try Sign up'') and cites the utterance, not the click'
+  level: L3
+  cell:
+    surface: question-field
+    mode: ask-question
+    video-state: ingested
+    run-status: done
+    evidence-modality: speech-transcript
+    text-input-state: question-unrelated-to-videos
+    action: type-question
+  object: Ask question mode, 'A question about the selected videos, typed by the user'; Videos page 'uploaded videos get ingested' (ingestion output never defined)
+  situation: Participant says 'let me try sign up' at 00:41 but actually clicks the 'Pricing' nav link at 00:38 without speaking; user asks 'Where did they click first?'
+  consequence: Answer states 'They clicked Sign up first (00:41)', a wrong fact delivered with a citation, and the researcher puts it in the readout
+  p_typical: 0.12
+  grounded: inferred
+  evidence: 'users upload videos; uploaded videos get ingested. (inference: what ingestion extracts is not stated, so a transcript-only index is possible)'
+  already_specified: false
+  proposed: 'Spec line: ingestion produces <list of modalities>; when a question asks about an action and only speech is indexed, the answer must say ''inferred from speech, clicks not observed'''
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 100.0
+- id: backend-1
+  title: Report over 20 x 3-hour videos (~60 h of transcript, roughly 0.8-1.0M tokens) exceeds one model context; spec states neither a cap nor a chunk-and-merge strategy
+  level: L3
+  cell:
+    surface: report-form
+    mode: report
+    videos-selected: 6-20
+    video-state:
+    - 3-hour-long
+    - ingested
+    run-status: running
+    text-input-state: prompt-empty
+    action: submit
+  object: Report mode Submit; clarification 'A Report produces one output covering all selected videos'
+  situation: User selects 20 ingested videos of 3 h each and submits a Report with no prompt
+  consequence: Job either fails on context overflow after spending tokens, or silently drops transcript beyond the window and reports on the first ~6 videos while claiming to cover 20
+  p_typical: 0.25
+  grounded: quote
+  evidence: '"A Report produces one output covering all selected videos, not one per video." / "Minimum and maximum number of videos per run; video length and size limits."'
+  proposed: Spec a total transcript budget per run (e.g. 400k tokens or 20 h of audio) enforced at Submit with copy naming the overage, and state that runs above one context use per-video summaries merged
+    in a final pass
+  shallow: false
+  also_from:
+  - ingest-37
+  already_specified: false
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 4.0
+  priority: 100.0
+- id: firsttime-30
+  title: 'First video is a screen recording with no audio: Ask question answers from no transcript with no warning'
+  level: L4
+  cell:
+    surface: history-entry-detail
+    video-state: silent-or-no-transcript
+    mode: ask-question
+    run-status: done
+    action: type-question
+    thread-state: first-question
+  object: Ingested video; Ask question answer
+  situation: User test session recorded without microphone; user asks "What did the participant struggle with?"
+  consequence: Answer is generic or invented; user cannot tell it was based on visuals only
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Pop-up row and answer header flag "No speech detected"; answer cites timestamps only
+  shallow: false
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 80.0
+- id: output-10
+  title: Silent video selected still produces a confident report
+  level: L4
+  cell:
+    surface: history-entry-detail
+    video-state:
+    - silent-or-no-transcript
+    - ingested
+    videos-selected: 1
+    mode: report
+  object: Selected video with empty transcript; Report mode
+  situation: 1 video ingested successfully but transcript has 0 words (screen recording with no narration)
+  consequence: Ingestion says ingested, so the video is selectable, and the report describes things not in the transcript (invented quotes) or returns empty
+  p_typical: 0.1
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Define whether a transcript-less ingested video is selectable; if yes, report states "no speech found" for it
+  shallow: false
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 80.0
+- id: speaker-2
+  title: Moderator's leading question ('So you found checkout confusing, right?') answered 'yeah' is reported as a participant finding 'checkout was confusing'
+  level: L4
+  cell:
+    video-state: ingested
+    mode: report
+    surface: history-entry-detail
+    session-composition: one-participant-plus-moderator
+    per-video-outcome-within-run: all-videos-used
+    videos-selected: 6-20
+    text-input-state: prompt-empty
+    run-status: done
+    output-claim-type: verbatim-quote
+  object: Report output on history entry detail; 'A Report produces one output covering all selected videos'
+  situation: At 12:40 the moderator asks a leading question; the participant replies 'yeah, I guess'; the Report lists 'Participant found checkout confusing' as a key finding
+  consequence: A finding the moderator planted is presented as unprompted user evidence; the design team prioritises a fix the participant never raised
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'A Report produces one output covering all selected videos, not one per video. (inference: moderated user-test sessions contain moderator speech that the single output can draw on)'
+  already_specified: false
+  proposed: 'Acceptance criterion: a finding whose only support is assent to a moderator statement is marked ''prompted'' with the moderator question quoted next to it'
+  shallow: false
+  also_from:
+  - contract-16
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 80.0
+- id: range-18
+  title: A 3-hour video that exceeds context is truncated silently, yet a range is the obvious remedy and nothing prompts the user to use one
+  level: L3
+  cell:
+    surface: selected-videos-list
+    video-state: 3-hour-long
+    mode: report
+    per-video-outcome-within-run: video-truncated-to-fit-context
+    action: select-time-range-within-video
+  object: Selected videos list row for the 3-hour video, and the truncated per-video outcome
+  situation: A 3-hour video plus 5 others exceeds one model context; the agent keeps part of the transcript
+  consequence: User receives a truncated Report with no way to say which part matters; a range would make the cut a user choice rather than a silent one
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'Minimum and maximum number of videos per run; video length and size limits. (inference: undefined length limits allow a long video to exceed what the agent reads in one pass)'
+  already_specified: false
+  proposed: When estimated transcript exceeds context, the row shows 'Too long; choose a range' and Submit explains which rows exceed
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 80.0
+- id: contract-15
+  title: Text inside quotation marks may be a cleaned or paraphrased transcript line, with no marker separating verbatim quotes from paraphrase
+  level: L4
+  cell:
+    surface: history-entry-detail
+    mode: report
+    videos-selected: 6-20
+    text-input-state: prompt-empty
+    run-status: done
+    output-claim-type: verbatim-quote
+  object: Quoted participant text in the Report output
+  situation: Agent removes 'um', fixes grammar, or merges two sentences 30 s apart into one quote
+  consequence: Stakeholder puts the quote on a slide as the participant's words; on playback at the cited timestamp the words differ
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'A Report produces one output covering all selected videos, not one per video. (inference: a report on user-test videos can contain quoted participant text)'
+  already_specified: false
+  proposed: 'Content rule: quotation marks only around exact transcript text from one contiguous segment; paraphrase has no quotation marks and is prefixed ''Paraphrase:''; QA spot-checks 10 quotes per
+    report against the transcript'
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 80.0
+- id: modality-3
+  title: '''What error appeared?'': participant says ''huh, that''s weird'' at 03:12; with no OCR the agent paraphrases a plausible error message instead of saying the on-screen text was not read'
+  level: L4
+  cell:
+    surface: question-field
+    mode: ask-question
+    video-state: ingested
+    run-status: done
+    evidence-modality: burned-in-text-ocr
+    per-video-outcome-within-run: all-videos-used
+    action: type-question
+  object: Question field; Ask question Submit
+  situation: Checkout error toast 'Card declined (code 402)' visible 03:10-03:14; transcript at 03:12 is 'huh, that's weird... ok'
+  consequence: Answer reads 'A payment error appeared' or invents 'Invalid card number'; expected L4 output is 'On-screen text is not available to the agent; at 03:12 the participant reacted with surprise'
+  p_typical: 0.07
+  grounded: inferred
+  evidence: 'A question about the selected videos, typed by the user (inference: a question about on-screen text can be typed, and whether the agent reads screen content is unstated)'
+  already_specified: false
+  proposed: Spec the refusal copy for questions that ask for on-screen text when OCR is absent, with the nearest speech timestamp offered as a pointer
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 80.0
+- id: speaker-1
+  title: Spec does not say whether ingestion labels speakers at all, so the Report on the history entry detail cannot tell moderator lines from participant lines
+  level: L3
+  cell:
+    video-state: ingested
+    mode: report
+    surface: history-entry-detail
+    session-composition: one-participant-plus-moderator
+    actor: ingestion-job
+  object: Videos page 'uploaded videos get ingested'; history entry detail (Report output)
+  situation: Moderated 45-minute session; ingestion produces one undifferentiated transcript with no speaker labels; user submits a Report over it
+  consequence: Report findings mix what the moderator said with what the participant said; the PM reading the entry cannot tell whose opinion a finding is
+  p_typical: 0.12
+  grounded: inferred
+  evidence: 'users upload videos; uploaded videos get ingested. (inference: what ingestion produces is not described, so the transcript may carry no speaker labels)'
+  already_specified: false
+  proposed: 'Spec line: ingestion output includes per-segment speaker labels with a role (moderator / participant / unknown); ''ingested'' means labels exist or are explicitly marked absent'
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 4.0
+  priority: 80.0
+- id: participant-37
+  title: Spec is silent on whether participant video, transcript and prompts sent to the model vendor are retained or used for training
+  level: L3
+  cell:
+    actor: background-agent-job
+    surface: submit-button
+    video-state: ingested
+    run-status: running
+  object: Submit (sends selected videos to the agent)
+  situation: Each run sends transcripts of up to N videos to an external model API.
+  consequence: Erasure in the product does not reach vendor-side copies; participant cannot be told where their data went.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Spec states vendor retention (e.g. 0-day / 30-day) and no-training terms; erasure procedure lists vendor deletion steps.
+  shallow: false
+  already_specified: false
+  scores:
+    severity: 5.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 75.0
+- id: participant-1
+  title: Source video deleted after run, but the Report entry on History keeps verbatim quotes attributed to the participant by name
+  level: L3
+  cell:
+    surface: history-entry-detail
+    actor: test-participant-data-subject
+    video-state: deleted-after-run
+    run-status: done
+    mode: report
+  object: History tab entry detail of a Report run; Videos page deletion
+  situation: Participant withdraws consent 3 weeks after the session; the researcher deletes the video on the Videos page. The Report generated 2 weeks earlier still sits in the runner's History.
+  consequence: The video is gone but its most sensitive derivative (quotes plus name) lives on indefinitely; the erasure is cosmetic and the company holds personal data it promised to delete.
+  p_typical: 0.12
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Spec line: deleting a video triggers redaction or deletion of every History entry derived from it; entry detail shows ''Source removed: content redacted on <date>''.'
+  shallow: false
+  also_from:
+  - privacy-1
+  scores:
+    severity: 5.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 75.0
+- id: participant-31
+  title: Agent uses the participant's real first name from their spoken self-introduction although the study promised pseudonyms
+  level: L3
+  cell:
+    mode: report
+    video-state: ingested
+    actor: test-participant-data-subject
+    text-input-state: prompt-empty
+    action: share-or-export-not-in-spec
+    permission-and-plan: full-access
+    surface:
+    - history-entry-detail
+    - prompt-field
+  object: Report output covering all selected videos
+  situation: Moderator says 'Thanks for joining, Dana' at 00:00:20; report written with empty prompt.
+  consequence: Report reads 'Dana struggled with the coupon field'; the participant never expected to be named in internal reports.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'Prompt / instructions (optional) (inference: a Report can be run with an empty prompt, so the agent decides what to include; the spec sets no pseudonymisation rule)'
+  already_specified: false
+  proposed: Default output names participants 'Participant 1..N' in selection order; real names only if the workspace setting allows.
+  shallow: false
+  also_from:
+  - consumer-20
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 1.0
+  priority: 64.0
+- id: contract-5
+  title: Unquantified words ('most users', 'many participants', 'a few') are allowed in the default Report, so a stakeholder cannot tell 3 of 12 from 10 of 12
+  level: L4
+  cell:
+    surface: history-entry-detail
+    mode: report
+    videos-selected: 6-20
+    text-input-state: prompt-empty
+    run-status: done
+    output-claim-type: count-or-proportion
+  object: Findings section of the Report output on the History entry detail
+  situation: Empty prompt; agent writes in default narrative style
+  consequence: '''Most participants struggled with filters'' is forwarded to the exec; ''most'' turns out to be 4 of 12 when someone checks the videos'
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'Prompt / instructions (optional) (inference: with an empty prompt, how frequencies are worded is left to the agent)'
+  already_specified: false
+  proposed: 'Content rule: every frequency claim carries an explicit ''N of M videos''; the words most, many, several, few never appear without one on the same line'
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 1.0
+  priority: 64.0
+- id: lowvision-25
+  title: History row status badges (assumed Queued / Running / Done / Failed) distinguished by hue only, e.g. green Done vs red Failed
+  level: L4
+  cell:
+    surface:
+    - history-entry-row
+    - history-entry-status-badge
+    run-status: failed
+    history-state: 100-entries
+    action: open-history-entry
+  object: History tab, entry row status badge
+  situation: Colour-blind user scans 100 rows of same-shape coloured dots
+  consequence: Failed runs indistinguishable from Done; user shares a failed or empty report
+  p_typical: 0.22
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- statuses exist; their visual treatment is not in the spec'
+  already_specified: false
+  proposed: Each badge = text word + icon with distinct shape (clock, spinner, check, exclamation), text contrast 4.5:1
+  shallow: false
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 1.0
+  priority: 64.0
+- id: contract-12
+  title: 'Minimum evidence for a finding is undefined: a behaviour seen in 1 of 12 videos can be stated as a finding with the same weight as one seen in 9 of 12'
+  level: L4
+  cell:
+    surface: history-entry-detail
+    mode: report
+    videos-selected: 6-20
+    text-input-state: prompt-empty
+    run-status: done
+    output-claim-type: insufficient-evidence-statement
+  object: Findings section of the Report output
+  situation: One participant comments on pricing; no other video mentions it
+  consequence: '''Users find pricing unclear'' appears as a headline finding; the stakeholder acts on a single remark'
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'A Report produces one output covering all selected videos, not one per video. (inference: one output covering all videos can promote a single-video remark to a finding)'
+  already_specified: false
+  proposed: 'Content rule: a finding needs at least 1 verbatim quote with timestamp and a count; items seen in exactly 1 video go under ''Single observations'', not Findings'
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  priority: 64.0
+- id: backend-3
+  title: 'One video in a 20-video report has no transcript (silent audio): spec does not say whether the whole report fails or completes without it'
+  level: L3
+  cell:
+    surface: history-entry-detail
+    mode: report
+    videos-selected: 6-20
+    video-state: silent-or-no-transcript
+    run-status: partial-some-videos-unusable
+    per-video-outcome-within-run: one-video-unusable
+  object: History entry status; clarification 'one output covering all selected videos'
+  situation: Video 14 of 20 is ingested but its transcript is empty or under 10 words
+  consequence: Either 19 good videos are thrown away by one bad one, or the report claims to cover all 20 while one contributed nothing
+  p_typical: 0.15
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Rule: run completes as Done-with-warnings if at least 1 video is usable; skipped videos listed by name with reason'
+  shallow: false
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  priority: 64.0
+- id: cost-1
+  title: Report run over 50 videos of 2 hours each starts with no cost or time preview at Submit
+  level: L3
+  cell:
+    surface: submit-button
+    videos-selected: 21-100
+    video-state: 3-hour-long
+    mode: report
+    action: submit
+  object: Report form Submit button and the redirect to the History tab
+  situation: User selects 50 two-hour videos (100 video-hours) in the Add video pop-up and presses Submit; the spec says "On submit the user is redirected to the History tab" with no confirmation step
+  consequence: The most expensive possible run is one click away, with no estimate of price or duration shown before or after; Finance cannot say what a worst-case run costs
+  p_typical: 0.3
+  grounded: quote
+  evidence: '"There is no loading page, to save the user''s time." / "On submit the user is redirected to the **History** tab, where a new entry appears with whatever was submitted."'
+  proposed: Show an estimate (video-hours, expected cost band, expected duration) beside Submit, with a confirm step above a stated threshold such as 10 video-hours
+  shallow: false
+  already_specified: false
+  also_from:
+  - popup-39
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 3.0
+  priority: 64.0
+- id: review-19
+  title: No pre-launch eval set of user-test videos with expected answers for Report and Ask question
+  level: L3
+  cell:
+    surface: history-entry-detail
+    mode:
+    - report
+    - ask-question
+    run-status: done
+    video-state: ingested
+    output-review-action (off-axis): compare-with-previous-version
+  object: Report mode and Ask question mode as a whole; spec has no quality section
+  situation: Feature ships; the first quality signal is a customer saying a quote was invented
+  consequence: No baseline to compare agent versions against, so a model or prompt change that doubles fabricated quotes is undetectable before release
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Build an eval set of at least 30 sessions (mix of 1, 5 and 20 videos; silent, non-English, 3-hour) with human-written reference findings and 50 reference questions, rerun on every agent version
+    change
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 4.0
+  priority: 64.0
+- id: popup-5
+  title: Selected videos hidden by the current tag filter or search are invisible but still submitted
+  level: L4
+  cell:
+    surface:
+    - add-video-popup
+    - tag-filter
+    action: filter-by-tag
+    videos-selected: 6-20
+    library-state: 50-videos
+    popup-session-state: selection-hidden-by-filter
+  object: tag filter in the Add video pop-up, selection count
+  situation: User ticks 8 videos, then applies tag filter 'onboarding' which matches only 3 of them; the other 5 ticked videos disappear from the list
+  consequence: User sees 3 ticked rows, the confirm would add 8; or user thinks only 3 are selected and the report covers 5 unseen videos
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'The pop-up supports filtering by the tags the user has applied to videos, and searching by name. (inference: filters and selection coexist in one pop-up; how hidden selected videos are handled
+    is not stated)'
+  already_specified: false
+  proposed: 'Counter reads ''8 selected (3 shown)'' with a ''Show selected only'' toggle; acceptance: count is independent of filter'
+  shallow: false
+  also_from:
+  - qa-lead-29
+  - tags-4
+  - lowvision-16
+  - a11y-24
+  - tags-5
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  priority: 60.0
+- id: modality-14
+  title: Sparse frame sampling misses a 1-second error toast, and the answer states 'no error appeared' as a negative fact instead of 'none seen in sampled frames'
+  level: L4
+  cell:
+    surface: question-field
+    mode: ask-question
+    video-state: ingested
+    run-status: done
+    evidence-modality: on-screen-visual
+    per-video-outcome-within-run: all-videos-used
+  object: Ask question answer in History entry detail
+  situation: Frames sampled every 5 s or on scene change; toast visible 07:21.4-07:22.3; participant says nothing
+  consequence: Researcher reports 'no errors in checkout' to the product team; the bug is not filed
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Spec states sampling rate in the Sources line ('frames every 5 s') and negative answers use 'not observed at this sampling rate'
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 60.0
+- id: privacy-19
+  title: Transcription at ingestion may use a different vendor and region from the agent provider, and the spec names neither
+  level: L3
+  cell:
+    actor: ingestion-job
+    video-state: non-english-audio
+    surface: videos-page
+    library-state: 50-videos
+  object: Spec line uploaded videos get ingested.
+  situation: Non-English audio is sent to a speech-to-text service on upload, before any agent run exists.
+  consequence: Participant audio leaves the product the moment it is uploaded; the residency answer for the agent provider does not cover this second transfer.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'users upload videos; uploaded videos get ingested (inference: ingestion processes the audio, so some transcription service is involved; the spec names none)'
+  already_specified: false
+  proposed: Add ingestion vendor and region to the data-flow statement, with retention of the raw audio copy.
+  shallow: false
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 60.0
+- id: contract-4
+  title: 'Denominator after an unusable video: a finding reads ''5 of 12'' when 1 silent video contributed nothing, instead of ''5 of 11 usable'''
+  level: L4
+  cell:
+    surface: history-entry-detail
+    mode: report
+    videos-selected: 6-20
+    text-input-state: prompt-empty
+    run-status: done
+    output-claim-type: count-or-proportion
+    per-video-outcome-within-run: one-video-unusable
+  object: Report output counts; video-state silent-or-no-transcript inside a 12-video selection
+  situation: 1 of 12 selected videos has no audio track; run still completes
+  consequence: Every proportion in the report is understated by one video, and a finding that is actually a majority (6 of 11) reads as a minority (6 of 12)
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'A Report produces one output covering all selected videos, not one per video. (inference: a selected video can contribute nothing, e.g. no audio, while the single output still completes)'
+  already_specified: false
+  proposed: 'Acceptance criterion: count denominators use usable videos and the Coverage section states ''Counts use 11 of 12 videos; excluded: <name> (no audio)'''
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 60.0
+- id: popup-25
+  title: Videos with silent audio or no transcript are selectable and unmarked in the pop-up
+  level: L4
+  cell:
+    surface: add-video-popup
+    video-state: silent-or-no-transcript
+    action: select-video
+    mode: ask-question
+  object: Add video pop-up row, video state 'ingested' with empty transcript
+  situation: User selects a 4-minute screen recording with no speech for Ask question
+  consequence: Answer is empty or invented from nothing; user sees nothing in the pop-up that warned it
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Row badge 'No speech detected' with the row still selectable and a warning under the selected-videos list
+  shallow: false
+  also_from:
+  - ingest-15
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 60.0
+- id: backend-16
+  title: 'Follow-up context source unspecified: re-read the transcripts, or answer only from the prior answer text'
+  level: L3
+  cell:
+    surface: follow-up-thread
+    thread-state: follow-up-1
+    mode: ask-question
+    videos-selected: 2-5
+    action: ask-follow-up
+  object: '''Follow-up questions are supported after the first answer.'''
+  situation: Follow-up 'What exactly did the user say at the checkout step?' after a summary answer
+  consequence: If only the prior answer is in context, the follow-up cannot quote the video and fabricates a quote
+  p_typical: 0.05
+  grounded: quote
+  evidence: Follow-up questions are supported after the first answer.
+  already_specified: false
+  already_specified_by: none
+  proposed: Spec that every follow-up has access to the same video set's transcripts as the first question
+  shallow: false
+  also_from:
+  - cost-4
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 60.0
+- id: contract-17
+  title: 'No explicit ''Not answerable from the selected videos'' outcome: a default section (e.g. task success rate) is filled with invented numbers when the 12 videos are interviews with no tasks'
+  level: L4
+  cell:
+    surface: history-entry-detail
+    mode: report
+    videos-selected: 6-20
+    text-input-state: prompt-empty
+    run-status: done
+    output-claim-type: insufficient-evidence-statement
+  object: Default Report sections on the History entry detail
+  situation: Empty prompt; videos are open-ended interviews rather than task-based tests
+  consequence: 'Report shows ''Task completion: 75%'' derived from nothing; stakeholder repeats it'
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'Prompt / instructions (optional) (inference: an empty prompt leaves the default sections to the agent, whatever kind of videos are selected)'
+  already_specified: false
+  proposed: 'Content rule: a default section the videos cannot support renders the literal line ''Not answerable from the selected videos: <one-line reason>'' instead of content'
+  shallow: false
+  bucket: 8
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 60.0
