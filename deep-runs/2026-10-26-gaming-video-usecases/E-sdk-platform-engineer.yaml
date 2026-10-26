@@ -1,0 +1,629 @@
+- id: sdk-1
+  title: "Churn-trigger ring buffer - 90 s on-device H.264 buffer at 480p/1.5 Mbps (about 17 MB) that uploads only when the player kills the app on a fail screen or abandons a tutorial step"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, lifecycle-moment: ftue-first-session, capture-trigger-and-sampling: event-triggered-clip, processing-location: on-device, constraint-to-overcome: bandwidth-and-storage, delivery-form: per-cohort-report}
+  object: "methods-churn-funnel.md section 7 sampling knob (b) and section 6 Sentry onErrorSampleRate pattern; FTUE tutorial step 3"
+  situation: "A new player on a mid-range Android force-closes the game 40 s into tutorial step 3 on the 'level failed' screen"
+  consequence: "The studio gets 17 MB of upload for that one churn moment instead of about 450 MB for a full 30-minute first session at 2 Mbps"
+  p_typical: 0.18
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: 'a 30-120 s on-device ring buffer uploaded only on trigger (tutorial abandon, app kill on fail screen, rage taps, repeated fails), as Sentry does for errors'"
+  proposed: "Ship the SDK with a trigger DSL (step_id, fail_count>=3, app_background_within_5s_of_fail_screen) and a 90 s default buffer"
+  shallow: false
+  mechanism: "SDK keeps a hardware-encoded rolling buffer in RAM or a 20 MB ring file; a trigger evaluated on game events flushes it to a Wi-Fi upload queue; cloud side runs the screen-state classifier and explains the drop"
+  example: "Match-3 game: 5 percent of D0 churners at level 4 have a clip showing a booster popup covering the board; product lead moves the popup"
+  cost: M
+  depends_on: "Existing video ingestion and the 'why' report agent; a game-event hook (one call per tutorial step) from the studio"
+  buyer: "Product lead / retention manager at a mid-size mobile F2P studio"
+  input: "Own-player screen video (ring buffer, 480p) plus touch overlay plus tutorial-step events"
+  why_existing_tools_cannot: "Sentry-style buffers fire on errors only and are not game-aware, and Unity funnels stop at 'investigate' (methods-churn-funnel.md sections 1 and 6); PlaytestCloud sees recruited testers, not churners (market.md section 1)"
+  willingness_to_pay: "3 - FunCraft +40 percent D1 case and EA funnel-plus-replay case (methods-churn-funnel.md section 1); PlaytestCloud pays about EUR 113-141 per recorded session (market.md section 1), so a triggered clip at a fraction of that is credible"
+
+- id: sdk-2
+  title: "Label-only upload - on-device screen-state classifier that ships a 20 KB per-session timeline of screen labels plus 3 keyframes instead of video"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: cohort-comparison, lifecycle-moment: d1-to-d7, delivery-form: warehouse-table-export, processing-location: on-device, constraint-to-overcome: privacy-and-consent, companion-data: telemetry-events, effort: L-multi-quarter}
+  object: "methods-churn-funnel.md section 4 INFERRED: 'a per-title detector trained on a few hundred labelled frames is plausibly enough' and section 7 knob (e)"
+  situation: "A studio's privacy counsel refuses any raw player video leaving the device, but the analytics head wants screen-flow data for 100 percent of D1 players"
+  consequence: "Coverage goes from a 1-5 percent video sample to every consenting player, and no frame with a player name or payment sheet leaves the phone"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 4: mAP 91.9 percent on 298 UI screens from 6 mobile games (YOLOv5-ABLN); section 7 knob (e) 'on-device CV that uploads only extracted events/labels plus a few keyframes'"
+  proposed: "A 4 MB quantised detector per title, bootstrapped by a general VLM labelling 300 frames, outputs rows (session_id, t_ms, screen_label, dwell_ms)"
+  shallow: false
+  mechanism: "Quantised per-game detector runs at 1 fps on the NPU or GPU, emits screen_label/dwell rows into the studio's existing event pipeline; video never leaves the device except 3 keyframes on request"
+  example: "Idle RPG: table shows 31 percent of D1 players sit on the 'hero upgrade' popup for more than 20 s before quitting; no one watched a video"
+  cost: L
+  depends_on: "Per-game labelling pass (VLM-bootstrapped) and a frame-budget governor so the classifier stays under 1 ms per frame"
+  buyer: "Head of analytics/BI at a mid-size or AAA studio that keeps Snowflake or BigQuery in-house"
+  input: "On-device frames at 1 fps plus the studio's event stream IDs"
+  why_existing_tools_cannot: "Funnels only know instrumented steps (methods-churn-funnel.md section 1 INFERRED), session replay tools reconstruct view trees or screenshots (market.md section 2), NVIDIA event recognition assumes per-game configuration by hand (methods-churn-funnel.md section 4)"
+  willingness_to_pay: "3 - GameAnalytics IQ Suite shows analytics buyers pay for AI add-ons (market.md section 6); no direct price for video-derived tables"
+
+- id: sdk-3
+  title: "Frame-budget governor - SDK measures its own per-frame cost and auto-disables capture on any device model whose p95 frame time rises by more than 1 ms or whose thermal state reaches 'serious'"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: performance-fps-and-load, analysis-type: anomaly-alert, constraint-to-overcome: device-performance, companion-data: device-perf-counters, processing-location: on-device, delivery-form: api-or-sdk, effort: M-one-quarter}
+  object: "B-perspectives.yaml cto-or-engine-lead-veto: 'any SDK that costs >1-2 ms per frame, adds APK size or triggers thermal throttling is refused'"
+  situation: "Capture is switched on for a 2 percent cohort; on Mali-G52 phones the encoder pushes frame time from 14 ms to 17 ms and the phone throttles after 9 minutes"
+  consequence: "Without a governor the CTO blocks the SDK on the allow-list; with it the cohort shrinks automatically on bad devices and the studio keeps capture elsewhere"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 6: 'same build can run 60 fps on a flagship and 24 fps on a mid-tier phone'; GameBench tracks thermals but is a separate lab/SDK product"
+  proposed: "Governor publishes a per-device-model overhead table (ms per frame, mAh per recorded minute) to the engine lead each release"
+  shallow: false
+  mechanism: "Closed loop inside the SDK: reads frame time and thermal API, lowers fps or bitrate in 3 steps, then stops; reports overhead per device model back to the studio"
+  example: "Racing game: SDK shuts itself off on 11 phone models, keeps capturing on 140, engine lead signs off the integration"
+  cost: M
+  depends_on: "Native capture module and device-model telemetry"
+  buyer: "CTO or lead engine programmer who owns the SDK allow-list, mid-size and AAA studios"
+  input: "Device perf counters (frame time, thermal state, battery) read by the SDK itself"
+  why_existing_tools_cannot: "GameBench and device clouds measure the game on lab devices (adjacent-usecases.md section 6); none measures the capture SDK's own cost on shipped player devices"
+  willingness_to_pay: "2 - a gate, not a product; no price signal in the notes, value is removing a veto"
+
+- id: sdk-4
+  title: "Emulator and platform-host capture - zero-SDK capture of the rendered game from the host so no per-game integration or APK-size cost exists"
+  level: L3
+  cell: {buyer-role: product-retention, video-source: platform-or-emulator-capture, signal-extracted: ui-state-and-screen-flow, analysis-type: cohort-comparison, effort: requires-partner-or-platform-deal, constraint-to-overcome: integration-effort-per-engine, go-to-market-channel: bundled-with-platform, processing-location: edge-or-platform-server, game-platform-and-genre: mobile-midcore-f2p}
+  object: "market.md section 9 gap map and A-frame.yaml assumption 'SDK, platform or emulator capture'"
+  situation: "A studio with 12 weeks of engineering backlog cannot add an SDK this quarter but its game already runs on an emulator or cloud platform that renders it"
+  consequence: "Time-to-first-clip drops from an SDK release cycle (about 2-4 store review rounds) to a dashboard toggle; coverage is limited to players on that platform"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "market.md section 3: Razer QA Companion needs 'no SDK or game instrumentation'; section 2: PostHog Unity SDK is screenshot-based with no masking"
+  proposed: "Platform exposes a per-title opt-in with an in-platform consent sheet and returns clips plus the title's package name as the join key"
+  shallow: false
+  mechanism: "Platform host captures frames and input from the guest game, applies masking, sends consented sessions to the analysis pipeline; studio sees per-title reports with no code change"
+  example: "A 3-person studio turns on capture for its Android puzzle game on a platform with 10M+ players and sees FTUE drop-off in 48 h"
+  cost: L
+  depends_on: "A platform partner that already captures sessions and a consent flow it controls"
+  buyer: "Product lead at a studio whose game is already distributed on the platform"
+  input: "Platform-side screen capture plus input events; no studio telemetry unless the studio adds it"
+  why_existing_tools_cannot: "Session replay needs an SDK and fails on game canvases (market.md section 2); AI QA tools run on builds in QA, not live players (market.md section 3)"
+  willingness_to_pay: "3 - bundled demand: PlaytestCloud tokens cost about EUR 113-141 per session (market.md section 1); platform deals have no published price"
+
+- id: sdk-5
+  title: "Drop-in consent sheet and persistent recording indicator that follows Apple's 'explicit user consent and a clear visual indication' rule, with 3 copy variants and a reward hook"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, constraint-to-overcome: player-opt-in-rate, lifecycle-moment: ftue-first-session, delivery-form: api-or-sdk, capture-trigger-and-sampling: opt-in-panel, effort: S-weeks, go-to-market-channel: self-serve, pricing-model: freemium-self-serve}
+  object: "methods-churn-funnel.md section 7 VERIFIED: Apple Feb 2019 Glassbox action; App Store guideline text on consent and visual indication"
+  situation: "An iOS game adds capture and has to show consent at first launch without losing more than a few percent of FTUE completions"
+  consequence: "A badly placed consent screen adds a step to the first session; one developer in 2019 had under a day to comply when Apple objected"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: 'explicit user consent and ... a clear visual indication when recording, logging, or otherwise making a record of user activity'; one developer given less than a day"
+  proposed: "Native sheet, a 6 px red recording dot, in-game currency reward for opting in, and opt-in rate per copy variant reported back to the studio"
+  shallow: false
+  mechanism: "SDK renders consent UI in native code, stores the consent record with timestamp and policy version, gates capture on it, and A/B tests copy"
+  example: "Beta of a tower-defence game: variant B ('help us fix level 4, get 50 gems') gets 31 percent opt-in versus 14 percent for legal copy"
+  cost: S
+  depends_on: "Capture SDK"
+  buyer: "Product lead and community manager at a studio shipping on iOS"
+  input: "Consent events plus the studio's reward grant call"
+  why_existing_tools_cannot: "Generic replay vendors push consent onto the app developer (UXCam requires opt-in and occlusion, methods-churn-funnel.md section 7); none optimises opt-in rate"
+  willingness_to_pay: "2 - necessary plumbing; no price signal in the notes beyond Apple's enforcement"
+
+- id: sdk-6
+  title: "On-device masker that blurs player names, chat panels, notifications and payment sheets before encoding"
+  level: L4
+  cell: {buyer-role: accessibility-compliance, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: compliance-audit, constraint-to-overcome: privacy-and-consent, processing-location: on-device, delivery-form: api-or-sdk, game-platform-and-genre: competitive-multiplayer}
+  object: "methods-churn-funnel.md section 7 INFERRED: 'player names and chat in HUD/social panels, notifications overlaying the screen, payment sheets'; market.md section 2: PostHog Unity has no built-in masking"
+  situation: "A battle-royale lobby shows 100 real usernames and a friends-chat panel; an OS banner shows a bank notification mid-clip"
+  consequence: "Unmasked frames in the vendor cloud turn every clip into personal data under GDPR and every bank banner into a leak"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "market.md section 2: PostHog Unity SDK 'screenshot-based, with no built-in masking of text or images'; Bugsee GDPR/HIPAA masking warning"
+  proposed: "Masker runs on the encoder input: engine-flagged 'private' UI layers are excluded by layer, and a name-plate OCR pass masks remaining text boxes; masking recall reported per build"
+  shallow: false
+  mechanism: "Two layers: engine render-layer exclusion (exact, no model) and a lightweight text detector for OS overlays; masked areas are painted before the frame reaches the encoder"
+  example: "Chat panel and friend list are black rectangles in every uploaded clip; privacy counsel signs off"
+  cost: M
+  depends_on: "Capture SDK with access to the engine render target; per-game list of private layers"
+  buyer: "Privacy counsel and the engineering lead at a studio with a social or multiplayer game"
+  input: "Raw frames in the encoder buffer plus engine layer metadata"
+  why_existing_tools_cannot: "Mainstream replay vendors mask native views, not engine canvases (market.md section 2); PostHog Unity is explicitly unmasked"
+  willingness_to_pay: "3 - removes a security-review blocker; no direct price, but Bugsee and UXCam sell masking as a feature (market.md section 2)"
+
+- id: sdk-7
+  title: "Engine render-target capture plugin for Unity and Unreal that reads the final frame with async GPU readback at 1-5 fps and 360p, excludes debug UI layers, and ships through the engine asset store"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, constraint-to-overcome: integration-effort-per-engine, go-to-market-channel: engine-asset-store-or-marketplace, delivery-form: engine-editor-plugin, effort: M-one-quarter, pricing-model: freemium-self-serve, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "methods-churn-funnel.md section 6: UXCam screenshots at timed intervals encoded to video; PostHog Unity SDK 'alpha'"
+  situation: "A hypercasual studio wants gameplay replay in an afternoon, not a native SDK project; its engine is Unity"
+  consequence: "Capture at 360p/2 fps is roughly 1/30 of the bytes of 720p/30 fps, which makes a sample of 20 percent of installs affordable"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 6 INFERRED: 'game engines render to one GPU surface, so app replay tools either fall back to screenshots or show nothing useful'; section 7 knob (c) low fps 1-5 fps or 360-480p"
+  proposed: "One package, one prefab, a settings asset with trigger rules; Android and iOS capture from the render target, not from the OS recorder"
+  shallow: false
+  mechanism: "Plugin hooks the engine's end-of-frame callback, reads back at low rate, encodes on a worker thread, tags frames with the engine's scene name"
+  example: "A solo Unity dev installs the package and sees 20 videos of level 3 in the dashboard next morning"
+  cost: M
+  depends_on: "Backend ingestion that accepts low-fps video plus scene names"
+  buyer: "Engineer or technical founder at an indie or mid-size mobile studio"
+  input: "Engine render target plus scene name plus touch events"
+  why_existing_tools_cannot: "Unity support at PostHog is alpha and IV Metrics caps at 50-100 videos a month with human review (market.md section 2); none exposes engine scene names to an AI analyser"
+  willingness_to_pay: "3 - IV Metrics sells the same raw capture at $49-99 per month (market.md section 2), so the plugin alone is low priced; the AI layer is the upsell"
+
+- id: sdk-8
+  title: "Anti-cheat compatibility pre-flight - a test harness that runs the capture SDK under EAC and BattlEye builds and publishes a pass/fail matrix per engine version"
+  level: L3
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, constraint-to-overcome: anti-cheat-conflict, game-platform-and-genre: competitive-multiplayer, effort: M-one-quarter, delivery-form: issue-tracker-ticket, buyer-org-type: aaa-studio}
+  object: "B-perspectives.yaml cto-or-engine-lead-veto: 'anti-cheat (EAC, BattlEye) may flag screen capture hooks'"
+  situation: "A PC shooter wants capture of 1 percent of lobbies; its anti-cheat flags the capture library's API hooks and bans 2 testers in beta"
+  consequence: "One false ban in beta stops the integration for a quarter and makes the engine lead refuse the next vendor"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Ship capture via the engine's own render callback only (no OS hooks), plus a vendor-signed allow-list request template"
+  shallow: false
+  mechanism: "CI job per engine version runs the SDK in a sandbox with the anti-cheat client active and records whether any flag fires; results published as a compatibility table"
+  example: "Release note: 'SDK 2.3 verified with Unreal 5.4 and EAC, no hook-based capture on PC'"
+  cost: M
+  depends_on: "Anti-cheat vendor test access; engine-level capture plugin"
+  buyer: "Lead engine programmer at a studio shipping a competitive PC multiplayer title"
+  input: "SDK build plus anti-cheat client in a test rig"
+  why_existing_tools_cannot: "Medal and Overwolf-style clippers rely on per-game integrations and consumer overlays (competitor-and-ua.md section 4); no source documents capture-versus-anti-cheat testing for analytics SDKs"
+  willingness_to_pay: "2 - gate, not a product; no price signal"
+
+- id: sdk-9
+  title: "Input side-channel format - touch and controller events stored as timestamped rows (about 2 KB per minute) aligned to video presentation timestamps instead of burned into frames"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: input-timing-and-hesitation, analysis-type: root-cause-of-a-metric-change, companion-data: touch-and-controller-input, lifecycle-moment: d1-to-d7, delivery-form: warehouse-table-export, constraint-to-overcome: joining-video-to-events}
+  object: "methods-churn-funnel.md section 2: UXCam rage-tap definition (at least 3 taps within a set radius, at most 300 ms apart) and section 6 INFERRED about Medal pairing inputs with video"
+  situation: "A designer wants every rage-tap and mis-swipe in level 7, but burned-in touch overlays can only be read by eye"
+  consequence: "With a side-channel the rage-tap rate per level is a SQL query over all sessions; with burned-in overlay it needs a vision model per frame"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 2: rage taps 'at least 3 taps within a set radius with at most 300 ms between taps'; section 6: 'synchronised input + video is worth more than video alone'"
+  proposed: "Define (t_ms, x, y, pointer_id, phase) rows plus a clock-offset record per clip; export as Parquet"
+  shallow: false
+  mechanism: "SDK logs raw input events with the same monotonic clock as the encoder, so any analysis can join video moments to exact taps; analyser flags unresponsive gestures on non-interactive art"
+  example: "Level 7: 18 percent of players tap a decorative crate 4+ times in 2 s, believing it is a button"
+  cost: S
+  depends_on: "Capture SDK with a monotonic clock shared between input and encoder"
+  buyer: "Lead designer and data scientist at a mobile studio"
+  input: "Touch events plus video timestamps"
+  why_existing_tools_cannot: "Event streams contain only instrumented events (methods-churn-funnel.md section 1 INFERRED); UXCam's rage taps are native-UI based and per-screen configurable, not for game canvases (section 2)"
+  willingness_to_pay: "2 - enabling data, no price signal; Medal-style input pairing is valued at hundreds of millions in the AI-training market (market.md section 4)"
+
+- id: sdk-10
+  title: "Battery-aware adaptive capture - drops to 1 fps/360p under 20 percent battery or low-power mode and publishes mAh per recorded minute per device class"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, constraint-to-overcome: device-performance, capture-trigger-and-sampling: random-sample, processing-location: on-device, companion-data: device-perf-counters, delivery-form: api-or-sdk, effort: S-weeks, game-platform-and-genre: mobile-midcore-f2p}
+  object: "B-perspectives.yaml player-opt-in: 'battery drain complaints in reviews'"
+  situation: "Capture adds 4 percent battery drain per 30 minutes; players write 1-star reviews about heat and battery"
+  consequence: "Each such review lowers store rating, which raises CPI; the studio kills the SDK after the first review spike"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none beyond the persona note; market.md section 7 of methods file: 'upload is the constraint' for cost, battery not quantified in any note"
+  proposed: "Policy table: battery >50 percent full rate, 20-50 percent 2 fps, under 20 percent or thermal 'fair' off"
+  shallow: false
+  mechanism: "SDK reads battery and thermal state every 30 s and steps capture rate down; per-device-class battery cost goes into the studio dashboard"
+  example: "A cohort on Pixel 6a shows 1.1 percent drain per hour at 2 fps; engine lead approves 5 percent sampling"
+  cost: S
+  depends_on: "Frame-budget governor"
+  buyer: "Community manager and engine lead at a mobile F2P studio"
+  input: "Battery level, thermal state, capture settings"
+  why_existing_tools_cannot: "No note quantifies battery cost of any replay SDK; session-replay vendors state data sizes (UXCam 200-800 KB iOS, methods-churn-funnel.md section 6) but not battery"
+  willingness_to_pay: "2 - gate, no price signal"
+
+- id: sdk-11
+  title: "Capture-cost simulator - web calculator turning installs/day, sample percent, minutes and bitrate into TB per day, S3 and egress bill, and cost per analysed session"
+  level: L4
+  cell: {buyer-role: finance-exec, video-source: own-players-consented-sdk, constraint-to-overcome: cost-per-session, pricing-model: freemium-self-serve, value-lever-b2b: de-risk-a-go-kill-decision, delivery-form: dashboard, effort: S-weeks, go-to-market-channel: self-serve}
+  object: "methods-churn-funnel.md section 7 INFERRED arithmetic: 100k installs/day x first 10 min at 1 Mbps = about 7.5 TB/day"
+  situation: "A studio CFO asks what 5 percent sampling of 100k daily installs costs before agreeing to a pilot"
+  consequence: "Without numbers the pilot stalls; with them the CFO sees storage at about $0.04 per player-hour per month and upload as the real constraint"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: S3 $0.023/GB-month, egress $0.09/GB, one stored player-hour about $0.04/month; full 30-min first session at 2 Mbps about 450 MB"
+  proposed: "Calculator also prints the PlaytestCloud equivalent (about EUR 113-141 per session) for comparison"
+  shallow: false
+  mechanism: "Static model plus the studio's own numbers; prints a per-session cost line and a sampling plan that fits a monthly budget"
+  example: "CFO sees 5 percent x 10 min = 375 GB/day, about $34/day egress at $0.09/GB, versus 5,000 recruited sessions at EUR 113 each"
+  cost: S
+  depends_on: "nothing"
+  buyer: "Studio CFO or VP finance evaluating the pilot"
+  input: "Installs per day, sample rate, bitrate, minutes, cloud prices"
+  why_existing_tools_cannot: "Vendors price per video cap or per token (IV Metrics 50-100 videos, PlaytestCloud tokens, market.md sections 1-2); none publishes a bytes-to-cost model"
+  willingness_to_pay: "1 - lead magnet, not paid; value is moving the CFO to a pilot"
+
+- id: sdk-12
+  title: "Customer-cloud processing - vendor analysis container runs in the studio's own bucket and VPC so pre-release footage never reaches the vendor"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: internal-qa-builds, constraint-to-overcome: studio-ip-and-prerelease-leak, processing-location: customer-cloud-byoc, buyer-org-type: aaa-studio, pricing-model: annual-enterprise-licence, lifecycle-moment: pre-launch-qa, delivery-form: warehouse-table-export, effort: L-multi-quarter}
+  object: "B-perspectives.yaml studio-ciso-security-review: 'vetoes cloud upload of pre-release footage'; market.md section 1 Antidote anti-leak SDK"
+  situation: "A AAA studio's unannounced game runs in a QA lab; the CISO asks for SOC 2, data residency and who at the vendor can watch footage"
+  consequence: "Without BYOC the vendor is blocked in AAA; with it the vendor sells a licence while holding no footage"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "market.md section 1: Antidote 'Anti-leak SDK watermarks a player ID on screen'; Antidote analyses in vendor cloud (AI Insights on recordings)"
+  proposed: "Helm chart plus a model bundle; the studio's key encrypts footage; vendor receives only aggregate counts and finding text"
+  shallow: false
+  mechanism: "Analysis workers deploy into the customer's account, read video from the customer's bucket, write tables and findings back; the vendor control plane sees metadata only"
+  example: "AAA action RPG pre-alpha: QA video stays in studio S3 in eu-central-1, findings land in Jira"
+  cost: L
+  depends_on: "Containerised pipeline and GPU capacity in the customer cloud"
+  buyer: "CISO / vendor-risk reviewer and QA director at an AAA studio"
+  input: "Internal QA-build video in the studio's bucket plus build metadata"
+  why_existing_tools_cannot: "Antidote and PlaytestCloud analyse in their own clouds (market.md section 1); Razer QA Companion is a marketplace SaaS (market.md section 3)"
+  willingness_to_pay: "3 - AAA pays enterprise prices (Sensor Tower median $75,000 per year, competitor-and-ua.md section 1) but no direct signal for BYOC video analytics"
+
+- id: sdk-13
+  title: "Crash-and-anomaly trigger - SDK flushes the 60 s ring buffer when frame time stays above 50 ms for 5 s, an ANR fires, or a crash precursor is logged, and attaches build and device metadata"
+  level: L4
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: bug-reproduction, capture-trigger-and-sampling: on-crash-or-anomaly, companion-data: crash-and-error-logs, delivery-form: issue-tracker-ticket, game-platform-and-genre: mobile-midcore-f2p, effort: M-one-quarter}
+  object: "methods-churn-funnel.md section 6 Sentry onErrorSampleRate (about the last minute before the error); market.md section 2 Bugsee 10 fps recording on crashes"
+  situation: "A weekly Android release crashes on 3 percent of Galaxy A-series devices; the crash log shows a null pointer, not what was on screen"
+  consequence: "QA spends days reproducing; the clip shows a shader glitch two seconds earlier"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "market.md section 2: Bugsee 'continuously records video of user actions at 10 fps ... attached to crashes'; Bugsee and Instabug are not game-specific and do no visual analysis"
+  proposed: "Ticket auto-created in Jira with clip, device model, build, and the VLM's one-line description of the anomaly"
+  shallow: false
+  mechanism: "Anomaly detectors on frame time, ANR and crash precursors flush the buffer; cloud VLM labels the frame range and groups by device model and build"
+  example: "42 clips from Adreno 610 devices share the same stretched-texture frame; one ticket is opened for all"
+  cost: M
+  depends_on: "Ring-buffer capture and the issue tracker integration"
+  buyer: "QA director at a studio shipping weekly on fragmented Android"
+  input: "Own-player ring buffer plus crash logs plus build and config metadata"
+  why_existing_tools_cannot: "Bugsee and Instabug attach video but do no game-specific visual analysis (market.md section 2); Razer and ManaMind work on QA builds, not shipped players (market.md section 3)"
+  willingness_to_pay: "3 - Razer claims up to 25 percent more bugs and 50 percent faster testing and sells on AWS Marketplace (market.md section 3); outsourced QA costs $15-50 per tester hour (adjacent-usecases.md section 1)"
+
+- id: sdk-14
+  title: "Sampling-bias corrector - remote-config controller that sets per-cohort capture quotas and stores the inclusion probability per session so video-derived rates can be reweighted"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: cohort-comparison, constraint-to-overcome: sampling-bias, capture-trigger-and-sampling: random-sample, delivery-form: warehouse-table-export, companion-data: telemetry-events, effort: M-one-quarter}
+  object: "methods-churn-funnel.md section 7: Wi-Fi-only upload knob (d) 'user-level sampling (e.g. 1-5% of new installs) with Wi-Fi-only upload'; section 3 INFERRED on data-scientist label quality"
+  situation: "Wi-Fi-only upload means clips come from players on home networks; the churners on mobile data in transit are missing"
+  consequence: "A model trained on the captured 3 percent over-states how many players read the tutorial card, because commuters never upload"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7 knob (d): 'Wi-Fi-only upload'; no note measures the bias"
+  proposed: "Each session row stores p_capture and p_upload; the table export includes a ready-made inverse-probability weight column"
+  shallow: false
+  mechanism: "Server decides sampling per cohort (device tier, country, install source), logs the probability, and weights downstream counts"
+  example: "Low-end Android is 38 percent of installs but 9 percent of clips; weights restore 38 percent in the FTUE report"
+  cost: M
+  depends_on: "Remote config in the SDK and the event join key"
+  buyer: "Studio data scientist owning the churn model"
+  input: "Capture decision log plus telemetry events plus device tier"
+  why_existing_tools_cannot: "Replay vendors sample by session count or error (Sentry sessionSampleRate, methods-churn-funnel.md section 6) without exposing inclusion probabilities for statistics"
+  willingness_to_pay: "2 - credibility feature; no price signal"
+
+- id: sdk-15
+  title: "Zero-effort join key - SDK writes the studio's session_id and event-clock offset into the video container and emits a 'video_clip_available' event into the studio's existing analytics stream"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, constraint-to-overcome: joining-video-to-events, delivery-form: warehouse-table-export, companion-data: telemetry-events, analysis-type: root-cause-of-a-metric-change, buyer-org-type: mid-size-studio, effort: S-weeks}
+  object: "methods-churn-funnel.md section 1: GameAnalytics 'Any Order' funnels versus Unity ordered funnels give different drop-off for the same players; A-frame assumption 'inputs and events alongside'"
+  situation: "The analytics head sees a drop at step 3 in Amplitude for build 1.8.2 and cannot find the clips of those 412 players"
+  consequence: "Each funnel step becomes a clickable list of clips, and the retention team stops asking engineering to hand-match session IDs"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 1 INFERRED: funnel quality is bounded by instrumentation; EA case paired funnel with Session Replay (Amplitude case study)"
+  proposed: "Adapters for Amplitude, GameAnalytics, Firebase and Unity Analytics that take the session_id as an SDK init argument"
+  shallow: false
+  mechanism: "SDK is initialised with the analytics session ID; every clip carries it plus the offset between event clock and video clock; a webhook posts a 'clip available' event back"
+  example: "Funnel step 'tutorial_3_complete' in Amplitude shows 'watch 5 sample clips' for the 412 players who dropped"
+  cost: S
+  depends_on: "Capture SDK; one adapter per analytics vendor"
+  buyer: "Head of analytics at a studio that already runs Amplitude, GameAnalytics or Snowflake"
+  input: "Studio session IDs and events plus video timestamps"
+  why_existing_tools_cannot: "Funnel tools stop at 'investigate' (Unity docs, methods-churn-funnel.md section 1); only the EA case paired funnel with replay, by manual means"
+  willingness_to_pay: "3 - Amplitude buyers pay for replay add-on (EA case, methods-churn-funnel.md section 1); no separate price for the join"
+
+- id: sdk-16
+  title: "OEM/analytics-SDK embedded capture - licensing the capture module to an analytics or MMP SDK so 'see why' ships inside an SDK already installed in thousands of games"
+  level: L3
+  cell: {buyer-role: white-label-vendor, video-source: own-players-consented-sdk, constraint-to-overcome: integration-effort-per-engine, pricing-model: oem-royalty-or-white-label, go-to-market-channel: oem-white-label, delivery-form: white-label-embed, buyer-org-type: analytics-or-mmp-vendor, effort: requires-partner-or-platform-deal}
+  object: "B-perspectives.yaml analytics-or-attribution-vendor-white-label; market.md section 6 GameAnalytics IQ Suite and MCP server"
+  situation: "A game-analytics SaaS with its SDK in 5,000 games wants video but cannot build a 2-ms-budget encoder"
+  consequence: "Distribution and consent plumbing already exist, so the capture vendor skips per-studio sales; vendor loses direct customer relationship"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "market.md section 6: GameAnalytics added IQ Suite (Oct 2025), MCP server (Feb 2026) and 'Live Map' session replay, 'No video'"
+  proposed: "Per-active-device royalty and a feature flag in the host SDK"
+  shallow: false
+  mechanism: "Capture and masking module compiled into the host SDK; analysis runs in vendor cloud; host sells 'session video insights' tier"
+  example: "Analytics vendor adds a 'Why drop' tab to its funnel view powered by the module"
+  cost: L
+  depends_on: "Stable SDK with frame-budget governor and consent kit"
+  buyer: "Product lead at an analytics or MMP vendor"
+  input: "Host-SDK session IDs plus screen video"
+  why_existing_tools_cannot: "GameAnalytics has session replay without video (market.md section 6); PostHog Unity is screenshot-only (market.md section 2)"
+  willingness_to_pay: "3 - licence-shaped deal; Sensor Tower bought data.ai, Video Game Insights and Playliner to extend coverage (competitor-and-ua.md section 1) shows acquirers pay for distribution"
+
+- id: sdk-17
+  title: "Child-account gate - SDK reads the game's age-gate result and region, disables capture and upload for under-13 (US) and under-16 (GDPR default) players unless a parental-consent token exists"
+  level: L4
+  cell: {buyer-role: accessibility-compliance, video-source: own-players-consented-sdk, constraint-to-overcome: minors-coppa-gdpr-k, capture-trigger-and-sampling: targeted-cohort, processing-location: on-device, delivery-form: api-or-sdk, effort: S-weeks, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "B-perspectives.yaml player-opt-in 'adult and minor' and privacy-regulator-counsel 'minors, retention'"
+  situation: "A casual game has 18 percent of players under 13; capture is on for 3 percent of all sessions"
+  consequence: "Recording a child without parental consent exposes the studio to COPPA and GDPR-K claims; one incident ends the programme"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none"
+  proposed: "Default-off for unknown ages, capture only when age-gate=adult, region table kept in remote config"
+  shallow: false
+  mechanism: "SDK init takes an age-status enum and region; capture is gated and no frame is buffered for gated players"
+  example: "Kids' puzzle game: capture runs only for the 4 percent of sessions with parent-verified accounts"
+  cost: S
+  depends_on: "Studio's age-gate signal"
+  buyer: "Privacy counsel and product lead at a casual or family-game studio"
+  input: "Age-gate status, region, consent token"
+  why_existing_tools_cannot: "PlaytestCloud offers kids' playtests with recruited consent (market.md section 1) but no production-SDK gate exists in the notes"
+  willingness_to_pay: "2 - necessary gate; no price signal"
+
+- id: sdk-18
+  title: "App-kill classifier - at backgrounding, SDK records the last screen label and whether a phone call, notification tap or app switch preceded it, separating rage quit from interruption"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: churn-prediction-features, lifecycle-moment: d1-to-d7, constraint-to-overcome: ground-truth-labels, companion-data: telemetry-events, delivery-form: warehouse-table-export, processing-location: on-device}
+  object: "methods-churn-funnel.md section 2 INFERRED: 'the exact screen state at the moment of app kill (rage quit vs. interruption)'"
+  situation: "A level has 22 percent of sessions ending there; some quit on the fail screen, some were interrupted by a call"
+  consequence: "Churn labels are polluted; designers re-tune a level whose quits were calls"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 2: Sony patent defines rage quitting; disconnects scored 2 vs menu exits 1; no source separates interruption from frustration"
+  proposed: "Each session end row gets quit_type in {fail_screen_quit, menu_quit, interruption, crash} with the last 3 s of frames if consented"
+  shallow: false
+  mechanism: "SDK joins the final screen classification with OS lifecycle events (call, notification, task switch) to label session ends"
+  example: "Level 14: 61 percent of exits are interruptions at the reward screen; only 14 percent are fail-screen quits"
+  cost: S
+  depends_on: "On-device screen-state classifier"
+  buyer: "Lead designer and data scientist at a mobile studio"
+  input: "Last screen label, OS lifecycle events, optional 3 s of frames"
+  why_existing_tools_cannot: "Event analytics sees session end but not the screen state or the cause (methods-churn-funnel.md section 2 INFERRED)"
+  willingness_to_pay: "2 - feature in a churn stack; no direct price"
+
+- id: sdk-19
+  title: "Per-device-model overhead and rendering report - build-to-build visual diff of the same scene across 40 device models from the player ring buffers of the first 1,000 sessions after release"
+  level: L4
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: build-to-build-regression-diff, lifecycle-moment: new-version-release, delivery-form: alert-or-slack, capture-trigger-and-sampling: targeted-cohort, companion-data: build-and-config-metadata, effort: M-one-quarter}
+  object: "adjacent-usecases.md section 6: compatibility testing of a major mobile title can need 500 to 2,000+ device-OS combinations"
+  situation: "Release 2.4 ships; the first 1,000 sessions on Android 14 cover 40 device models in 2 hours"
+  consequence: "Visual regressions on 3 models are alerted on release day instead of through 1-star reviews"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "adjacent-usecases.md section 6: 'same build can run 60 fps on a flagship and 24 fps on a mid-tier phone'; 'video-only analysis competes with cheap counters for fps; its edge is rendering/visual defects per device model'"
+  proposed: "Compare same-scene keyframes by build and device with a VLM and flag deltas above a threshold"
+  shallow: false
+  mechanism: "Targeted cohort capture on first release hours; VLM compares same-scene frames between builds and per device model"
+  example: "Build 2.4: water shader renders pink on Mali-G57; Slack alert 90 minutes after release"
+  cost: L
+  depends_on: "Scene-name tagging and the anomaly trigger"
+  buyer: "QA director of a studio shipping weekly on fragmented Android"
+  input: "Ring-buffer clips plus build and device metadata"
+  why_existing_tools_cannot: "Device clouds cover 100 to 3,000 devices in a lab at per-hour cost (adjacent-usecases.md section 6) and VLMs show only precision about 0.50 on zero-shot QA video (adjacent-usecases.md section 1), so a lab-plus-field diff is not offered"
+  willingness_to_pay: "3 - device lab $40-100k estimate and per-device-hour pricing (adjacent-usecases.md sections 1 and 6)"
+
+- id: sdk-20
+  title: "Cloud-gaming server-side frame tap - capture from the encoder of a streamed session so the player's device has zero overhead and consent is part of the session start"
+  level: L3
+  cell: {buyer-role: platform-owner, video-source: cloud-gaming-server-render, signal-extracted: ui-state-and-screen-flow, constraint-to-overcome: device-performance, game-platform-and-genre: cloud-streamed, processing-location: edge-or-platform-server, effort: requires-partner-or-platform-deal, pricing-model: free-with-platform}
+  object: "market.md section 1: Antidote 'cloud-streaming playtesting'"
+  situation: "A cloud-gaming operator renders 20,000 concurrent sessions; each already has an encoded stream and an input log"
+  consequence: "Capture cost on the device is zero, and the operator can offer game studios per-title reports as a platform perk"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "market.md section 1: Antidote also offers cloud-streaming playtests (for recruited testers only)"
+  proposed: "Operator exposes an opt-in per title; analysis runs at the edge on the encode path"
+  shallow: false
+  mechanism: "Tap the pre-encode frame buffer at 1-2 fps with the input log; run analysis in the operator's GPU cluster"
+  example: "Operator shows publishers 'where players quit your game's first 10 minutes' for all titles on its platform"
+  cost: L
+  depends_on: "Cloud-gaming platform partner"
+  buyer: "Platform product lead at a cloud-gaming operator"
+  input: "Server-side frames plus input log"
+  why_existing_tools_cannot: "Antidote's cloud-streaming playtests cover recruited testers only (market.md section 1); no vendor in the notes taps production cloud sessions"
+  willingness_to_pay: "2 - free-with-platform means indirect value; no price signal"
+
+- id: sdk-21
+  title: "Console 'send this clip to the developer' button - player-initiated share-sheet integration that attaches the last 60 s from the platform recorder plus build metadata to a support ticket"
+  level: L4
+  cell: {buyer-role: player-support, video-source: console-share-and-platform-clips, signal-extracted: visual-errors-and-glitches, analysis-type: bug-reproduction, constraint-to-overcome: closed-console-platform-rules, capture-trigger-and-sampling: on-player-report, delivery-form: issue-tracker-ticket, game-platform-and-genre: console}
+  object: "adjacent-usecases.md section 9: Resolution Games and Arrowhead support pages ask players for recordings 'especially videos'; NOT FOUND any vendor for a rolling last-30-seconds buffer attached to a ticket"
+  situation: "A console player hits a soft-lock; they have a platform clip but no way to send it with the build number"
+  consequence: "Tickets with video and build ID are triaged in minutes; text-only tickets stall"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "adjacent-usecases.md section 9: players self-record and attach; 'no off-the-shelf vendor of a rolling last-30-seconds game-client buffer attached to a ticket'; market.md section 4: Medal auto-clipping API saves a clip on the player's PC"
+  proposed: "Use the console's own share API and a deep link carrying build and save-state hash"
+  shallow: false
+  mechanism: "In-game menu calls the platform clip API, uploads via the studio's support endpoint, VLM summarises the clip into the ticket"
+  example: "Soft-lock in act 2: ticket arrives with a 45 s clip, summary 'player stuck behind closed door; key item missing' and build 1.3.4"
+  cost: M
+  depends_on: "Platform holder certification for the upload path"
+  buyer: "Head of player support at a console or PC studio"
+  input: "Platform-recorded clip plus build metadata"
+  why_existing_tools_cannot: "Helpshift auto-captures device and session state but no video is confirmed (adjacent-usecases.md section 9); Medal's clip API is for PC auto-clipping and returns no analysis"
+  willingness_to_pay: "2 - Helpshift is described as expensive (Capterra, adjacent-usecases.md section 9); no price for the clip piece"
+
+- id: sdk-22
+  title: "Metered per-clip-minute pricing with an SDK-enforced monthly budget cap that turns capture off through remote config when spend hits the limit"
+  level: L4
+  cell: {buyer-role: finance-exec, video-source: own-players-consented-sdk, constraint-to-overcome: cost-per-session, pricing-model: per-hour-of-video, value-lever-b2b: replace-labour-hours, delivery-form: api-or-sdk, effort: S-weeks, automation-level: closed-loop-in-game-action}
+  object: "market.md section 'Signals of willingness to pay': PlaytestCloud about EUR 113-141 per recorded session; IV Metrics 50-100 videos per month caps"
+  situation: "A studio pilots capture on 3 percent of installs; a viral UA burst triples installs and the bill with it"
+  consequence: "The CFO sees a hard ceiling (for example EUR 2,000 a month) and signs the pilot; no surprise invoice"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "market.md: PlaytestCloud Basic EUR 13,560/yr for 120 tokens; IV Metrics Pro $99/month for 100 videos; both fixed caps"
+  proposed: "Dashboard budget slider and a remote-config kill rule at 100 percent of budget"
+  shallow: false
+  mechanism: "Server meters analysed minutes and, at the budget cap, lowers the SDK's sampling rate to zero for new sessions"
+  example: "Budget EUR 2,000; UA burst triples installs; sampling falls from 3 percent to 1 percent by day 9 automatically"
+  cost: S
+  depends_on: "Remote config and metering"
+  buyer: "Studio CFO or VP at a mid-size studio"
+  input: "Metering counters and budget"
+  why_existing_tools_cannot: "Competitors sell fixed video caps or tokens (market.md section 2 and 1), not usage that follows installs with a cap"
+  willingness_to_pay: "3 - buyers are accustomed to PlaytestCloud's EUR 13.6k-33.9k per year token model; a capped usage price is easier to buy"
+
+- id: sdk-23
+  title: "Player-facing transparency viewer and deletion API - local 'what was recorded' list with a delete button, and a per-player_id erase endpoint with a 24 h SLA"
+  level: L4
+  cell: {buyer-role: accessibility-compliance, video-source: own-players-consented-sdk, constraint-to-overcome: privacy-and-consent, delivery-form: api-or-sdk, effort: S-weeks, automation-level: auto-created-ticket-or-asset, buyer-org-type: mid-size-studio, game-platform-and-genre: mobile-midcore-f2p}
+  object: "market.md section 4: Microsoft Muse trained on matches recorded under the EULA 'which drew criticism over consent'; market.md section 2: Bugsee GDPR warning"
+  situation: "A player posts on Reddit 'this game records my screen'; the community manager needs to show what was kept and delete it"
+  consequence: "Without a viewer the studio answers GDPR erasure requests by hand; the post becomes a review-bomb theme"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "market.md section 4: Muse criticism over consent; section 2: 'Third-party warning about GDPR/HIPAA masking and consent for video capture'"
+  proposed: "Settings screen listing clips with date and trigger; delete button; API that erases cloud copies and derived labels"
+  shallow: false
+  mechanism: "SDK keeps a manifest of uploaded clips per player; erase propagates to storage and derived tables"
+  example: "Player requests deletion on Monday; manifest shows 3 clips; all gone from storage and tables by Tuesday"
+  cost: M
+  depends_on: "Clip manifest and storage lifecycle"
+  buyer: "Community manager and privacy counsel at a studio"
+  input: "Player ID plus clip manifest"
+  why_existing_tools_cannot: "Replay vendors leave consent and deletion to the app developer (market.md section 2 on masking and consent warnings)"
+  willingness_to_pay: "2 - necessary plumbing; no price signal"
+
+- id: sdk-24
+  title: "Pixel-arousal timeline on device - lab-trained model reads gameplay pixels at 1 fps and emits an arousal score per second with no face camera and no frame upload"
+  level: L4
+  cell: {buyer-role: ux-research, video-source: own-players-consented-sdk, signal-extracted: emotion-arousal-from-pixels, analysis-type: churn-prediction-features, constraint-to-overcome: accuracy-and-trust, processing-location: on-device, delivery-form: warehouse-table-export, effort: L-multi-quarter, capture-trigger-and-sampling: opt-in-panel}
+  object: "methods-churn-funnel.md section 5: Makantasis et al. ACII 2019, arousal from gameplay pixels over 78 percent accuracy on average; AGAIN dataset of 1,100 videos from 9 games"
+  situation: "A studio wants a frustration proxy per level from 20,000 players without face cameras"
+  consequence: "Label of arousal per level correlates with quits; but 78 percent average accuracy means a fifth of seconds are wrong and per-game tuning is needed"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 5: 'arousal predicted from gameplay video alone, over 78% accuracy on average and 98% at best'; section 5 INFERRED: face cam adds consent and biometric-law cost for unclear lift"
+  proposed: "Emit only the score timeline; disclose emotion inference in the consent sheet (EU AI Act Art. 50(3) in methods-churn-funnel.md section 7)"
+  shallow: false
+  mechanism: "Pretrained pixel-to-arousal model on the NPU at 1 fps; sends per-second scores, never frames; studio gets arousal curves per level"
+  example: "Platformer level 6: arousal spikes at the 2nd checkpoint for players who quit within 3 minutes"
+  cost: L
+  depends_on: "Per-genre calibration data and a disclosure line in consent"
+  buyer: "UX researcher and lead designer at a mid-size studio"
+  input: "On-device frames at 1 fps; opt-in panel"
+  why_existing_tools_cannot: "Affectiva, iMotions and Realeyes need a face cam or biometrics, and Player Research says biometrics are 'often oversold' (market.md sections 1 and 7)"
+  willingness_to_pay: "2 - interesting but unproven; no price signal and an EU AI Act disclosure duty"
+
+- id: sdk-25
+  title: "Load-screen timer - detects loading and wait screens in the 1 fps stream and reports seconds per load by device model, scene and build"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: load-and-wait-screens, analysis-type: build-to-build-regression-diff, lifecycle-moment: new-version-release, constraint-to-overcome: per-game-ui-generalisation, delivery-form: dashboard, companion-data: device-perf-counters, effort: M-one-quarter}
+  object: "adjacent-usecases.md section 6: 'reliable fps/load measurement uses in-game profiling or GameBench rather than video alone'; market.md section 3 HeadSpin CEO quote 'over 30 per cent of people left their game due to a bad experience'"
+  situation: "Build 3.1 adds 4 s to the first-load screen on 2-GB phones and D1 slips 1.5 points"
+  consequence: "Profiling counters exist in lab builds only; field load time shows up in video without extra code"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "adjacent-usecases.md section 6 INFERRED: 'video-only analysis competes with cheap counters for fps; its edge is rendering/visual defects per device model and no-SDK use on shipped builds'"
+  proposed: "Load-screen classifier plus per-device-model percentile table"
+  shallow: false
+  mechanism: "Classifier labels frames as load, menu or play; duration between labels yields load seconds per cohort"
+  example: "Median load goes from 9 s to 13 s on devices with 2 GB RAM after update 3.1"
+  cost: M
+  depends_on: "Screen-state classifier"
+  buyer: "Engineering and performance lead at a mobile studio"
+  input: "On-device frames at 1 fps plus device model"
+  why_existing_tools_cannot: "HeadSpin and GameBench measure on lab devices (adjacent-usecases.md section 6); in-game profiling needs instrumentation per scene"
+  willingness_to_pay: "2 - GameBench is enterprise priced but counters are cheap (adjacent-usecases.md section 6); video-only edge is thin"
+
+- id: sdk-26
+  title: "REFUSE: face-camera capture inside the game SDK"
+  level: L3
+  cell: {buyer-role: ux-research, video-source: own-players-consented-sdk, signal-extracted: facecam-expression, analysis-type: coaching-feedback, constraint-to-overcome: player-opt-in-rate, companion-data: facecam, capture-trigger-and-sampling: opt-in-panel, buyer-org-type: mid-size-studio}
+  object: "methods-churn-funnel.md section 5 INFERRED: 'Face cam adds consent and biometric-law cost for unclear lift'"
+  situation: "A research lead asks the SDK to open the front camera during FTUE for 2,000 players"
+  consequence: "The camera permission prompt costs a large share of FTUE completions (no number in the notes) and EU biometric rules apply; gameplay features beat facial features for frustration in a 20-player study, so lift is unproven"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 5: 'gameplay-feature models were significantly more accurate than facial-feature models for perceived frustration'; Antidote already captures face video for recruited testers (market.md section 1)"
+  proposed: "Keep face video to recruited playtests only; do not put it in the production SDK"
+  shallow: false
+  mechanism: "Front camera stream analysed for expressions, synced to gameplay"
+  example: "Refused example: expression timeline on 2,000 production players"
+  cost: L
+  depends_on: "Camera permission flow and biometric consent"
+  buyer: "UX research lead at a studio"
+  input: "Facecam plus gameplay video"
+  why_existing_tools_cannot: "Antidote and iMotions already do this for recruited testers (market.md sections 1 and 7); the production version is not wanted because of consent cost"
+  willingness_to_pay: "1 - refused; opt-in cost and biometric obligations outweigh unproven lift"
+
+- id: sdk-27
+  title: "REFUSE: always-on full-session 30 fps 720p recording of every player"
+  level: L3
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, constraint-to-overcome: bandwidth-and-storage, capture-trigger-and-sampling: always-on-ring-buffer, effort: L-multi-quarter, processing-location: vendor-cloud}
+  object: "methods-churn-funnel.md section 7 INFERRED: 30-minute first session at 2 Mbps is about 450 MB; 100k installs/day at 1 Mbps for 10 min is 7.5 TB/day"
+  situation: "A product lead asks for 'every session, full quality' on a game with 100k installs per day"
+  consequence: "Upload exceeds the game download itself, drains battery, and 7.5 TB/day ingest is a cost line without matching value because UI state needs no 30 fps"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: 'Full capture is unrealistic on mobile ... must wait for Wi-Fi'; 720p H.264 at 5-10 Mbps is 2.3-4.6 GB/hour"
+  proposed: "Sample and trigger instead (sdk-1) or send labels (sdk-2)"
+  shallow: false
+  mechanism: "Continuous full-rate capture and upload of everything"
+  example: "Refused example: 100,000 first sessions a day at full rate"
+  cost: L
+  depends_on: "Unlimited upload budget"
+  buyer: "Product lead"
+  input: "Full-rate screen video"
+  why_existing_tools_cannot: "Replay tools avoid it by screenshots at timed intervals (UXCam, methods-churn-funnel.md section 6)"
+  willingness_to_pay: "1 - refused; a cost line with no extra insight over sampled capture"
+
+- id: sdk-28
+  title: "REFUSE: OS-level screen capture through accessibility services or always-granted screen-recording permission to avoid per-game integration"
+  level: L3
+  cell: {buyer-role: product-retention, video-source: platform-or-emulator-capture, constraint-to-overcome: store-or-platform-policy, capture-trigger-and-sampling: always-on-ring-buffer, effort: S-weeks, go-to-market-channel: self-serve, game-platform-and-genre: mobile-midcore-f2p}
+  object: "methods-churn-funnel.md section 7 VERIFIED: Apple Feb 2019 crackdown on Glassbox-style screen recording; App Store consent and visual-indicator rule"
+  situation: "An engineer proposes a single Android accessibility-service app that records any game, to skip engine integration"
+  consequence: "Store policy on screen recording and accessibility-service misuse puts the host app at risk of removal; Apple took action on screen recorders within a day in 2019"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7: Apple told developers to remove or disclose screen-recording analytics; 'one developer given less than a day to comply'"
+  proposed: "Use engine render-target capture (sdk-7) or a platform partner (sdk-4)"
+  shallow: false
+  mechanism: "Single overlay or accessibility app records the screen of whichever game is foreground"
+  example: "Refused example: a 'game helper' app recording all foreground games on a phone"
+  cost: M
+  depends_on: "Permissions the stores treat as sensitive"
+  buyer: "Competitive-intel or product teams"
+  input: "OS-level screen frames"
+  why_existing_tools_cannot: "Not applicable; it is refused because store policy (Apple Feb 2019) already acts against undisclosed screen recording"
+  willingness_to_pay: "1 - refused; platform removal risk"
+
+- id: sdk-29
+  title: "REFUSE: bundling gameplay-video licensing to AI-training buyers under the analytics consent"
+  level: L3
+  cell: {buyer-role: data-buyer-training, video-source: own-players-consented-sdk, analysis-type: training-dataset-export, delivery-form: licensed-dataset, pricing-model: data-licence-per-hour, constraint-to-overcome: privacy-and-consent, companion-data: touch-and-controller-input, value-lever-b2b: produce-a-sellable-asset}
+  object: "market.md section 4: Worldmodeldata licensed nearly 1M hours; Microsoft Muse trained on Bleeding Edge matches under the EULA, 'drew criticism over consent'"
+  situation: "A studio asks the SDK to reuse the analytics-consented clips as a licensable dataset of video plus inputs"
+  consequence: "A player who accepted 'help us fix level 4' did not agree to AI-training resale; opt-in rate on the combined sheet falls and a Reddit backlash follows"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "market.md section 4: Worldmodeldata licensed about 1M hours; Origin Lab 500k+ hours from 250+ games; Muse consent criticism over EULA recording"
+  proposed: "If ever built, a second consent toggle and a separate pipeline; the SDK engineer will not extend the analytics consent"
+  shallow: false
+  mechanism: "Export of consented clips plus input rows as a licensed dataset to world-model labs"
+  example: "Refused example: a studio lists 100k hours of its players' clips with Origin Lab"
+  cost: M
+  depends_on: "Separate consent flow, legal review, clip manifest"
+  buyer: "AI lab or data broker buying gameplay video plus inputs"
+  input: "Own-player clips plus touch inputs plus events"
+  why_existing_tools_cannot: "Medal and General Intuition own this on PC (market.md section 4); mobile footage with touch inputs is rarer, but consent coupling is the blocker"
+  willingness_to_pay: "2 - buyers exist (Worldmodeldata, Origin Lab, OpenAI's reported $500M Medal offer, market.md section 4) but the SDK path is refused until a separate consent exists"
+
+- id: sdk-30
+  title: "Pre-release leak tripwire - tester-ID watermark and capture kill-switch tied to a 'unannounced content' build flag, with a perceptual-hash scan of uploads for leaked scenes"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: internal-qa-builds, constraint-to-overcome: studio-ip-and-prerelease-leak, buyer-org-type: aaa-studio, lifecycle-moment: pre-launch-qa, delivery-form: enforcement-or-cert-evidence-pack, capture-trigger-and-sampling: targeted-cohort, effort: M-one-quarter, pricing-model: annual-enterprise-licence}
+  object: "market.md section 1: Antidote Anti-leak SDK 'watermarks a player ID on screen' (Windows and Android auto-inject only)"
+  situation: "A closed beta of 500 testers; a clip of an unannounced boss appears on Twitter 3 days in"
+  consequence: "With a watermark and per-scene scan the studio identifies the tester in minutes; without it, the studio revokes access for the entire cohort"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "market.md section 1: Antidote 'Auto-Inject SDK is Windows and Android only'"
+  proposed: "iOS and console coverage via engine plugin; scan public posts (public-streams-and-ugc) against build hashes"
+  shallow: false
+  mechanism: "Watermark per tester ID in the render path, capture off on flagged scenes, perceptual hash of known-secret scenes matched against public video"
+  example: "Twitter clip of the boss matches build hash; watermark decodes to tester 211; account revoked in 30 minutes"
+  cost: M
+  depends_on: "Engine plugin and a public-video crawler"
+  buyer: "Studio security lead and QA director at an AAA studio"
+  input: "Tester builds with watermark plus public video"
+  why_existing_tools_cannot: "Antidote's watermark is limited to Windows and Android and tied to its own playtest product (market.md section 1)"
+  willingness_to_pay: "3 - AAA leak fear and Antidote bothers to build it; no direct price"

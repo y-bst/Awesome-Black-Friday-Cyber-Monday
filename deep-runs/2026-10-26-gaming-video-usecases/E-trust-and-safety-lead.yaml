@@ -1,0 +1,629 @@
+- id: tns-1
+  title: "Report button auto-attaches a 90-second ring-buffer clip with kill-feed and player-name OCR to the moderation ticket"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: evidence-pack-for-enforcement, capture-trigger-and-sampling: on-player-report, delivery-form: issue-tracker-ticket, game-platform-and-genre: competitive-multiplayer}
+  object: "Activision/Modulate case study figure 'only about 23% of player reports contained actionable evidence' (adjacent-usecases.md section 3)"
+  situation: "A player taps Report on a teammate after a round; today the ticket holds a name and a category, and the moderator has no footage."
+  consequence: "Moderators close roughly 77% of reports for lack of evidence; with a clip each report becomes decidable in one review of 90 seconds."
+  p_typical: 0.25
+  grounded: quote
+  evidence: "adjacent-usecases.md section 3: 'only about 23% of player reports contained actionable evidence'; section 9: 'NOT FOUND: no off-the-shelf vendor of a rolling last-30-seconds game-client buffer attached to a ticket'"
+  proposed: "Ring buffer of 90 s on device, uploaded only when Report is pressed; OCR reads the kill feed lines and the names in the HUD and writes them into the ticket fields."
+  shallow: false
+  mechanism: "On report, the SDK uploads the buffered 90 s; a game-specific OCR/UI detector extracts accused player ID, kill-feed entries and the timestamp of the first contested event; the ticket is created with those fields filled."
+  example: "5v5 shooter: player reports 'aimbot'; ticket arrives with clip, three kill-feed lines naming the accused and a marker at 0:41 where the accused turns 180 degrees and kills in 0.2 s."
+  cost: M
+  depends_on: "capture SDK with ring buffer and consent prompt; a report button in the client; a ticket queue (Jira/Zendesk) with an API"
+  buyer: "Trust and safety lead at a mid-size or AAA studio running a competitive multiplayer title"
+  input: "Consented on-device screen video (ring buffer) plus the report payload (reporter ID, accused ID, match ID)"
+  why_existing_tools_cannot: "Voice and text moderation (Modulate, GGWP) never see the screen, and the support clip buffers (Fullview, Screendesk) are non-game browser tools; no game-client buffer attached to a ticket was found (adjacent-usecases.md sections 3 and 9)."
+  willingness_to_pay: "4 - Modulate lists up to USD 20,000/month for voice hours and Activision runs it at scale (adjacent-usecases.md section 3), so T&S has a budget line for evidence; priced here per report-clip or per MAU."
+
+- id: tns-2
+  title: "Second-look review of a server-flagged cheater: the AI watches the 30-second clip around the flag and recommends confirm, refute or escalate before any ban"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: player-skill-and-mechanics, analysis-type: evidence-pack-for-enforcement, companion-data: touch-and-controller-input, automation-level: recommendation, constraint-to-overcome: accuracy-and-trust, value-lever-b2b: reduce-cost-per-incident}
+  object: "Server-side LSTM 'reached 88.6% accuracy with 0.97% false-positive rate' and FACEIT 'no ban is triggered solely by its flag' (adjacent-usecases.md section 2)"
+  situation: "An ML layer flags 1,000 accounts in a week; at 0.97% false positives on, say, 100,000 reviewed accounts about 970 innocent players are flagged."
+  consequence: "Wrongful bans produce appeals, refunds and press; a visual second opinion lowers the number of accounts a human must open."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "adjacent-usecases.md section 2: authors 'stress false accusations as the key risk'; FACEIT: 'no ban is triggered solely by its flag'"
+  proposed: "Flag event triggers a clip upload; the AI lines up input trace and video and returns a verdict with the frames it relied on; humans see only 'refute' and 'escalate' cases."
+  shallow: false
+  mechanism: "VLM plus input-trace comparison on the clip around a server flag; outputs a three-way verdict and the 3 frames that support it; refuted cases are auto-cleared from the review queue."
+  example: "Battle royale: flag for 'inhuman recoil control'; clip shows the player using a controller with strong aim-assist and a legitimate spray pattern; verdict 'refute', account stays unbanned."
+  cost: M
+  depends_on: "server-side flagging model already in place; event-triggered clip capture; input trace alongside video"
+  buyer: "Trust and safety lead or anti-cheat operations manager at a studio or tournament platform"
+  input: "Event-triggered video clip plus input trace plus the server flag score and features"
+  why_existing_tools_cannot: "Anybrain and FACEIT's Human Input Detection judge inputs, not pixels, and only Anybrain mentions supporting appeals; no vendor of vision-based review of flags was found (adjacent-usecases.md section 2)."
+  willingness_to_pay: "3 - no public anti-cheat price exists (adjacent-usecases.md section 2, 'enterprise quote only'); value is fewer appeals and refunds."
+
+- id: tns-3
+  title: "Pixel-bot and aimbot trajectory detector: compares crosshair motion in the clip against the touch or controller input trace"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: bot-or-fraud-behaviour, analysis-type: anomaly-alert, companion-data: touch-and-controller-input, constraint-to-overcome: anti-cheat-conflict, processing-location: edge-or-platform-server, game-platform-and-genre: competitive-multiplayer}
+  object: "'computer-vision aimbots (read the screen, evade memory scanning)' and FACEIT's statement that AI-based and DMA cheats were 40% of cheating bans in May 2026 (adjacent-usecases.md section 2)"
+  situation: "A screen-reading bot moves the crosshair with injected mouse events; memory scanners see nothing, and the input trace shows movement that does not correspond to any human wrist path."
+  consequence: "Cheats that evade memory scanning survive; 40% of May 2026 FACEIT cheating bans were AI or DMA cheats."
+  p_typical: 0.12
+  grounded: quote
+  evidence: "adjacent-usecases.md section 2: 'vision-cheat growth (screen-reading bots) is the reason video-level detection is a live problem; sellers of it are few'"
+  proposed: "Per-match feature: ratio of on-screen target-acquisition frames to input events, flagged when acquisition occurs in under 100 ms with zero overshoot across 20 kills."
+  shallow: false
+  mechanism: "Detect target and crosshair position per frame, compute acquisition latency and overshoot, and score against the input trace; flags matches where video and input agree too perfectly or disagree with the human motor profile."
+  example: "Tactical shooter: account scores 11 flick kills with 0 px overshoot and 70 ms acquisition in one match; alert goes to the T&S queue with the clip."
+  cost: L
+  depends_on: "game-specific crosshair and enemy detector; clip plus input capture; baseline human distribution per game"
+  buyer: "Anti-cheat or trust and safety lead at a PC competitive-shooter studio"
+  input: "Event-triggered clips plus raw input stream and server hit events"
+  why_existing_tools_cannot: "Riot Vanguard and Ricochet work on kernel and server-side input signals, not video; the only vision work found is academic (VADNet, arXiv 2103.10031) (adjacent-usecases.md section 2)."
+  willingness_to_pay: "3 - Anybrain claims >99% detection but publishes no price; FACEIT built its own layer in Season 9 (5 Aug 2026), showing the operators fund this themselves (adjacent-usecases.md section 2)."
+
+- id: tns-4
+  title: "Emulator and bot-farm cluster detector: finds hundreds of accounts whose captured screen flows are frame-identical"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: platform-or-emulator-capture, signal-extracted: bot-or-fraud-behaviour, analysis-type: cohort-comparison, effort: requires-partner-or-platform-deal, buyer-org-type: platform-or-store, game-platform-and-genre: mobile-midcore-f2p, pricing-model: per-mau}
+  object: "'fraud (bots and emulator farms)' visible on screen; platform-owner perspective 'video of thousands of games without an SDK' (B-perspectives.yaml); Medal 'about 2 billion clips/year' (market.md section 4)"
+  situation: "A mobile RPG's event leaderboard is topped by 300 accounts that all open the same 7 screens in the same order with tap timing variance under 30 ms."
+  consequence: "Real players abandon the leaderboard; bot rewards inflate the economy; today detection depends on server timing signals the botter has learned to randomise."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 2: 'players submit video clips of suspected cheaters... volunteer Discord groups'; no source covers bot-farm detection from video"
+  proposed: "Hash the sequence of detected UI states per session, cluster sessions with identical sequences and sub-human timing variance, return account lists."
+  shallow: false
+  mechanism: "UI-state sequence fingerprinting on sampled platform-side video; clusters of near-identical flows with scripted tap cadence are scored as farms."
+  example: "Emulator vendor samples 1% of sessions of a gacha game; finds 312 accounts running the same 9-screen daily loop with 11 ms timing variance; sends the list to the studio."
+  cost: L
+  depends_on: "emulator or platform capture deal; per-title UI-state detector; account ID mapping"
+  buyer: "Trust and safety or fraud lead at a mobile studio, or platform-integrity lead at an emulator or app-store owner"
+  input: "Platform-side screen video of emulator sessions plus account and device IDs"
+  why_existing_tools_cannot: "Session replay and event analytics see accounts one at a time and tools reading store metadata do not see play at all (competitor-and-ua.md section 1; market.md section 2 'Does NOT do')."
+  willingness_to_pay: "2 - no price evidence in the notes; buyer signal is the platform-owner perspective only and the deal needs a partner."
+
+- id: tns-5
+  title: "On-screen UGC moderation: OCR and vision over player-made signs, banners and custom avatars rendered in a user-generated experience"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: social-or-chat-content, analysis-type: anomaly-alert, game-platform-and-genre: ugc-platform-experiences, capture-trigger-and-sampling: random-sample, delivery-form: alert-or-slack, lifecycle-moment: live-event-or-update}
+  object: "'vision-based toxicity (offensive gestures, names, UGC on screen) was not evidenced in sources' (adjacent-usecases.md section 3)"
+  situation: "A player builds a billboard in a UGC world spelling a slur with block art or a rotated texture; chat filters and asset hash lists miss it."
+  consequence: "The content stays visible to minors until someone reports it; exposure minutes are not measured."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 3: 'INFERRED: voice/text is the mature product; vision-based toxicity (offensive gestures, names, UGC on screen) was not evidenced in sources'"
+  proposed: "Sample 1-in-200 frames from sessions in new experiences, run OCR and image classifier, alert Slack when text or symbol scores above threshold, with world ID and camera position."
+  shallow: false
+  mechanism: "Sampled on-device or cloud frames are classified for hate text and symbols as rendered in-world; alerts carry a clip, the experience ID and the viewer count."
+  example: "Rec Room-style room: a 12-block-tall slur built from cubes; 40 visitors in 10 minutes; alert fires in 3 minutes with 6 s clip."
+  cost: M
+  depends_on: "SDK or platform frame sampling; a moderation action path (hide experience)"
+  buyer: "Trust and safety lead at a UGC platform or social game"
+  input: "Sampled frames from consented sessions plus experience and world IDs"
+  why_existing_tools_cannot: "ToxMod covers voice (Call of Duty, Rec Room, Poker Stars VR) and GGWP covers text, voice and gameplay actions, neither reads rendered in-world text (adjacent-usecases.md section 3)."
+  willingness_to_pay: "3 - Modulate tiers USD 0.075-0.12 per voice hour show per-hour moderation pricing; a UGC platform with open rooms has a clear liability reason (adjacent-usecases.md section 3)."
+
+- id: tns-6
+  title: "Griefing detector for co-op and team modes: body-blocking, team-killing and intentional feeding identified from the spectator video of a match"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: player-skill-and-mechanics, analysis-type: anomaly-alert, game-platform-and-genre: competitive-multiplayer, capture-trigger-and-sampling: event-triggered-clip, delivery-form: weekly-digest-email, companion-data: telemetry-events}
+  object: "B-perspectives.yaml trust-and-safety-lead: 'cheating, griefing and harassment visible on screen, not in chat logs'"
+  situation: "A teammate walks into a doorway and stands there for 40 seconds while the team defends; telemetry shows position and no kills but nothing marks it intentional."
+  consequence: "Victims quit the game; the report arrives with the words 'he trolled' and no proof."
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "adjacent-usecases.md section 3: GGWP takes 'gameplay actions' as input and 'can take anti-cheat data as input'; no source describes video of griefing"
+  proposed: "Triggered by two or more reports on the same player in one match; VLM labels the clip segment and cites the timestamps."
+  shallow: false
+  mechanism: "VLM over the clip plus position telemetry labels behaviours (blocking an objective, damaging allies, feeding) with timestamps; a per-account griefing count feeds the sanction tier."
+  example: "5v5 MOBA: three teammates report the same player; clip shows deliberate walking into enemy towers at 3 min, 6 min and 9 min; first-time offender gets a 24-hour queue ban."
+  cost: M
+  depends_on: "report-triggered clip capture; telemetry join on match ID"
+  buyer: "Trust and safety lead at a team-based multiplayer studio"
+  input: "Reported-match clips plus position, damage and death telemetry"
+  why_existing_tools_cannot: "Telemetry shows where a player stood, not why; GGWP consumes gameplay actions but market evidence found no video reading (adjacent-usecases.md section 3)."
+  willingness_to_pay: "2 - no price signal in the notes; value is retention of the victims, hard to attribute."
+
+- id: tns-7
+  title: "Attach the 30-second screen clip to every ToxMod voice flag so a moderator sees whether the insult followed an in-game provocation"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: voice-chat, analysis-type: evidence-pack-for-enforcement, companion-data: chat-and-voice-logs, delivery-form: in-tool-annotation, effort: S-weeks, go-to-market-channel: through-services-vendor}
+  object: "Activision FAQ: 'ToxMod only reports, Activision decides enforcement'; Modulate/Activision outcome 'about 50% less toxic-voice exposure' (adjacent-usecases.md section 3)"
+  situation: "ToxMod flags a 12-second voice segment as a slur; the moderator hears audio only and cannot see whether it was banter in a friends lobby or harassment of a stranger after a team-kill."
+  consequence: "Moderators over-ban banter or under-ban real abuse; each decision costs a replay session."
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 3: 'human moderators review flagged content'; no source mentions video attached to voice flags"
+  proposed: "On a flag from a voice moderation vendor, pull the matching 30 s of screen buffer, summarise the visible context in one sentence, show both in the moderator panel."
+  shallow: false
+  mechanism: "Join a voice-flag timestamp to the screen buffer, caption what is visible (killcam, lobby screen, emote) and display clip plus transcript."
+  example: "Warzone-style game: flagged slur at 14:03; clip shows the speaker's teammate had just revived him; moderator tags 'banter among friends' and skips enforcement."
+  cost: S
+  depends_on: "voice moderation vendor webhooks; capture SDK buffer; shared match and timestamp clock"
+  buyer: "Trust and safety lead at an AAA studio already running ToxMod or GGWP"
+  input: "Screen buffer plus voice-flag events and transcript"
+  why_existing_tools_cannot: "ToxMod and GGWP never see the screen; the Activision case study reports only exposure rates (adjacent-usecases.md section 3)."
+  willingness_to_pay: "3 - same buyer pays USD 10k-50k/month minimums for moderation in AAA (paxmod third-party estimate, adjacent-usecases.md section 3); add-on likely a fraction of it."
+
+- id: tns-8
+  title: "Cheater-clip mining on public streams: find streamers whose VODs show the game's cheat overlays or inhuman aim and send timestamped evidence"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: public-streams-and-ugc, signal-extracted: bot-or-fraud-behaviour, analysis-type: evidence-pack-for-enforcement, capture-trigger-and-sampling: random-sample, delivery-form: weekly-digest-email, game-platform-and-genre: pc}
+  object: "Vice GamerDoc: 'volunteer Discord groups collect clips and IDs of alleged cheaters'; NiceShot AI 'supports bulk Twitch channel analysis' (adjacent-usecases.md section 2; methods-churn-funnel.md section 4)"
+  situation: "A top-100 streamer is accused on Reddit; today volunteers cut a 20-minute compilation by hand."
+  consequence: "Public cheating by popular players spreads imitation and erodes trust; operators learn of it from social posts, days later."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "adjacent-usecases.md section 2: 'volunteer Discord groups collect clips and IDs of alleged cheaters'; methods-churn-funnel.md section 4: NiceShot 'bulk Twitch channel analysis'"
+  proposed: "Weekly sweep of the 200 most-viewed channels; flag segments with ESP box overlays or a 70 ms flick pattern; a weekly email lists channel, VOD URL and timestamps."
+  shallow: false
+  mechanism: "Detector for cheat overlays and aim anomalies on public VODs, ranked by viewer count; output is a timestamped evidence list for a human to confirm."
+  example: "Weekly digest lists 9 channels; two have wallhack ESP boxes at 1:12:30 and 2:05:10; T&S matches stream account to game account and reviews."
+  cost: M
+  depends_on: "public VOD access terms from Twitch and YouTube; a stream-to-account linking process"
+  buyer: "Anti-cheat or trust and safety lead at a PC studio or esports operator"
+  input: "Public stream VODs plus stream-channel metadata"
+  why_existing_tools_cannot: "Hatchet and Streams Charts measure viewership metadata, not pixels (market.md section 5); highlight tools like Eklipse trigger on kills and audio spikes (competitor-and-ua.md section 4)."
+  willingness_to_pay: "2 - public data means low consent friction but no price evidence; Hatchet tiers USD 249-1,249+/month are the nearest anchor (market.md section 5)."
+
+- id: tns-9
+  title: "Exploit-spread monitor: watch new TikTok and YouTube gameplay clips for a duplication glitch or infinite-currency exploit within hours of the first upload"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: public-streams-and-ugc, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, delivery-form: alert-or-slack, lifecycle-moment: new-version-release, pricing-model: per-month-seat}
+  object: "'Nothing found reads clip content (a bug visible, a competitor feature praised, a monetisation complaint on screen)' (competitor-and-ua.md section 5, INFERRED)"
+  situation: "Day 2 after patch 1.4, a creator uploads a 40-second clip of an item-duplication trick; by hour 6 it has 200k views."
+  consequence: "The economy is flooded with duplicated items before the studio hears of it; rollback and bans cost more than a hotfix at hour 2."
+  p_typical: 0.07
+  grounded: quote
+  evidence: "competitor-and-ua.md section 5: 'Monitoring today is by viewership counts, tracked links and keys, not by what is shown in the clip'"
+  proposed: "Hourly crawl of new clips tagged with the game; detect inventory counter jumps and known-glitch visuals via OCR; Slack alert with the clip and a view-count velocity."
+  shallow: false
+  mechanism: "Public-clip ingestion, OCR of inventory and currency counters, detection of impossible deltas between frames, alert with growth rate of views."
+  example: "A clip shows gold 1,200 then 99,999,999 after an item swap; alert in 25 minutes; live-ops disables the item at hour 2."
+  cost: M
+  depends_on: "public video ingestion for TikTok, YouTube, Twitch; per-game inventory OCR template"
+  buyer: "Trust and safety or live-ops lead at a studio with a persistent economy"
+  input: "Public gameplay clips with view counts plus the game's patch calendar"
+  why_existing_tools_cannot: "Gamesight, Lurkit, Hatchet and SullyGnome count views and links, none reads what a clip shows (competitor-and-ua.md section 5; market.md section 5)."
+  willingness_to_pay: "3 - studios pay USD 249-1,249+/month for stream analytics and publishers sign custom contracts (market.md section 5); the pain here is real money in the economy."
+
+- id: tns-10
+  title: "Cheat-seller demo-video parser: read ESP overlay layout and menu names from cheat marketplace videos to tell the detection team which version and feature set is sold"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: public-streams-and-ugc, signal-extracted: on-screen-text-ocr, analysis-type: benchmark-vs-competitor, delivery-form: weekly-digest-email, lifecycle-moment: new-version-release, constraint-to-overcome: ground-truth-labels}
+  object: "FACEIT: AI-based and DMA cheats were '40% of cheating bans in May 2026' (adjacent-usecases.md section 2)"
+  situation: "A DMA cheat vendor posts a 3-minute YouTube demo three days after a game patch showing a new radar feature."
+  consequence: "Detection engineers learn what to look for from the sellers' own marketing, a week earlier than from ban data."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "adjacent-usecases.md section 2: 'NOT FOUND: no source confirms... any vendor running computer vision on recorded footage as a production anti-cheat'; cheat-demo parsing not covered by any note"
+  proposed: "Weekly digest: new cheat demos found, feature list read from on-screen menu text, game build visible in the HUD, and the first-seen date."
+  shallow: false
+  mechanism: "Crawl cheat-vendor demo videos, OCR the cheat menus, extract the feature list and the game build, deduplicate by vendor, and diff against last week."
+  example: "Digest: 'Vendor X added Radar+Recoil at demo 2026-10-12, targeting build 4.11'; detection team adds a recoil-uniformity check."
+  cost: M
+  depends_on: "a list of cheat-seller channels; policy review of crawling"
+  buyer: "Anti-cheat lead or trust and safety lead at a PC competitive studio"
+  input: "Public cheat-demo videos plus the studio's build calendar"
+  why_existing_tools_cannot: "Anti-cheat vendors work from detection signatures and ban data, with no video competitor-intel loop (adjacent-usecases.md section 2); competitor tools like GameRefinery analyse games, not cheats (competitor-and-ua.md section 1)."
+  willingness_to_pay: "2 - no price evidence at all in the notes; small audience."
+
+- id: tns-11
+  title: "Report-form clip summariser: turn the 2-minute video a player attaches to a harassment or cheat report into who, what, when and category fields"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: support-ticket-attachment, signal-extracted: on-screen-text-ocr, analysis-type: ask-a-question-over-footage, delivery-form: issue-tracker-ticket, effort: XS-repackage-existing-user-test-product, companion-data: support-ticket-text}
+  object: "Overwatch forum: players 'link video in reports and email hacks@blizzard.com' (adjacent-usecases.md section 2)"
+  situation: "A player uploads a 2-minute phone recording of the monitor showing a suspected cheater; a moderator watches all 2 minutes to find the 6-second event."
+  consequence: "Review time 2-3 minutes per ticket; the clip is not searchable later."
+  p_typical: 0.18
+  grounded: quote
+  evidence: "adjacent-usecases.md section 2: 'players submit video clips of suspected cheaters'; section 9: 'players self-record and attach; agents watch'"
+  proposed: "Reuse the existing video ingestion and ask-question agent; pre-fill accused name, timestamp of the event, suspected category and confidence."
+  shallow: false
+  mechanism: "Existing video ingestion and question-answering agent runs a fixed set of 5 questions on each attached clip and writes the answers into the ticket."
+  example: "Phone recording of a monitor: agent answers 'accused: Player_88, 1:12, aim snap onto head through wall, confidence medium'; moderator jumps to 1:12."
+  cost: S
+  depends_on: "nothing beyond the User Test product's video ingestion and report agent"
+  buyer: "Trust and safety or player-support lead at a studio with a report form that accepts video"
+  input: "Player-uploaded video attached to a ticket plus the ticket text"
+  why_existing_tools_cannot: "Zendesk-based support flows ask for video by hand (Resolution Games, Arrowhead) and nothing watches it for the agent (adjacent-usecases.md section 9)."
+  willingness_to_pay: "2 - Helpshift is already called expensive by Capterra reviewers (adjacent-usecases.md section 9); a summariser is a cheaper add-on, price per ticket likely cents."
+
+- id: tns-12
+  title: "Report clustering: bundle 14 reports on one account across 3 matches into a single case with the 3 best clips"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: support-ticket-attachment, signal-extracted: bot-or-fraud-behaviour, analysis-type: cohort-comparison, delivery-form: dashboard, companion-data: telemetry-events, value-lever-b2b: replace-labour-hours}
+  object: "Activision figure 'about 23% of player reports contained actionable evidence' (adjacent-usecases.md section 3)"
+  situation: "14 reports arrive over 5 days against account A, from 9 different reporters and 3 matches; each ticket is triaged separately."
+  consequence: "Moderators review the same account 14 times, or close each ticket as 'no evidence'."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 3: 'player reports, of which about 77% lacked actionable evidence'"
+  proposed: "A case view: one row per accused account, reports count, the 3 clips with the highest agreement among reporters' descriptions, and a suspected category."
+  shallow: false
+  mechanism: "Embed the clips and ticket text, cluster by accused account and behaviour, rank clips by how many reporters' descriptions match the visible behaviour."
+  example: "Account A: 14 reports, 3 clips all show an identical 70 ms head-snap; case opened once, sanctioned in one review."
+  cost: M
+  depends_on: "ticket system with accused-ID field; clip upload on report"
+  buyer: "Trust and safety lead at a studio receiving more than 1,000 reports a week"
+  input: "Report-attached clips, ticket text and account IDs"
+  why_existing_tools_cannot: "Moderation vendors process voice and text; ticket systems store attachments without reading them (adjacent-usecases.md sections 3 and 9)."
+  willingness_to_pay: "2 - labour saving only; moderator headcount cost not given in the notes."
+
+- id: tns-13
+  title: "Report-abuse score: detect reporters whose clips show nothing wrong, to stop mass false-reporting of a streamer or rival"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: support-ticket-attachment, signal-extracted: social-or-chat-content, analysis-type: anomaly-alert, capture-trigger-and-sampling: on-player-report, value-lever-b2b: reduce-cost-per-incident, companion-data: support-ticket-text}
+  object: "Activision FAQ and case study: reports 'lacked actionable evidence' in about 77% of cases (adjacent-usecases.md section 3)"
+  situation: "A streamer's rivals each file reports after a loss; 6 of 9 attached clips show the accused standing still or no violation at all."
+  consequence: "False reports poison automated sanction thresholds and waste review time."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "adjacent-usecases.md section 3: 77% of reports lacked actionable evidence; no source quantifies malicious reports"
+  proposed: "Score every reporter on how often attached clips show a violation; down-weight those below 20% in sanction thresholds."
+  shallow: false
+  mechanism: "Per-reporter hit rate from AI verdicts on attached clips; low-scoring reporters' future reports weigh less in automated thresholds."
+  example: "Reporter R: 18 reports in 2 weeks, 1 shows a violation; their reports on streamer S no longer count towards the 5-report auto-review threshold."
+  cost: S
+  depends_on: "report clip review (tns-1 or tns-11) running for a few weeks"
+  buyer: "Trust and safety lead at a studio with automatic report thresholds"
+  input: "Report clips, AI verdicts per report, reporter IDs"
+  why_existing_tools_cannot: "Report systems count reports; none judge the evidence per reporter (adjacent-usecases.md section 3 on 23% actionable)."
+  willingness_to_pay: "1 - no buyer signal; a feature of tns-1 rather than a product."
+
+- id: tns-14
+  title: "Social VR harassment detector: avatar proximity, hand gestures and personal-space violations in the headset's spectator camera view of a flagged room"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: social-or-chat-content, analysis-type: evidence-pack-for-enforcement, game-platform-and-genre: xr-headset, capture-trigger-and-sampling: on-player-report, constraint-to-overcome: minors-coppa-gdpr-k}
+  object: "ToxMod named customers 'Rec Room, Poker Stars VR' and 'vision-based toxicity (offensive gestures...) was not evidenced' (adjacent-usecases.md section 3)"
+  situation: "A user presses the block button in a VR lobby after an avatar stands 20 cm from her face for 30 seconds and makes a gesture; voice shows nothing."
+  consequence: "The only evidence is her word; moderators cannot act and she leaves the platform."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 3: ToxMod customers include 'Rec Room, Poker Stars VR'; 'vision-based toxicity... was not evidenced in sources'"
+  proposed: "Block press uploads the last 60 s of the spectator view; detector measures avatar distance and hand-pose patterns and writes a summary."
+  shallow: false
+  mechanism: "Pose and distance estimation of avatars from the third-person view in the buffer, producing a timeline of proximity under 0.5 m and flagged gestures."
+  example: "VR social app: 22 s within 0.3 m of the reporter, one flagged gesture at 0:38; case opened with the 60 s clip."
+  cost: L
+  depends_on: "headset runtime spectator view access; report or block event; consent flow for minors"
+  buyer: "Trust and safety lead at a social VR studio"
+  input: "Spectator-camera buffer plus avatar positions from the session server"
+  why_existing_tools_cannot: "Voice moderation covers speech only; no vision-based social-VR vendor was found in adjacent-usecases.md section 3."
+  willingness_to_pay: "3 - Rec Room already buys voice moderation (adjacent-usecases.md section 3); price signal exists for voice, not for vision."
+
+- id: tns-15
+  title: "On-device redaction of player names, chat, notifications and payment sheets before any clip leaves the phone"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, constraint-to-overcome: privacy-and-consent, processing-location: on-device, analysis-type: evidence-pack-for-enforcement, delivery-form: api-or-sdk, game-platform-and-genre: mobile-midcore-f2p}
+  object: "PostHog Unity SDK is 'screenshot-based, with no built-in masking of text or images' (market.md section 2); privacy hazards 'player names and chat in HUD/social panels, notifications overlaying the screen, payment sheets' (methods-churn-funnel.md section 7)"
+  situation: "A report clip from a phone shows a WhatsApp notification with a phone number, a payment sheet and the reporter's real name in the friends list."
+  consequence: "Storing the clip makes the studio a processor of third-party personal data and breaches Apple's 2019 consent line if the indicator is absent."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: Apple (Feb 2019) required 'explicit user consent and ... a clear visual indication when recording'; market.md section 2: PostHog Unity 'no built-in masking'"
+  proposed: "On-device OCR plus detector blurs text boxes outside an allow-list of game UI regions, and blanks any frame where a system overlay is present."
+  shallow: false
+  mechanism: "Frame-level on-device mask: detect system overlays and non-game text, blur or drop those frames, then encode and upload."
+  example: "Clip with a bank-app notification at 0:22: frames 0:21-0:25 are blanked, the remaining 85 s are uploaded."
+  cost: M
+  depends_on: "on-device inference budget; engine SDK hooks"
+  buyer: "Trust and safety lead working with privacy counsel and the SDK engineering team"
+  input: "Raw screen frames in the on-device ring buffer plus a per-game allow-list of UI regions"
+  why_existing_tools_cannot: "Bugsee and UXCam offer masking for native UI only; game canvases have no view tree (market.md section 2 'Does NOT do'; methods-churn-funnel.md section 6)."
+  willingness_to_pay: "3 - not sold alone; unlocks the T&S evidence products. Apple 2019 enforcement shows compliance cost is non-optional (methods-churn-funnel.md section 7)."
+
+- id: tns-16
+  title: "Tamper-evident evidence pack for ban appeals, prize disputes and law-enforcement requests: hashed clip, device clock, build ID and the AI findings in one file"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, analysis-type: evidence-pack-for-enforcement, delivery-form: enforcement-or-cert-evidence-pack, pricing-model: per-audit-or-certification, value-lever-b2b: avoid-fine-or-cert-failure, lifecycle-moment: post-churn-winback}
+  object: "Anybrain 'supports operators in ban appeals with deeper investigations' (adjacent-usecases.md section 2)"
+  situation: "A banned player of a USD 10,000-prize tournament threatens legal action and the studio must show the clip was not edited."
+  consequence: "Without a hash, timestamp and build metadata the studio cannot prove the clip is original; the ban may be reversed."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 2: 'supports operators in ban appeals with deeper investigations'"
+  proposed: "Export a PDF plus signed JSON: SHA-256 of the clip, capture time from the server clock, build hash, account IDs, and the 3 frames supporting the finding."
+  shallow: false
+  mechanism: "Server-side hashing and signing at upload; the evidence pack packages the clip with the AI findings and the chain of events."
+  example: "Appeals team sends the pack to the player's lawyer; hash matches the stored clip; ban upheld."
+  cost: S
+  depends_on: "server-side clock and hashing at ingestion; retention policy"
+  buyer: "Trust and safety lead and legal counsel at a studio or tournament operator"
+  input: "Uploaded clip, upload metadata and AI findings"
+  why_existing_tools_cannot: "Moderation tools store clips and notes in a ticket; only Anybrain mentions appeals support, without detail (adjacent-usecases.md section 2)."
+  willingness_to_pay: "2 - per-case pricing, no price evidence in the notes."
+
+- id: tns-17
+  title: "Score-proof verifier for cash-prize casual tournaments: check the submitted video matches the claimed score and has no cuts or spliced frames"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: support-ticket-attachment, signal-extracted: on-screen-text-ocr, analysis-type: compliance-audit, game-platform-and-genre: web-html5, delivery-form: api-or-sdk, pricing-model: per-session, value-lever-b2b: replace-labour-hours}
+  object: "'HUD OCR where fonts are clean' and 'cascade classifiers detect HUD, then OCR reads and interprets its text' (methods-churn-funnel.md section 4)"
+  situation: "A skill-game operator runs 2,000 weekly paid tournaments with a USD 25 prize each; winners upload a screen recording of the final score."
+  consequence: "Staff open each recording; fake scores cost USD 25 each and the honest winners wait days."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 4: cascade classifiers and OCR 'fast enough for real-time use during play, not only on recordings'; adjacent-usecases.md section 2: players submit video clips"
+  proposed: "Read the end-screen score by OCR, compare to the claim, check frame continuity and that the in-game clock runs monotonically."
+  shallow: false
+  mechanism: "OCR of the score at the end screen, continuity check over the full recording, and rule check that clock and counters are monotonic."
+  example: "Winner claims 48,210; the video score reads 41,820 and has a 4 s jump at 1:10; ticket marked 'reject'."
+  cost: M
+  depends_on: "per-game score screen template; upload form"
+  buyer: "Trust and safety or operations lead at a skill-game or tournament operator"
+  input: "Player-uploaded recording plus the claimed score and the game's rules"
+  why_existing_tools_cannot: "Esports VOD tools like Insights.gg are annotation only; Omnic parses match recordings for coaching, not verification (market.md section 4; adjacent-usecases.md section 8)."
+  willingness_to_pay: "2 - per verification price would be cents; no price evidence."
+
+- id: tns-18
+  title: "Server-side cheat review for cloud-streamed games: run the detector on frames the platform already renders, with no client hook for anti-cheat to flag"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: cloud-gaming-server-render, signal-extracted: bot-or-fraud-behaviour, analysis-type: anomaly-alert, constraint-to-overcome: anti-cheat-conflict, processing-location: edge-or-platform-server, effort: requires-partner-or-platform-deal, game-platform-and-genre: cloud-streamed}
+  object: "Antidote 'cloud-streaming playtesting' feature (market.md section 1) and cloud-gaming-server-render as video source (C-axes.yaml)"
+  situation: "A cloud-gaming operator hosts a competitive shooter; the frame stream and the client input both pass through the operator's servers."
+  consequence: "No SDK, no kernel driver and no capture hook; a screen-reading bot that evades memory scanning is visible in the rendered frames."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 2: computer-vision aimbots 'read the screen, evade memory scanning'; market.md section 1: Antidote offers 'cloud-streaming playtesting'"
+  proposed: "Run aim-anomaly and overlay detectors on the encoded stream at 1 frame in 10, correlate with the input stream the server already holds."
+  shallow: false
+  mechanism: "Detector runs next to the encoder on the platform server; sees exactly what the player sees; no client software on the player's device."
+  example: "Cloud platform flags 0.3% of sessions in a ranked mode as probable pixel-bot and sends clips to the game studio."
+  cost: L
+  depends_on: "partner deal with a cloud gaming operator; studio consent; per-game detector"
+  buyer: "Trust and safety lead at a cloud-gaming platform or the publisher's anti-cheat lead"
+  input: "Server-rendered frame stream plus the input stream the server already receives"
+  why_existing_tools_cannot: "Kernel anti-cheat (Vanguard, Ricochet) cannot run on a streamed client; no cloud-side vision anti-cheat was found (adjacent-usecases.md section 2)."
+  willingness_to_pay: "2 - no price evidence; needs a platform deal (C-axes effort requires-partner-or-platform-deal)."
+
+- id: tns-19
+  title: "Leak tracer: scan public streams for pre-release builds and read the player-ID watermark to name the tester"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: public-streams-and-ugc, signal-extracted: on-screen-text-ocr, analysis-type: evidence-pack-for-enforcement, lifecycle-moment: pre-launch-qa, constraint-to-overcome: studio-ip-and-prerelease-leak, delivery-form: alert-or-slack, buyer-org-type: aaa-studio}
+  object: "Antidote 'Anti-leak SDK watermarks a player ID on screen' (market.md section 1)"
+  situation: "A tester under NDA streams 4 minutes of an unannounced level on a private-looking Twitch channel at 2 a.m."
+  consequence: "A leak of unreleased content; the studio needs the tester's identity from the watermark within hours to issue takedowns."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "market.md section 1: Antidote 'Anti-leak SDK watermarks a player ID on screen'"
+  proposed: "Crawl new streams and clips for the studio's build visuals, OCR the watermark, return tester ID, URL and timestamp to a Slack channel."
+  shallow: false
+  mechanism: "Visual match to the pre-release build plus OCR of the on-screen watermark; matched stream is returned with the tester ID and a DMCA-ready clip."
+  example: "Alert in 14 minutes: tester T-0417 on twitch.tv/xyz at 02:03; legal sends a takedown at 02:30."
+  cost: M
+  depends_on: "build watermarking in the playtest build; public video crawling"
+  buyer: "Security or trust and safety lead at a studio with unannounced content"
+  input: "Public stream video plus the studio's watermarked build visuals and tester roster"
+  why_existing_tools_cannot: "Antidote's watermark identifies the tester only if someone finds the leak; no tool finds leaked streams from pixels (market.md section 1; competitor-and-ua.md section 5 'nothing reads clip content')."
+  willingness_to_pay: "3 - a studio CISO vetoes cloud upload of pre-release footage (B-perspectives.yaml studio-ciso-security-review), so leak liability is a funded concern; no price in the notes."
+
+- id: tns-20
+  title: "Refund and chargeback evidence: attach the purchase confirmation frames and the store screen state to a disputed in-app purchase"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: economy-and-store-events, analysis-type: evidence-pack-for-enforcement, companion-data: purchase-and-ad-revenue-events, capture-trigger-and-sampling: event-triggered-clip, constraint-to-overcome: store-or-platform-policy, value-lever-b2b: reduce-cost-per-incident}
+  object: "Apple 'explicit user consent and ... a clear visual indication when recording' (methods-churn-funnel.md section 7)"
+  situation: "A parent disputes USD 99.99 of gem purchases made in 12 minutes; the studio has receipts but no proof of what the screen showed."
+  consequence: "Studios lose the dispute by default; a clip showing the price, the confirmation and the child's repeated taps changes the outcome or supports a goodwill refund."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "methods-churn-funnel.md section 7: Apple's consent rule makes recording purchase screens a policy risk; no note covers chargebacks"
+  proposed: "Purchase event triggers a 10 s clip around the confirmation screen, kept 120 days, retrieved only on dispute."
+  shallow: false
+  mechanism: "Event-triggered 10 s clip at IAP confirmation; retained encrypted; retrieved and summarised only when a dispute ticket cites the transaction ID."
+  example: "Dispute ticket for transaction T-2291: clip shows the USD 99.99 price sheet and a double tap; support offers a partial refund."
+  cost: M
+  depends_on: "consent for purchase-screen capture (policy risk on iOS); purchase event hook"
+  buyer: "Trust and safety or payments risk lead at a mobile F2P studio"
+  input: "Clip around the purchase event plus the transaction record and the dispute text"
+  why_existing_tools_cannot: "Receipt data and analytics events show that a purchase occurred, not what was on screen (methods-churn-funnel.md section 1 funnel limits)."
+  willingness_to_pay: "1 - storing purchase screens collides with the store policy hazard; a payments risk lead would likely refuse recording payment sheets at all."
+
+- id: tns-21
+  title: "Account-boosting and sharing detector: flag a competitive account whose touch or aim profile changes abruptly between sessions"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: player-skill-and-mechanics, analysis-type: anomaly-alert, companion-data: touch-and-controller-input, capture-trigger-and-sampling: random-sample, game-platform-and-genre: mobile-midcore-f2p, automation-level: insight-for-human}
+  object: "Roohi et al. model 'skill, persistence, boredom' (methods-churn-funnel.md section 3); FACEIT 'ML layer judging inputs rather than cheat signatures' (adjacent-usecases.md section 2)"
+  situation: "A ranked account moves from 38% to 71% win rate over 3 sessions; video shows the thumb path and UI dwell times change at session 14."
+  consequence: "Paid boosting devalues ranked rewards and push honest players out; telemetry shows a skill jump but not whether it is a new human."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "adjacent-usecases.md section 2: FACEIT's layer judges inputs; no note covers account sharing"
+  proposed: "Per-account motor fingerprint from touch overlay (swipe curvature, tap dwell) and UI reading time; alert when the fingerprint changes at a session boundary."
+  shallow: false
+  mechanism: "Embed the touch-path and UI-reading-time profile per session; a change-point at a session boundary with a rank jump triggers a review."
+  example: "Account A, ranks 4100 to 5200 in 6 days; fingerprint change at session 14; T&S reviews 3 clips and confirms boosting."
+  cost: M
+  depends_on: "touch-overlay capture; at least 10 sessions per account"
+  buyer: "Trust and safety lead at a ranked mobile or PC game"
+  input: "Sampled sessions with touch or controller overlay and rank history"
+  why_existing_tools_cannot: "Funnel and replay tools do not compare motor profiles across sessions (methods-churn-funnel.md section 2 INFERRED list)."
+  willingness_to_pay: "2 - no price signal; value is ranked-mode integrity."
+
+- id: tns-22
+  title: "Moderator triage queue: rank 400 daily flagged round replays by suspicion and show the 20 most suspect seconds of each"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: bot-or-fraud-behaviour, analysis-type: highlight-or-clip-generation, delivery-form: dashboard, value-lever-b2b: replace-labour-hours, pricing-model: per-hour-of-video, effort: S-weeks}
+  object: "arXiv 2603.22706 'millions of raw frames to a few thousand candidates' (adjacent-usecases.md section 1); text-to-frame retrieval 'Success@1 0.89' (arXiv 2508.04895)"
+  situation: "400 flagged 12-minute replays a day mean 80 hours of footage for 3 moderators."
+  consequence: "Only about 10% of flags are opened; backlog is 6 days; cheaters play on."
+  p_typical: 0.1
+  grounded: quote
+  evidence: "adjacent-usecases.md section 1: 'research frames AI as triage'; text-to-frame retrieval Success@1 0.89 on 247 industrial QA videos"
+  proposed: "Per replay: top-3 suspicious segments of 20 s each with the reason; queue sorted by score; moderator clears a replay in 1 minute."
+  shallow: false
+  mechanism: "Segment-level scoring of flagged replays with a text reason; clip a 20 s window per top segment; queue ordering by score."
+  example: "Moderators clear 400 replays in 7 hours instead of 80 hours of viewing."
+  cost: S
+  depends_on: "replay storage and retrieval API; flag source"
+  buyer: "Trust and safety lead managing in-house moderators"
+  input: "Server-stored match replays or clips plus flag scores"
+  why_existing_tools_cannot: "QA triage research exists (arXiv 2603.22706) but no T&S vendor applies it to cheating replays; VLM zero-shot precision is 0.50 on QA video, so full automation is out of reach (adjacent-usecases.md section 1)."
+  willingness_to_pay: "3 - outsourced moderation and QA hours cost USD 15-50 per hour (adjacent-usecases.md section 1); 80 hours a day is about USD 1,200-4,000 per day."
+
+- id: tns-23
+  title: "Scam-link and QR-code scanner for profile banners, in-world posters and emotes that push players to off-platform trading sites"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: anomaly-alert, capture-trigger-and-sampling: random-sample, game-platform-and-genre: ugc-platform-experiences, delivery-form: alert-or-slack}
+  object: "'on-screen-text-ocr' signal and the notes' statement that chat filters cover text only (adjacent-usecases.md section 3: GGWP text, voice, gameplay actions)"
+  situation: "A player sets a profile banner that shows a QR code to a 'free currency' site; text filters see no text."
+  consequence: "Account takeovers and stolen payment details; tickets arrive as 'I got hacked' without the cause."
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Sample screens showing profile and banner panels, decode QR codes and OCR URLs, check against a blocklist, alert on hits."
+  shallow: false
+  mechanism: "Frame sampling plus QR decode and OCR of URLs on social panels; match to blocklists and to newly registered domains."
+  example: "QR on banner of 31 accounts decodes to freegems-claim.example; all 31 banners removed within 20 minutes."
+  cost: S
+  depends_on: "frame sampling on social panels; domain blocklist"
+  buyer: "Trust and safety lead at a studio with profile customisation and a real-money economy"
+  input: "Sampled frames of profile and lobby screens plus account IDs"
+  why_existing_tools_cannot: "Text filters (GGWP) and voice (ToxMod) never see rendered images (adjacent-usecases.md section 3)."
+  willingness_to_pay: "2 - no price evidence; a cheap add-on to tns-5."
+
+- id: tns-24
+  title: "Ghosting and stream-sniping check for tournaments: compare a player's submitted screen recording with the opponent's live stream delay and in-game positions"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: esports-vod, signal-extracted: attention-proxy-cursor-or-camera, analysis-type: anomaly-alert, delivery-form: per-cohort-report, buyer-org-type: platform-or-store, game-platform-and-genre: competitive-multiplayer, lifecycle-moment: live-event-or-update}
+  object: "Esports VOD tools: 'ClutchLabs (AI video analyst for Valorant scrims, VOD-derived metrics without data feeds)' (adjacent-usecases.md section 8)"
+  situation: "In a 5-hour qualifier a player's camera repeatedly turns toward where the opponent is hiding, 6 seconds after the opponent's stream shows that position."
+  consequence: "Integrity disputes decided by rumour; the organiser has no tool to check time alignment between two streams."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "adjacent-usecases.md section 8: ClutchLabs derives metrics from VODs without data feeds; no note mentions stream sniping"
+  proposed: "Align two VODs by game clock, test whether the viewer's camera reacts to the other stream's visible events with the stream delay lag."
+  shallow: false
+  mechanism: "Align VODs on the in-game clock; compute reaction latency of the player's view to events visible only in the other stream; flag lags matching the stream delay."
+  example: "9 of 12 flanks come 7 seconds after the opponent's stream shows the position; report to the tournament admin."
+  cost: L
+  depends_on: "access to both players' VODs; clock alignment"
+  buyer: "Tournament integrity lead at an esports platform or league"
+  input: "Two players' recorded VODs plus game events and stream delay settings"
+  why_existing_tools_cannot: "Insights.gg is manual annotation, ClutchLabs and Omnic target coaching (market.md section 4; adjacent-usecases.md section 8)."
+  willingness_to_pay: "2 - esports buyers pay low prices (USD 49-149/month, adjacent-usecases.md section 8) and the perspective's esports-coach is p 0.1."
+
+- id: tns-25
+  title: "Banned-player appeal reviewer: analyse the clip the banned player submits to dispute the ban and compare it with the original evidence"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: support-ticket-attachment, signal-extracted: player-skill-and-mechanics, analysis-type: ask-a-question-over-footage, delivery-form: ask-question-agent-chat, effort: XS-repackage-existing-user-test-product, value-lever-b2b: replace-labour-hours}
+  object: "Anybrain 'supports operators in ban appeals with deeper investigations' (adjacent-usecases.md section 2)"
+  situation: "A player sends a 6-minute clip with the note 'my aim was legit'; the appeals agent has 15 minutes per case."
+  consequence: "Appeals backlog; inconsistent outcomes between agents."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "adjacent-usecases.md section 2: 'supports operators in ban appeals with deeper investigations'"
+  proposed: "Agent answers fixed questions on both clips (original evidence and player's clip) and reports where the two show different behaviour."
+  shallow: false
+  mechanism: "Existing video-QA agent run over both clips with a fixed question list; outputs a side-by-side comparison with timestamps."
+  example: "Original shows 14 snaps in 3 minutes; player's clip, from a different match, shows 0; agent notes the clips are from different matches and recommends upholding."
+  cost: S
+  depends_on: "evidence store from tns-1 or tns-16"
+  buyer: "Trust and safety appeals lead at a studio"
+  input: "Original evidence clip, player-submitted appeal clip, ban reason"
+  why_existing_tools_cannot: "Appeals flows are manual tickets; no vendor offers video comparison (adjacent-usecases.md section 2: appeals only in Anybrain, no detail)."
+  willingness_to_pay: "2 - labour saving; no price in the notes."
+
+- id: tns-26
+  title: "REFUSE: facecam age and emotion estimation to spot minors or 'angry' players for pre-emptive moderation"
+  level: L3
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: facecam-expression, analysis-type: early-ltv-or-payer-prediction, constraint-to-overcome: minors-coppa-gdpr-k, companion-data: facecam, automation-level: closed-loop-in-game-action, processing-location: vendor-cloud}
+  object: "'EU AI Act Art. 5(1)(f) bans emotion recognition in workplace and education... GDPR biometric rules apply' (methods-churn-funnel.md section 7)"
+  situation: "A vendor offers to run face analysis on a webcam stream to tag players as under-13 or about to rage."
+  consequence: "Biometric data of minors under GDPR and COPPA; a 'minors' misclassification either blocks adults or admits children; Reddit backlash over 'the game films my kid'."
+  p_typical: 0.03
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 5 INFERRED: 'Face cam adds consent and biometric-law cost for unclear lift'; section 7: EU AI Act and GDPR biometric rules"
+  proposed: "Do not buy. If age assurance is needed, use platform age signals."
+  shallow: false
+  mechanism: "Facecam frames classified for age band and emotional state; results trigger in-game action."
+  example: "Matchmaking mutes a player tagged 'angry' by a facecam model; the player is a 15-year-old whose parent complains."
+  cost: L
+  depends_on: "facecam consent for minors; biometric processing basis"
+  buyer: "Trust and safety lead (would refuse); vetoed by privacy counsel"
+  input: "Webcam stream of the player plus gameplay"
+  why_existing_tools_cannot: "Not a gap; the constraint is legal. Gameplay features beat facial features for frustration anyway (methods-churn-funnel.md section 5, theory-of-mind study of 20 players)."
+  willingness_to_pay: "1 - refuse: legal exposure exceeds value; research shows pixels alone reach 78% arousal accuracy without a face (methods-churn-funnel.md section 5)."
+
+- id: tns-27
+  title: "REFUSE: always-on full-session recording of every player so any report can be investigated retroactively"
+  level: L3
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, capture-trigger-and-sampling: always-on-ring-buffer, constraint-to-overcome: bandwidth-and-storage, analysis-type: evidence-pack-for-enforcement, processing-location: vendor-cloud, pricing-model: per-mau}
+  object: "'A studio at 100k new installs/day recording only the first 10 minutes at 1 Mbps would ingest about 7.5 TB/day' (methods-churn-funnel.md section 7)"
+  situation: "A vendor proposes uploading every session so moderators can search any match later."
+  consequence: "At 1.8 GB per hour and 100k players that is petabytes per month; Apple's consent rule and Reddit backlash follow; most footage is never watched."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: '30-minute first session at 2 Mbps is about 450 MB of upload'; Steam users complain about recording storage"
+  proposed: "Do not buy; use an on-device ring buffer uploaded on report or flag (tns-1, tns-2)."
+  shallow: false
+  mechanism: "Continuous upload of full sessions to a vendor cloud for retroactive search."
+  example: "100,000 players at 2 Mbps for 1 hour is about 90 TB a day; the T&S budget cannot carry it."
+  cost: L
+  depends_on: "consent for continuous capture; storage and bandwidth budget"
+  buyer: "Trust and safety lead (would refuse), CFO and privacy counsel veto"
+  input: "Continuous screen video of every player"
+  why_existing_tools_cannot: "Not a gap; sampling and ring buffers (Sentry pattern, Steam) already solve evidence capture at a fraction of the volume (methods-churn-funnel.md section 6)."
+  willingness_to_pay: "1 - refuse: cost per session dominates; storage is cheap at USD 0.04 per player-hour-month but upload and consent are the constraints (methods-churn-funnel.md section 7)."
+
+- id: tns-28
+  title: "REFUSE: closed-loop automatic permanent ban triggered by a vision classifier alone"
+  level: L3
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: bot-or-fraud-behaviour, analysis-type: real-time-in-session-intervention, automation-level: closed-loop-in-game-action, constraint-to-overcome: accuracy-and-trust, value-lever-b2b: enable-automated-action}
+  object: "FACEIT 'no ban is triggered solely by its flag' and VLM zero-shot 'precision 0.50 / accuracy 0.72' (adjacent-usecases.md sections 1 and 2)"
+  situation: "A vendor sells a model that bans an account when a video classifier scores above 0.8."
+  consequence: "At 0.97% false positives, 1 in 100 reviewed accounts could be wrongly banned; paying customers lose accounts and the studio carries the liability."
+  p_typical: 0.1
+  grounded: quote
+  evidence: "adjacent-usecases.md section 2: 'authors stress false accusations as the key risk'; section 1: VLM baseline precision 0.50"
+  proposed: "Do not buy automated bans; buy recommendation and evidence only (tns-2)."
+  shallow: false
+  mechanism: "Classifier on clips triggers an irreversible sanction without a human."
+  example: "Wrongly banned streamer with 40k followers posts the false-positive clip; the studio reverses in 2 days."
+  cost: M
+  depends_on: "classifier with measured false-positive rate below the studio's tolerance"
+  buyer: "Trust and safety lead (would refuse)"
+  input: "Video clips and scores"
+  why_existing_tools_cannot: "Not a gap; FACEIT itself does not ban on the flag alone (adjacent-usecases.md section 2)."
+  willingness_to_pay: "1 - refuse: a false ban costs more than the labour saved; VLM trust is 16% fully trusting AI QA (market.md section 3 survey)."
+
+- id: tns-29
+  title: "REFUSE: sell the library of confirmed-cheater and harassment clips as a licensed dataset to world-model or safety-model trainers"
+  level: L3
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, analysis-type: training-dataset-export, delivery-form: licensed-dataset, pricing-model: data-licence-per-hour, constraint-to-overcome: privacy-and-consent, buyer-org-type: data-or-market-intel-buyer}
+  object: "'Worldmodeldata... licensed nearly 1M hours of game data' and Microsoft Muse recording 'under the EULA, which drew criticism over consent' (market.md section 4)"
+  situation: "A data buyer offers a per-hour licence for the studio's stored report clips with labels."
+  consequence: "Clips contain third-party names, voices and minors; evidence collected for enforcement is reused for a different purpose without consent."
+  p_typical: 0.03
+  grounded: quote
+  evidence: "market.md section 4: Muse recordings under the EULA 'drew criticism over consent'; Worldmodeldata licences game data from studios"
+  proposed: "Do not sell; keep evidence in a purpose-limited store with a 120-day retention."
+  shallow: false
+  mechanism: "Export labelled evidence clips to a licensed dataset for model training."
+  example: "A moderation clip with an audible slur and a child's name is included in a 500-hour licensed batch."
+  cost: M
+  depends_on: "consent for secondary use; redaction"
+  buyer: "Data buyer (would pay); trust and safety lead would refuse"
+  input: "Stored enforcement clips plus verdict labels"
+  why_existing_tools_cannot: "Not a gap; the consent and purpose limitation block it (market.md section 4 Muse criticism)."
+  willingness_to_pay: "1 - refuse: AI labs pay for gameplay with inputs (OpenAI reported USD 500M offer for Medal) but enforcement clips are the least sellable asset; reputational risk dominates."
+
+- id: tns-30
+  title: "REFUSE: predicted-toxicity score per new player from first-session pixels, used to limit chat or matchmaking before any offence"
+  level: L3
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: emotion-arousal-from-pixels, analysis-type: churn-prediction-features, lifecycle-moment: ftue-first-session, automation-level: closed-loop-in-game-action, constraint-to-overcome: accuracy-and-trust}
+  object: "Makantasis et al. 'arousal predicted from gameplay video alone, over 78% accuracy on average' (methods-churn-funnel.md section 5)"
+  situation: "A vendor claims arousal from first-session pixels predicts who will be toxic."
+  consequence: "78% average arousal accuracy means roughly 1 in 5 wrong and arousal is not toxicity; innocents get restricted and the model cannot be audited."
+  p_typical: 0.03
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 5: 'over 78% accuracy on average and 98% at best (leave-one-video-out)'"
+  proposed: "Do not buy; punish actions with evidence, not predicted dispositions."
+  shallow: false
+  mechanism: "Pixel-based arousal and frustration features feed a toxicity propensity model that adjusts chat permissions."
+  example: "A new player with high arousal in the first 10 minutes is muted in lobby chat for 7 days; they quit."
+  cost: M
+  depends_on: "labelled toxicity outcomes; first-session capture"
+  buyer: "Trust and safety lead (would refuse)"
+  input: "First-session gameplay video features plus later report outcomes"
+  why_existing_tools_cannot: "Not a gap; the research was validated for arousal in a lab dataset, not for conduct (methods-churn-funnel.md section 5; AGAIN dataset, 124 annotators)."
+  willingness_to_pay: "1 - refuse: punishes disposition not behaviour; the churn cost of wrongly muted new players outweighs any toxicity saving."

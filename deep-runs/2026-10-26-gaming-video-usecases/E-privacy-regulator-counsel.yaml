@@ -1,0 +1,629 @@
+- id: privacy-1
+  title: "On-device blur of everything outside a per-game allow-list of regions (tutorial card, CTA) before a frame is encoded"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: funnel-drop-off-why, lifecycle-moment: ftue-first-session, constraint-to-overcome: privacy-and-consent, processing-location: on-device, buyer-org-type: mid-size-studio}
+  object: "methods-churn-funnel.md section 7 INFERRED: 'player names and chat in HUD/social panels, notifications overlaying the screen, payment sheets'"
+  situation: "A 10-minute FTUE capture at 1 Mbps in a match-3 game; at level 5 the friend panel shows real Facebook names and an OS banner shows a message preview"
+  consequence: "Without the blur, one frame leaks a third party's name into a vendor cloud; with it, legal signs the SDK and the product lead still sees tutorial-card dwell time"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "PostHog Unity SDK is 'screenshot-based, with no built-in masking of text or images' (market.md section 2); 'Privacy hazards specific to game video' (methods-churn-funnel.md section 7)"
+  proposed: "Ship the allow-list as a per-title JSON of rectangles plus a text detector; report the blurred-area percentage per clip so counsel can audit it"
+  shallow: false
+  mechanism: "Inverts masking: instead of listing what to hide, list the 3-6 regions the analysis needs and blur the rest on the device, so unknown overlays are hidden by default"
+  example: "Counsel at a 60-person studio approves capture of the first 10 minutes because only the tutorial card, the highlighted CTA and the fail screen survive in the uploaded frames"
+  cost: M
+  depends_on: "SDK frame hook; a per-title region list (a few hundred labelled frames per game)"
+  buyer: "Privacy counsel or DPO at a mid-size mobile F2P studio, co-signed by the product lead"
+  input: "Device screen frames from the SDK plus the per-game allow-list; no audio"
+  why_existing_tools_cannot: "market.md section 2: PostHog Unity has no masking and UXCam-style masking works on native view trees, not engine canvases"
+  willingness_to_pay: "4: counsel is a veto holder, not a payer; the price rides inside the per-session fee (UXCam median about $21k/year, market.md section 2)"
+
+- id: privacy-2
+  title: "Emulator capture that blanks frames when a password field, Google sign-in or payment sheet is in the guest OS"
+  level: L4
+  cell: {buyer-role: platform-owner, video-source: platform-or-emulator-capture, signal-extracted: ui-state-and-screen-flow, analysis-type: cohort-comparison, lifecycle-moment: d1-to-d7, constraint-to-overcome: privacy-and-consent, processing-location: edge-or-platform-server, buyer-org-type: platform-or-store, effort: requires-partner-or-platform-deal}
+  object: "market.md section 2: 'UXCam ... recordings private by default so passwords/card data are not captured'; methods-churn-funnel.md section 7: 'payment sheets'"
+  situation: "An emulator instance records a player who, inside the same Android guest, signs in to Google Play with a password and opens a banking app between two game sessions"
+  consequence: "A platform-level capture sees every pixel of the guest OS, not only the game; one leaked credential frame turns a data asset into a breach"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Apple 2019: apps removed or forced to disclose after recording taps and swipes without consent (methods-churn-funnel.md section 7)"
+  proposed: "Detect keyboard-with-password-field and known system dialogs by screen classifier; drop those frames at source and log the gap in the clip manifest"
+  shallow: false
+  mechanism: "A guest-OS aware filter at the capture point that classifies each sampled frame as game, system or other app and discards the non-game classes before any storage"
+  example: "A cross-game FTUE benchmark runs on emulator sessions; a clip of 4 minutes has 22 seconds removed where a Google login appeared, and the manifest says so"
+  cost: L
+  depends_on: "A platform partner that controls the guest OS render path"
+  buyer: "Privacy counsel and gaming program lead at an emulator or cloud-gaming platform"
+  input: "Emulator guest-OS frames plus the foreground package name"
+  why_existing_tools_cannot: "market.md section 2 'Does NOT do': generic replay tools reconstruct view trees inside one app; none sits below the guest OS"
+  willingness_to_pay: "3: platform legal treats it as a launch gate; no price in the notes, so priced as a free-with-platform feature of a cross-game data asset"
+
+- id: privacy-3
+  title: "Foreground-package allow-list that drops any frame whose active app is not the licensed game"
+  level: L3
+  cell: {buyer-role: platform-owner, video-source: platform-or-emulator-capture, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: anomaly-alert, lifecycle-moment: ua-campaign-launch, constraint-to-overcome: store-or-platform-policy, processing-location: on-device, buyer-org-type: platform-or-store, capture-trigger-and-sampling: targeted-cohort}
+  object: "methods-churn-funnel.md section 2 INFERRED: 'the exact screen state at the moment of app kill (rage quit vs. interruption)'"
+  situation: "A player alt-tabs from a UA-campaign game to WhatsApp Web inside the emulator at minute 3 of session 1"
+  consequence: "The app switch is the churn signal (interruption, not rage quit), but the WhatsApp frames are a privacy incident; the product needs the event and none of the pixels"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "UXCam: 'Upload happens when the app goes to background' (methods-churn-funnel.md section 6); no source shows a vendor separating the switch event from the foreign frames"
+  proposed: "On a foreground change, close the clip, emit one app_switch event with duration, and resume only when the game package returns"
+  shallow: false
+  mechanism: "Turns an interruption into a labelled event and discards the foreign pixels, so the churn model gets the cause without the leak"
+  example: "Cohort of 2,000 installs from one creative: 31 percent switched app before the first level end; the report shows the switch events, no footage of the other apps"
+  cost: S
+  depends_on: "Foreground-app callback from the platform or the SDK"
+  buyer: "Privacy counsel at an emulator platform, consumed by a UA analyst"
+  input: "Foreground package events plus game frames"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 6: replay tools upload on backgrounding and have no game-versus-other-app split"
+  willingness_to_pay: "2: cheap to build, valued as hygiene; no price signal, bundled with capture"
+
+- id: privacy-4
+  title: "Consent-receipt ledger: every clip carries a signed consent ID, purpose list and expiry, joined to the clip in the warehouse"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: cohort-comparison, delivery-form: warehouse-table-export, constraint-to-overcome: joining-video-to-events, companion-data: telemetry-events, buyer-org-type: mid-size-studio}
+  object: "A-frame.yaml assumption: 'video can be captured from the player's device with consent'; Apple guideline text 'explicit user consent' (methods-churn-funnel.md section 7)"
+  situation: "A data scientist joins 40,000 clips to the churn table and legal asks which of them were captured under the v2 consent text (before the 2026 wording change)"
+  consequence: "Without a per-clip consent receipt the studio cannot prove purpose or age of consent; a regulator letter means quarantining all 40,000 clips"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Microsoft Muse trained on matches 'recorded under the EULA, which drew criticism over consent' (market.md section 3)"
+  proposed: "Columns consent_id, consent_version, purposes[], granted_at, expires_at on the clip table; a nightly job flags rows past expiry"
+  shallow: false
+  mechanism: "Adds consent as a first-class join key next to player_id and build_id, so any analysis can filter on lawful basis"
+  example: "A query for 'clips of tutorial step 4 where consent_version >= 3 and purpose includes churn_modelling' returns 6,100 clips; the 1,900 older ones are excluded automatically"
+  cost: S
+  depends_on: "Clip upload pipeline and consent screen in the SDK"
+  buyer: "Head of analytics plus privacy counsel at a mid-size studio"
+  input: "Consent events from the SDK plus the clip manifest and warehouse event IDs"
+  why_existing_tools_cannot: "market.md section 3 (Muse EULA) and market.md section 2 (Bugsee GDPR warning): replay and bug-video tools store masking toggles, not per-clip consent state"
+  willingness_to_pay: "3: a veto-driven feature; the in-house analytics head accepts only warehouse tables (B-perspectives), so it ships as columns inside the export"
+
+- id: privacy-5
+  title: "OCR index of on-screen player handles so one erasure request finds every clip that shows that handle"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: ask-a-question-over-footage, delivery-form: ask-question-agent-chat, constraint-to-overcome: privacy-and-consent, processing-location: customer-cloud-byoc, buyer-org-type: publisher}
+  object: "methods-churn-funnel.md section 4: 'HUD OCR where fonts are clean'; section 7: 'player names and chat in HUD/social panels'"
+  situation: "A player in Germany files a GDPR Art. 17 request; their handle also appears in the leaderboard frame of 14 other players' clips"
+  consequence: "Deleting only the requester's own uploads leaves their name in other people's footage; the 30-day response clock runs out"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "none (GDPR erasure is outside the four notes); the OCR capability is cited in methods-churn-funnel.md section 4 (ICCS 2020, Q3Vision)"
+  proposed: "Run OCR on leaderboard and chat regions at ingest, store hashed handle tokens per clip, and answer 'which clips show handle X' in one query"
+  shallow: false
+  mechanism: "Turns the transcript-style ask-a-question agent into a data-subject-request locator over stored footage, using OCR tokens rather than faces"
+  example: "DPO types a handle; the agent returns 15 clip IDs with timestamps, queues blur or deletion for each, and exports the log for the regulator"
+  cost: M
+  depends_on: "Stored footage with OCR index; ask-question agent already exists (A-frame assumption)"
+  buyer: "DPO at a publisher with an EU player base"
+  input: "Stored clips in the customer's own cloud plus OCR tokens of HUD text"
+  why_existing_tools_cannot: "market.md section 2 'Does NOT do': replay tools have no semantic tagging of what is on screen, so nothing can be searched by handle"
+  willingness_to_pay: "2: compliance cost avoidance; no price in the notes, priced per customer inside an annual licence"
+
+- id: privacy-6
+  title: "Age-gate-driven capture switch: no frames recorded unless the game's own age screen returned 16 or older"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, lifecycle-moment: ftue-first-session, constraint-to-overcome: minors-coppa-gdpr-k, capture-trigger-and-sampling: random-sample, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "market.md section 1: PlaytestCloud product lines include 'kids' playtests'; B-perspectives privacy-regulator-counsel notices 'minors'"
+  situation: "A hypercasual game with a neutral age screen at session 1 (birth year picker) samples 3 percent of installs; 22 percent of the sampled installs declare under 16"
+  consequence: "Capture on under-16 players needs parental consent in the EU and COPPA rules in the US; recording them by accident is the unsellable case"
+  p_typical: 0.08
+  grounded: speculative
+  evidence: "none on the legal thresholds in the notes; the existence of kids' playtests is in market.md section 1"
+  proposed: "SDK reads the age bracket from the game, sets capture=off for under-16 and unknown, and records the decision in the consent ledger"
+  shallow: false
+  mechanism: "Binds the sampling decision to a signal the game already holds, so no age is inferred from pixels or voice"
+  example: "Of 100,000 installs per day, 3,000 sampled; 660 under-16 are dropped before the first frame; analyst sees a 'minors excluded' note on the cohort report"
+  cost: S
+  depends_on: "Game exposes an age bracket; SDK sampling hook"
+  buyer: "Privacy counsel at a casual-game studio shipping to the EU"
+  input: "Game-declared age bracket plus SDK sampling config"
+  why_existing_tools_cannot: "market.md section 2: Bugsee and Instabug only warn about masking and GDPR; none gates capture by declared age"
+  willingness_to_pay: "3: removes a launch blocker; no price signal, a feature switch in the SDK"
+
+- id: privacy-7
+  title: "Guardian-consent flow for recruited playtesters under 16, covering video, touch overlay and any voice"
+  level: L3
+  cell: {buyer-role: ux-research, video-source: recruited-playtesters, signal-extracted: speech-or-think-aloud, analysis-type: ask-a-question-over-footage, constraint-to-overcome: minors-coppa-gdpr-k, effort: XS-repackage-existing-user-test-product, pricing-model: per-session, buyer-org-type: mid-size-studio}
+  object: "market.md section 1: PlaytestCloud sells 'kids' playtests' and 'accessibility playtests'; panel pays about $5-9 per 15-minute playtest"
+  situation: "A studio of a 7-12 age game wants 20 recorded sessions with think-aloud, and the recruit is 9 years old"
+  consequence: "The guardian must consent to video and voice before the session; today this is paper or email, and the transcript is kept in a general archive"
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "kids' playtests are a listed product line (market.md section 1); no source describes the consent mechanics"
+  proposed: "Guardian signs in-app, child's voice transcript is stored with a 90-day expiry, and the clip is blocked from the cross-study search"
+  shallow: false
+  mechanism: "A consent-and-retention wrapper on top of the existing User Test recording pipeline, with minors' clips excluded from AI summary reuse"
+  example: "The researcher books 20 child sessions; each has a guardian receipt ID, and the AI summary runs per session and is deleted with the clip at day 90"
+  cost: S
+  depends_on: "Existing User Test product (A-frame assumption)"
+  buyer: "UX research lead at a family-game studio"
+  input: "Recruited tester screen video, voice, guardian consent record"
+  why_existing_tools_cannot: "market.md section 1: PlaytestCloud's AI reads transcripts and surveys and offers kids' tests, but the notes show no guardian-consent or minor-specific retention feature"
+  willingness_to_pay: "3: at PlaytestCloud list (about EUR 113-141 per recorded session) a consent-safe kids' session carries a premium; no direct signal"
+
+- id: privacy-8
+  title: "Retention clock that decays footage: raw frames 7 days, keyframes 30 days, extracted labels 13 months"
+  level: L4
+  cell: {buyer-role: finance-exec, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: churn-prediction-features, delivery-form: warehouse-table-export, constraint-to-overcome: cost-per-session, value-lever-b2b: avoid-fine-or-cert-failure, pricing-model: annual-enterprise-licence}
+  object: "methods-churn-funnel.md section 7 INFERRED: 'one stored player-hour costs about $0.04/month in S3; storage is cheap, upload is the constraint'"
+  situation: "A studio stores 7.5 TB per day of FTUE clips (100k installs at 1 Mbps, first 10 minutes) and has no deletion rule"
+  consequence: "Storage is too cheap to force deletion, so only a legal rule will; footage kept for 2 years is a liability while labels kept for 13 months still feed the churn model"
+  p_typical: 0.1
+  grounded: inferred
+  evidence: "7.5 TB/day and $0.04 per stored player-hour per month (methods-churn-funnel.md section 7)"
+  proposed: "Three storage tiers with automatic transcode to keyframes at day 7 and deletion at day 30; labels kept as rows"
+  shallow: false
+  mechanism: "A tiered decay policy in the pipeline that keeps the cheap, non-identifying derivative (labels) and deletes the identifying one (pixels) on a schedule"
+  example: "At 7.5 TB/day the raw store would be 225 TB at day 30; the policy caps it at about 52 TB (7 days) and leaves a few GB of labels"
+  cost: S
+  depends_on: "Clip store and label extraction already in place"
+  buyer: "Studio CFO or VP who signs the contract, on counsel's advice"
+  input: "Clip store plus the extraction output"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 6: Steam and Medal ring buffers cap disk by size, not by legal retention; Sentry retains per error, with no decay tiers"
+  willingness_to_pay: "2: counsel asks for it; it lowers storage by about 77 percent in the example but storage is only $0.04/player-hour/month, so price signal is weak"
+
+- id: privacy-9
+  title: "Per-game DPIA and records-of-processing generator from the SDK config, sampling plan and extraction schema"
+  level: L4
+  cell: {buyer-role: rating-and-consumer-compliance, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: compliance-audit, lifecycle-moment: pre-launch-qa, delivery-form: enforcement-or-cert-evidence-pack, constraint-to-overcome: privacy-and-consent, pricing-model: per-audit-or-certification}
+  object: "methods-churn-funnel.md section 7: EU AI Act Art. 5(1)(f) and Art. 50(3), GDPR biometric rules; section 7 sampling knobs (a)-(e)"
+  situation: "A studio turns on capture for 1-5 percent of new installs in a game with 12 EU storefronts and needs a data protection impact assessment before the soft launch"
+  consequence: "Legal writes the assessment by hand in 2-3 weeks and it goes stale at the next SDK config change"
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none on DPIA effort in the notes; the signals and sampling knobs it would document are listed in methods-churn-funnel.md section 7"
+  proposed: "Read the SDK config JSON, emit a dated PDF listing signals captured, retention tiers, processors, sampling rate and region switches"
+  shallow: false
+  mechanism: "Generates the compliance document from the live configuration, so it changes whenever the sampling or retention knob changes"
+  example: "Config says 3 percent random sample, no audio, EU off for under-16; the generator writes a 9-page assessment with a diff against last month's config"
+  cost: M
+  depends_on: "Machine-readable SDK and pipeline configuration; counsel-approved template"
+  buyer: "DPO or privacy counsel at a mid-size studio or publisher"
+  input: "SDK config, processor list, retention policy, region switches"
+  why_existing_tools_cannot: "adjacent-usecases.md section 4: the only audit services found (MGATS, Can I Play That?) are human-led and per-build; none generates a privacy file from configuration"
+  willingness_to_pay: "3: MGATS prices by 150-250 testing hours, so buyers accept per-audit pricing for compliance work (adjacent-usecases.md section 4); no price for privacy documents"
+
+- id: privacy-10
+  title: "Store privacy-label and Data Safety form drafted from the SDK's actual signal list at release submission"
+  level: L3
+  cell: {buyer-role: certification-release, video-source: own-players-consented-sdk, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: compliance-audit, lifecycle-moment: certification-submission, delivery-form: enforcement-or-cert-evidence-pack, constraint-to-overcome: store-or-platform-policy, effort: S-weeks}
+  object: "methods-churn-funnel.md section 7: App Store guidelines require 'explicit user consent and ... a clear visual indication when recording'"
+  situation: "A weekly Android release adds a 30-second ring buffer on rage taps; the Play Data Safety form still says 'no screen recording'"
+  consequence: "A form that contradicts the binary risks a store takedown; Apple gave one developer less than a day to comply in 2019"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "'one developer given less than a day to comply' (methods-churn-funnel.md section 7, TechCrunch Feb 2019)"
+  proposed: "Diff the declared data types against the build's SDK manifest in CI and block the release job on a mismatch"
+  shallow: false
+  mechanism: "A release-pipeline check that compares what the build records with what the store declaration says"
+  example: "Release 4.12 turns on touch overlay capture; CI fails with 'Data Safety: add screen content and app interactions' before submission"
+  cost: S
+  depends_on: "SDK emits a manifest of signals; CI access"
+  buyer: "Release manager at a studio shipping weekly"
+  input: "Build SDK manifest plus the stored store declaration"
+  why_existing_tools_cannot: "market.md section 2: Bugsee and Embrace document policy in prose; no tool in the notes checks the declaration against the build"
+  willingness_to_pay: "2: low price, high fear; no price signal, folded into the per-game plan"
+
+- id: privacy-11
+  title: "Region policy engine: server-pushed per-country and per-age switches for audio, facecam, chat OCR and sampling rate"
+  level: L4
+  cell: {buyer-role: finance-exec, video-source: own-players-consented-sdk, signal-extracted: facecam-expression, analysis-type: compliance-audit, constraint-to-overcome: privacy-and-consent, pricing-model: annual-enterprise-licence, buyer-org-type: publisher, game-platform-and-genre: mobile-midcore-f2p}
+  object: "methods-churn-funnel.md section 5 INFERRED: 'Face cam adds consent and biometric-law cost (section 7) for unclear lift'; section 7: EU AI Act Art. 50(3)"
+  situation: "A publisher runs one game in 60 countries; the EU needs a disclosure notice, one jurisdiction bans facecam capture and one needs zero capture for under-18"
+  consequence: "Hard-coded switches per release mean a policy change needs an app update, which takes days in store review"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "'EU AI Act Art. 5(1)(f) bans emotion recognition in workplace and education; elsewhere permitted but deployers must inform subjects (Art. 50(3))' (methods-churn-funnel.md section 7)"
+  proposed: "A signed policy file fetched at session start, keyed by country and age bracket, with a kill switch that stops capture within one session"
+  shallow: false
+  mechanism: "Moves the legal switches from the binary to a server-side policy that counsel can change without a release"
+  example: "Counsel disables facecam for one country at 09:00; by the next session start on that day 100 percent of devices comply"
+  cost: M
+  depends_on: "SDK remote config; counsel who owns the policy file"
+  buyer: "Privacy counsel at a publisher with 20+ live titles"
+  input: "Country, age bracket, game ID, policy file"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 6: UXCam and Sentry set sampling and opt-in at integration time per app, not as a legal policy by region"
+  willingness_to_pay: "3: bought by counsel at publisher scale; no price in the notes"
+
+- id: privacy-12
+  title: "REFUSE: facecam expression capture to score player frustration"
+  level: L3
+  cell: {buyer-role: design-balance, video-source: beta-and-early-access-testers, signal-extracted: facecam-expression, analysis-type: coaching-feedback, constraint-to-overcome: accuracy-and-trust, companion-data: facecam, pricing-model: per-month-seat, buyer-org-type: mid-size-studio}
+  object: "methods-churn-funnel.md section 5: theory-of-mind study of 20 players, 'gameplay-feature models were significantly more accurate than facial-feature models for perceived frustration'"
+  situation: "A designer asks for the beta panel's webcam to be switched on so the tool can mark moments of anger on level 12"
+  consequence: "Biometric processing needs a lawful basis in the EU, and the research says the face adds little over gameplay features, so the legal cost buys no lift"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "'Biometrics are often oversold' (Player Research, market.md section 1); 'Face cam adds consent and biometric-law cost ... for unclear lift' (methods-churn-funnel.md section 5)"
+  proposed: "Offer the pixel-only arousal curve instead (Makantasis 2019: 78 percent mean accuracy); keep facecam as a separate opt-in in the existing playtest product only"
+  shallow: false
+  mechanism: "Webcam frames of a beta tester are classified into expressions and time-aligned to level events"
+  example: "Beta of 80 testers on a puzzle game; the face model flags frustration at 14 level starts"
+  cost: M
+  depends_on: "Facecam capture and an expression model"
+  buyer: "Lead designer at a mid-size studio"
+  input: "Facecam video plus level events"
+  why_existing_tools_cannot: "Counsel's objection is not a capability gap: Antidote already captures face and gameplay recordings with sentiment analysis (market.md section 1), so the option is available elsewhere"
+  willingness_to_pay: "1: counsel would not sign; Affectiva-type plug-ins are now de-emphasised (market.md section 7) and Antidote sells it at $115-475 per game per month"
+
+- id: privacy-13
+  title: "REFUSE: per-player frustration score that triggers an offer at the frustrating moment"
+  level: L4
+  cell: {buyer-role: monetisation, video-source: own-players-consented-sdk, signal-extracted: emotion-arousal-from-pixels, analysis-type: real-time-in-session-intervention, constraint-to-overcome: accuracy-and-trust, automation-level: closed-loop-in-game-action, pricing-model: revenue-share, game-platform-and-genre: mobile-midcore-f2p}
+  object: "methods-churn-funnel.md section 5: arousal from gameplay pixels at 'over 78% accuracy on average'; section 1: Halfbrick 'gifted predicted churners in-game, +5 percentage points 7-day retention'"
+  situation: "The pixel model scores arousal 0.9 after a third failed attempt at level 30 and the system pops a 60-coin bundle at that exact moment"
+  consequence: "Using an inferred emotional state to time a purchase prompt is the case counsel flags first as manipulation of a vulnerable moment, and an emotion score also needs disclosure under Art. 50(3)"
+  p_typical: 0.1
+  grounded: inferred
+  evidence: "'EU AI Act Art. 5(1)(f) bans emotion recognition in workplace and education; elsewhere permitted but deployers must inform subjects (Art. 50(3))' (methods-churn-funnel.md section 7); the manipulation point itself is not in the notes"
+  proposed: "Allow the same score only for gifts (as Halfbrick did) or for offline reports, never to time a priced prompt"
+  shallow: false
+  mechanism: "Per-session arousal inference feeds the offer engine in real time"
+  example: "Level 30, third fail, score 0.9, bundle shown at 9 USD"
+  cost: L
+  depends_on: "Pixel affect model; offer engine hook"
+  buyer: "Monetisation lead at a mid-core F2P studio"
+  input: "Live screen frames plus session state"
+  why_existing_tools_cannot: "Not blocked by tooling; methods-churn-funnel.md section 5 shows pixel-only affect already works in research, which is why counsel must say no"
+  willingness_to_pay: "1: counsel refuses; the monetisation lead would pay on a revenue share, but the notes give no price"
+
+- id: privacy-14
+  title: "REFUSE: always-on ring buffer that uploads with game voice chat attached"
+  level: L3
+  cell: {buyer-role: player-support, video-source: own-players-consented-sdk, signal-extracted: voice-chat, analysis-type: bug-reproduction, capture-trigger-and-sampling: always-on-ring-buffer, constraint-to-overcome: privacy-and-consent, delivery-form: issue-tracker-ticket}
+  object: "adjacent-usecases.md section 9: 'no off-the-shelf vendor of a rolling last-30-seconds game-client buffer attached to a ticket'; section 3: Activision FAQ says voice chat is monitored and recorded"
+  situation: "A player taps 'report a problem' at 21:14 in a squad match; the 60-second buffer includes three teammates talking"
+  consequence: "The three teammates never agreed to a recording leaving their device; Activision's moderation setup tells players voice is monitored, a support buffer would have no such notice"
+  p_typical: 0.1
+  grounded: inferred
+  evidence: "Activision FAQ: 'voice chat is monitored and recorded' (adjacent-usecases.md section 3); Sentry buffers 'about the last minute before the error' (methods-churn-funnel.md section 6)"
+  proposed: "Ship the buffer with the audio track removed by default; keep voice only in a moderation product with its own notice"
+  shallow: false
+  mechanism: "The buffer stores screen plus mixed game audio and voice for the last 60 seconds and uploads it on a report"
+  example: "Support agent opens a ticket with a 60-second clip where a teammate's voice and name are audible"
+  cost: S
+  depends_on: "SDK audio capture permission"
+  buyer: "Head of player support at a multiplayer studio"
+  input: "Screen frames, game audio and voice mix, session ID"
+  why_existing_tools_cannot: "adjacent-usecases.md section 9: nothing off the shelf does it; the problem is that doing it records bystanders"
+  willingness_to_pay: "1: counsel would not approve voice; the audio-free version has the buyer signal (Activision: 23 percent of reports had actionable evidence, adjacent-usecases.md section 3)"
+
+- id: privacy-15
+  title: "Audio-free last-60-seconds ticket clip with handle blur, attached on 'report a problem'"
+  level: L4
+  cell: {buyer-role: player-support, video-source: support-ticket-attachment, signal-extracted: on-screen-text-ocr, analysis-type: bug-reproduction, capture-trigger-and-sampling: on-player-report, delivery-form: issue-tracker-ticket, constraint-to-overcome: privacy-and-consent, companion-data: support-ticket-text}
+  object: "adjacent-usecases.md section 3: 'about 77% [of reports] lacked actionable evidence'; section 9: players 'self-record and attach; agents watch'"
+  situation: "A player of a squad shooter reports 'my purchase did not arrive'; the clip shows the store screen, a chat box with other players' names, and the order ID"
+  consequence: "The agent gets the evidence without a second round trip, and bystander names are already blurred when the agent opens it"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "'players self-record and attach; agents watch' and 'no off-the-shelf vendor of a rolling last-30-seconds game-client buffer attached to a ticket' (adjacent-usecases.md section 9)"
+  proposed: "Buffer 60 seconds locally, show the player the clip and a blur preview, upload only after a tap on 'send'"
+  shallow: false
+  mechanism: "Player-initiated trigger plus on-device redaction of chat and name regions, with AI summary written into the ticket"
+  example: "Ticket 88213 arrives with a 40-second clip, summary 'store sheet closed at 0:18 with no receipt shown', and teammates' names blurred"
+  cost: M
+  depends_on: "SDK ring buffer; OCR text boxes"
+  buyer: "Head of player support at a studio with 500+ tickets per day"
+  input: "60-second screen buffer without audio, ticket text, order ID"
+  why_existing_tools_cannot: "adjacent-usecases.md section 9: Fullview and Screendesk are non-game; Helpshift captures device state without video"
+  willingness_to_pay: "3: Helpshift is priced per issue with 1,000 included (adjacent-usecases.md section 9), so a per-clip price fits; reviewers call Helpshift expensive"
+
+- id: privacy-16
+  title: "Player-side review screen: watch and delete the last clip before upload, with the blur drawn on it"
+  level: L3
+  cell: {buyer-role: product-retention, video-source: beta-and-early-access-testers, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, capture-trigger-and-sampling: opt-in-panel, constraint-to-overcome: player-opt-in-rate, effort: S-weeks, game-platform-and-genre: pc}
+  object: "methods-churn-funnel.md section 6: Steam Game Recording keeps clips on the user's disk with a cap; section 7: Apple wants 'a clear visual indication when recording'"
+  situation: "A Steam early-access panel of 500 players is asked to share the first 20 minutes; 70 percent decline when told it uploads automatically"
+  consequence: "Opt-in rate and community backlash ('the game records me') depend on seeing and controlling the clip, which is also a transparency duty"
+  p_typical: 0.1
+  grounded: speculative
+  evidence: "none on opt-in rates in the notes; Steam recording stores clips locally with a disk cap (methods-churn-funnel.md section 6)"
+  proposed: "After the session show a 20-second preview strip, the redaction overlay and a delete button; upload only after a confirm tap"
+  shallow: false
+  mechanism: "Moves consent from a one-time toggle to a per-clip confirmation, with the redaction visible"
+  example: "Early-access panel of 500: the opt-in rate is measured per clip, not per install, and the studio sees 'deleted by player' as a reason code"
+  cost: S
+  depends_on: "Local clip storage; redaction preview"
+  buyer: "Community manager and product lead at a PC early-access studio"
+  input: "Local clip, redaction boxes, player confirm event"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 6: session replay SDKs upload on backgrounding and show no per-clip review; Steam recording is a player tool with no studio analysis"
+  willingness_to_pay: "2: no price signal; value is in a higher panel opt-in rate"
+
+- id: privacy-17
+  title: "Separate second consent and player payout for training-data use of the same clips"
+  level: L4
+  cell: {buyer-role: data-buyer-training, video-source: own-players-consented-sdk, signal-extracted: player-skill-and-mechanics, analysis-type: training-dataset-export, delivery-form: licensed-dataset, constraint-to-overcome: privacy-and-consent, pricing-model: data-licence-per-hour, companion-data: touch-and-controller-input}
+  object: "market.md section 3: Worldmodeldata licensed 'nearly 1M hours'; 'Paying individual players is a future plan'; Muse recorded 'under the EULA, which drew criticism over consent'"
+  situation: "A studio has 30,000 hours of consented FTUE clips with touch input and a world-model lab asks to license them"
+  consequence: "Consent given for churn analysis does not cover resale; without a second opt-in the sale is the single most litigable use of the footage"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "'Worldmodeldata ... has licensed nearly 1M hours of game data from studios ... Paying individual players is a future plan' (market.md section 3); OpenAI's reported $500M offer for Medal (market.md section 4)"
+  proposed: "A second toggle in settings with named purpose, a revenue share per hour to the player, and export only of clips whose ledger row says 'training: yes'"
+  shallow: false
+  mechanism: "Purpose-bound consent that splits the clip table into analytics-only and licensable, with a payout ledger"
+  example: "Of 30,000 hours, 9 percent opt into training; 2,700 hours are exported with the ledger and 40 percent of the licence fee is paid to players"
+  cost: L
+  depends_on: "Consent ledger (privacy-4); payout rail; a buyer such as Worldmodeldata or Origin Lab"
+  buyer: "AI data-licensing lead at a studio, signed off by privacy counsel"
+  input: "Clips with paired touch or controller input and the consent ledger"
+  why_existing_tools_cannot: "market.md section 3: Origin Lab and Worldmodeldata license studio-held data; no source shows per-player second consent or payout"
+  willingness_to_pay: "4: buyers pay large sums (about 1M hours licensed, Medal offer about $500M reported); counsel's price is the 9 percent of footage that is clean"
+
+- id: privacy-18
+  title: "REFUSE: licensing analytics clips to AI labs under the existing EULA acceptance"
+  level: L3
+  cell: {buyer-role: data-buyer-training, video-source: own-players-consented-sdk, signal-extracted: player-skill-and-mechanics, analysis-type: training-dataset-export, delivery-form: licensed-dataset, constraint-to-overcome: privacy-and-consent, pricing-model: data-licence-per-hour, buyer-org-type: data-or-market-intel-buyer}
+  object: "market.md section 3: Microsoft Muse matches 'were recorded under the EULA, which drew criticism over consent'"
+  situation: "A studio's ToS update says 'gameplay may be used for analytics and AI research'; a lab offers a per-hour fee for 20,000 hours"
+  consequence: "Counsel treats consent buried in a EULA as the failure mode in the Muse case; the sale is reversible only if clips can be found and withdrawn"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "'Matches were recorded under the EULA, which drew criticism over consent' (market.md section 3)"
+  proposed: "Route the same buyer to the opt-in flow in privacy-17, and refuse bundles that cannot name which clips carried the second consent"
+  shallow: false
+  mechanism: "A bulk export of stored clips and inputs to a lab on the basis of terms acceptance"
+  example: "20,000 hours at a flat per-hour fee, delivered in one S3 transfer"
+  cost: S
+  depends_on: "Stored clips"
+  buyer: "Business development lead at a studio selling data"
+  input: "Stored gameplay clips with inputs"
+  why_existing_tools_cannot: "Technically trivial; the notes show AI labs paying (market.md section 3), which is why the refusal matters"
+  willingness_to_pay: "1: counsel refuses; the buyer side is high (market.md section 3: reported $500M Medal offer, about 1M hours licensed)"
+
+- id: privacy-19
+  title: "Aggregate-only affect curve: arousal per level step released only when at least 50 sessions contribute, never stored per player"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: emotion-arousal-from-pixels, analysis-type: cohort-comparison, lifecycle-moment: soft-launch, delivery-form: per-cohort-report, constraint-to-overcome: accuracy-and-trust, processing-location: on-device, automation-level: insight-for-human}
+  object: "methods-churn-funnel.md section 5: 'arousal predicted from gameplay video alone, over 78% accuracy on average'; pruned cell in C-axes.yaml: emotion-arousal-from-pixels is 'sellable only with disclosure and outside banned contexts'"
+  situation: "A soft-launch of a platformer with 40 levels; the designer wants to see which levels spike arousal and which flatten"
+  consequence: "Per-player emotion records trigger the strictest reading of emotion-recognition rules; an aggregate curve with a minimum cohort size is the version counsel can sell"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "'Art. 50(3)' disclosure duty for emotion recognition (methods-churn-funnel.md section 7); 'pixel-only models perform equally well as all-modality models' (methods-churn-funnel.md section 5)"
+  proposed: "Compute the arousal score on device, send one number per level step, and the server publishes a point only after 50 contributors"
+  shallow: false
+  mechanism: "Moves the affect model to the device and sends only a bucketed number, so the server never holds a per-player emotion trace"
+  example: "Level 17 shows an arousal peak across 212 sessions and a flat line at level 18 across 190; level 31 has 38 sessions and is hidden"
+  cost: M
+  depends_on: "On-device pixel affect model; AGAIN-style labels (1,100 videos from 9 games) for training"
+  buyer: "Lead designer at a mid-size studio, approved by counsel"
+  input: "Device screen frames and level IDs; no facecam"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 5: the research models exist but run on stored lab videos; PlaytestCloud's flagged moments key on speech (methods-churn-funnel.md section 2)"
+  willingness_to_pay: "3: designers value it; PlaytestCloud tiers at EUR 1,130-2,825 per month are the anchor for a research-grade feature"
+
+- id: privacy-20
+  title: "REFUSE: automatic bans or mutes from a video classifier with no human review"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: bot-or-fraud-behaviour, analysis-type: evidence-pack-for-enforcement, automation-level: closed-loop-in-game-action, constraint-to-overcome: accuracy-and-trust, game-platform-and-genre: competitive-multiplayer}
+  object: "adjacent-usecases.md section 2: server-side LSTM 'reached 88.6% accuracy with 0.97% false-positive rate'; FACEIT 'no ban is triggered solely by its flag'"
+  situation: "A video model flags a pixel-bot in a ranked match; 0.97 percent false positives across 1 million matches is 9,700 wrongly flagged accounts"
+  consequence: "Automated decisions with legal or similar effect on a player are exposed to challenge; one wrongly banned account that spent money is a refund and a complaint"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "'authors stress false accusations as the key risk' (adjacent-usecases.md section 2); FACEIT flag does not alone trigger a ban (adjacent-usecases.md section 2)"
+  proposed: "Sell the flag only as an evidence pack to a reviewer (privacy-21), never as a closed-loop action"
+  shallow: false
+  mechanism: "A classifier on stored footage writes a ban decision directly into the enforcement system"
+  example: "Match 1,204,331 flagged for aim-snap; account suspended 0.4 seconds later"
+  cost: L
+  depends_on: "Video classifier for vision-based cheats; enforcement API"
+  buyer: "Trust and safety lead at a competitive-multiplayer studio"
+  input: "Match footage plus input logs"
+  why_existing_tools_cannot: "adjacent-usecases.md section 2: no source confirms a vendor running vision anti-cheat in production, so the option is unproven as well as risky"
+  willingness_to_pay: "1: counsel refuses; no price evidence for anti-cheat from video (adjacent-usecases.md section 2: 'None published')"
+
+- id: privacy-21
+  title: "Enforcement evidence pack: 3 clips per accusation, bystander names blurred, with the reviewer's checklist and a retention stamp of 90 days"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: support-ticket-attachment, signal-extracted: bot-or-fraud-behaviour, analysis-type: evidence-pack-for-enforcement, delivery-form: enforcement-or-cert-evidence-pack, constraint-to-overcome: ground-truth-labels, automation-level: auto-created-ticket-or-asset, game-platform-and-genre: competitive-multiplayer}
+  object: "adjacent-usecases.md section 2: 'players submit video clips of suspected cheaters; ... email hacks@blizzard.com'; section 3: 'about 77% lacked actionable evidence'"
+  situation: "A player submits a 4-minute screen recording accusing a teammate; the trust team has 20 seconds per ticket"
+  consequence: "The reviewer sees the 3 relevant clips with timestamps and the accused is judged on evidence that can be shown to them on appeal"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "Overwatch players 'link video in reports and email' (adjacent-usecases.md section 2); Activision: only about 23 percent of reports had actionable evidence (adjacent-usecases.md section 3)"
+  proposed: "Cut the recording to the 3 candidate moments, blur uninvolved names, attach the model's reason and delete the pack at day 90 unless on appeal"
+  shallow: false
+  mechanism: "Triages a player's submitted clip into the moments that matter and prepares a reviewable, redacted file with a stated retention"
+  example: "A 4-minute upload becomes 3 clips of 8 seconds each; the reviewer decides in 40 seconds"
+  cost: M
+  depends_on: "Support-ticket attachment pipeline; moment detector for the cheat class"
+  buyer: "Trust and safety lead at a competitive game studio"
+  input: "Player-submitted screen recording plus match ID and inputs"
+  why_existing_tools_cannot: "adjacent-usecases.md section 2: Anybrain and FACEIT detect cheats from inputs; the evidence pack from the player's own clip is manual (Discord volunteer groups)"
+  willingness_to_pay: "3: no price signal for anti-cheat from video; Modulate's top public tier is $20,000/month for voice, the nearest enforcement-side anchor (adjacent-usecases.md section 3)"
+
+- id: privacy-22
+  title: "Crop-to-viewport and facecam-box removal before any derived feature is stored from public streams"
+  level: L4
+  cell: {buyer-role: competitive-intel, video-source: public-streams-and-ugc, signal-extracted: ui-state-and-screen-flow, analysis-type: benchmark-vs-competitor, lifecycle-moment: prototype-and-greenlight, delivery-form: dashboard, constraint-to-overcome: privacy-and-consent, buyer-org-type: publisher}
+  object: "competitor-and-ua.md section 2 INFERRED: 'No source describes a product that ingests YouTube/Twitch/TikTok gameplay of a competitor and returns features, monetisation touchpoints or FTUE steps'"
+  situation: "An analyst feeds 300 Twitch VODs of a rival's first 10 minutes; each frame carries the streamer's face, donation alerts and chat names"
+  consequence: "The pipeline would store identifiable third-party faces and chat handles that the teardown never needs"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Hypetrigger needs 'crop region' config per game (competitor-and-ua.md section 4); Hatchet measures viewership metadata only (market.md section 5)"
+  proposed: "Detect the game viewport, drop the rest at ingest, keep FTUE step labels and a few keyframes, and discard the VOD file after 24 hours"
+  shallow: false
+  mechanism: "Extracts the game rectangle and stores features (screens, offers, cadence), not the stream's people"
+  example: "300 VODs yield 11 FTUE step labels per game and 3,000 keyframes without a single face"
+  cost: M
+  depends_on: "Viewport detector; VOD access terms"
+  buyer: "Competitive intelligence analyst at a publisher, approved by counsel"
+  input: "Public stream VODs"
+  why_existing_tools_cannot: "competitor-and-ua.md section 1: teardowns are done by analysts playing games; Gamedexy and Game UI Database are human-captured; no automated public-video pipeline exists"
+  willingness_to_pay: "4: competitive intelligence is bought at $30k-$115k per year (Sensor Tower median $75,000, competitor-and-ua.md section 1); stream-terms risk remains unpriced"
+
+- id: privacy-23
+  title: "Rotating pseudonymous on-screen watermark in place of a stable player ID in leak-protected footage"
+  level: L3
+  cell: {buyer-role: qa, video-source: beta-and-early-access-testers, signal-extracted: visual-errors-and-glitches, analysis-type: bug-reproduction, lifecycle-moment: pre-launch-qa, constraint-to-overcome: studio-ip-and-prerelease-leak, delivery-form: issue-tracker-ticket, buyer-org-type: aaa-studio}
+  object: "market.md section 1: Antidote 'Anti-leak SDK watermarks a player ID on screen'"
+  situation: "A closed beta of 400 testers; an unannounced character leaks, and the watermark names the tester; the same footage goes to an AI vendor and an outsourced QA team"
+  consequence: "A stable real-world tester ID in every frame makes each clip personal data across three processors and ties a leak accusation to one person"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Antidote's SDK 'watermarks a player ID on screen' (market.md section 1)"
+  proposed: "Print a per-session rotating token, keep the token-to-tester map in the studio's own vault, reveal it only on a leak investigation"
+  shallow: false
+  mechanism: "Separates the leak-tracing mark from the identity so downstream processors see only a token"
+  example: "Beta clip carries token K7Q2; the QA vendor ticket mentions K7Q2; the map is opened once in 6 months for one leak case"
+  cost: S
+  depends_on: "Watermark SDK; studio-held token vault"
+  buyer: "QA director with security reviewer at a studio running closed betas"
+  input: "Beta build video plus token map"
+  why_existing_tools_cannot: "market.md section 1: Antidote's watermark carries a player ID; nothing in the notes shows token rotation"
+  willingness_to_pay: "2: no price signal; an add-on to a QA capture seat"
+
+- id: privacy-24
+  title: "Bring-your-own-cloud processing where the vendor runs the models in the studio's tenant and holds no frames"
+  level: L4
+  cell: {buyer-role: finance-exec, video-source: internal-qa-builds, signal-extracted: visual-errors-and-glitches, analysis-type: ask-a-question-over-footage, constraint-to-overcome: security-review-soc2-residency, processing-location: customer-cloud-byoc, buyer-org-type: aaa-studio, pricing-model: annual-enterprise-licence}
+  object: "market.md section 2: Bugsee 'GDPR/HIPAA masking and consent for video capture' warning; section 3: Razer QA Companion 'GA on AWS Marketplace'"
+  situation: "An AAA studio refuses to upload unannounced-build footage to a vendor cloud and its counsel asks who is controller and who is processor"
+  consequence: "With models running in the studio's account the vendor is not a footage processor, cutting the contract negotiation and the data-residency question"
+  p_typical: 0.1
+  grounded: inferred
+  evidence: "Razer QA Companion needs 'no SDK or game instrumentation' and ships on AWS Marketplace (market.md section 3); vendor warnings on GDPR in market.md section 2"
+  proposed: "Deploy as a container in the customer's account with a metering call that sends counts only"
+  shallow: false
+  mechanism: "Packages the analysis and ask-question agent so that raw frames never leave the customer's tenant; the vendor sees counts and versions"
+  example: "A 40-hour QA week is analysed inside the studio's AWS account; the vendor invoice carries 40 hours, no clip IDs"
+  cost: L
+  depends_on: "Containerised pipeline; marketplace listing"
+  buyer: "Privacy counsel and CISO at an AAA studio, contract signed by the VP"
+  input: "Internal QA build recordings in the studio's own storage"
+  why_existing_tools_cannot: "market.md section 3: Razer QA Companion is vendor tooling beside testers; nothing in the notes offers a vendor-blind deployment"
+  willingness_to_pay: "4: enterprise buyers pay a premium for residency; QA service prices of $15-50 per tester hour (adjacent-usecases.md section 1) mark the labour it replaces"
+
+- id: privacy-25
+  title: "Cross-title FTUE benchmark built from derived step timings only, published when 5 or more titles contribute per cell"
+  level: L4
+  cell: {buyer-role: publishing-scout-bd, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: benchmark-vs-competitor, lifecycle-moment: soft-launch, delivery-form: per-cohort-report, constraint-to-overcome: studio-ip-and-prerelease-leak, pricing-model: per-game, buyer-org-type: publisher}
+  object: "methods-churn-funnel.md section 1: 'many top-performing studios store data in-house and never appear in public benchmarks'"
+  situation: "A publisher with 30 titles wants a time-to-first-purchase benchmark and 12 of its studios will not share footage with sister teams"
+  consequence: "Without a rule, one studio's unreleased tutorial design is visible to a competitor team; with step timings only and a floor of 5 titles per cell, the benchmark is shareable"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "'many top-performing studios store data in-house and never appear in public benchmarks' (methods-churn-funnel.md section 1); GameAnalytics median D1 about 22 percent as the public comparator"
+  proposed: "Share per-step dwell and success rates computed by a clean-room job; never the frames; suppress any cell with fewer than 5 titles"
+  shallow: false
+  mechanism: "A clean-room aggregation job that turns each studio's footage-derived labels into cohort statistics with a minimum group size"
+  example: "Benchmark: median tutorial length 142 seconds across 18 match-3 titles; the one 3-title cell for hybrid-casual puzzle stays hidden"
+  cost: L
+  depends_on: "Per-title step detectors in at least 5 titles; portfolio data agreement"
+  buyer: "Portfolio manager at a publisher, signed by counsel"
+  input: "Derived step labels and timings from own-players footage, per title"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 1: public benchmarks (GameAnalytics) cover event metrics only and miss in-house studios; no tool shares video-derived metrics across titles"
+  willingness_to_pay: "3: portfolio buyers pay for benchmarks (Sensor Tower $75,000 median per year, competitor-and-ua.md section 1); this variant has no direct price"
+
+- id: privacy-26
+  title: "Training-set lineage ledger: which clips fed which per-title UI detector, so a withdrawn clip triggers a retrain flag"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: churn-prediction-features, delivery-form: api-or-sdk, constraint-to-overcome: per-game-ui-generalisation, processing-location: vendor-cloud, companion-data: build-and-config-metadata}
+  object: "methods-churn-funnel.md section 4 INFERRED: 'a per-title detector trained on a few hundred labelled frames is plausibly enough'"
+  situation: "A per-title detector is trained on 400 labelled frames from 90 players; 6 of them withdraw consent at week 3"
+  consequence: "Deleting the frames but keeping the model that learned from them is unanswered; the studio needs to say which models are affected"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "per-title detectors on a few hundred frames (methods-churn-funnel.md section 4); no source on unlearning or lineage"
+  proposed: "Store clip_id lists per model version; on withdrawal flag the model and schedule a retrain at the next build"
+  shallow: false
+  mechanism: "A model-card record that ties each detector version to its training clips and consent state"
+  example: "Detector v7 lists 400 frames; 6 withdrawn players affect 23 frames; the ledger shows retrain due before build 4.13"
+  cost: S
+  depends_on: "Consent ledger (privacy-4); per-title training pipeline"
+  buyer: "Studio data scientist who owns the churn model and the detector"
+  input: "Training manifests, clip IDs, consent ledger"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 4: the CV work in the notes (NetEase WDTEST, YOLOv5-ABLN) treats datasets as static; none tracks consent of the source frames"
+  willingness_to_pay: "2: a small internal tool; no price signal"
+
+- id: privacy-27
+  title: "Per-clip view log with a reason code for every human or agent who opens footage"
+  level: L3
+  cell: {buyer-role: finance-exec, video-source: recruited-playtesters, signal-extracted: speech-or-think-aloud, analysis-type: ask-a-question-over-footage, constraint-to-overcome: security-review-soc2-residency, delivery-form: in-tool-annotation, effort: XS-repackage-existing-user-test-product}
+  object: "market.md section 1: PlaytestCloud 'First Findings ... links each friction point to its clip'; recordings of recruited testers with think-aloud"
+  situation: "A researcher, a designer and an AI summary job all open the same tester clip of a person who says their address aloud in session 2"
+  consequence: "Counsel and the CISO ask who watched what and why; no source shows a playtest tool that logs this"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "First Findings reviews 'all videos in an order' and links clips (market.md section 1); no source on access logging"
+  proposed: "Append-only log: clip ID, viewer or job, reason code (research, support, legal), timestamp; exposed in the audit export"
+  shallow: false
+  mechanism: "Records every read of footage, including by AI jobs, with a purpose code"
+  example: "Clip 5521 has 4 reads in 30 days: 2 research, 1 AI summary, 1 legal hold; the log is attached to the vendor review"
+  cost: S
+  depends_on: "Existing User Test product"
+  buyer: "Privacy counsel and vendor-risk reviewer at a mid-size studio"
+  input: "Access events from the clip store and from the agent"
+  why_existing_tools_cannot: "market.md section 1: PlaytestCloud and Antidote advertise AI summaries and anti-leak watermarks; neither lists a per-clip view log"
+  willingness_to_pay: "3: a checklist item that decides purchase; no price signal, priced into the enterprise tier"
+
+- id: privacy-28
+  title: "Loot-box odds and countdown disclosure check from per-build store walk-through footage"
+  level: L4
+  cell: {buyer-role: rating-and-consumer-compliance, video-source: automated-bot-or-agent-playthrough, signal-extracted: dark-pattern-and-disclosure-ui, analysis-type: compliance-audit, lifecycle-moment: certification-submission, delivery-form: enforcement-or-cert-evidence-pack, constraint-to-overcome: ground-truth-labels, pricing-model: per-build-or-release}
+  object: "adjacent-usecases.md section 4: 'no AI product that audits gameplay footage for subtitles, contrast or colourblind issues'; section 7: live events include 'limited-time shops' and 'IAP'"
+  situation: "A weekly release adds a limited-time bundle with a 02:00:00 countdown; counsel must confirm odds text is visible before the pull button in 12 regional builds"
+  consequence: "A missing disclosure in one region is found by a regulator or the store, not by the studio"
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none in the notes on loot-box rules; the nearest analogue is the manual per-build accessibility audit (adjacent-usecases.md section 4)"
+  proposed: "A bot visits every shop screen per build, a vision model finds odds text and countdown elements, and the report states which screens lack the disclosure"
+  shallow: false
+  mechanism: "Bot walkthrough plus screen classification to confirm that required text appears near priced actions"
+  example: "Build 4.12, region DE: 'Odds' link present on 9 of 10 bundle screens; screen 7 shows a 02:00:00 timer and no odds text"
+  cost: M
+  depends_on: "Scheduled bot playthrough; counsel-defined rule list"
+  buyer: "Compliance lead at a publisher with live-service F2P titles"
+  input: "Automated walkthrough video of store and offer screens per region build"
+  why_existing_tools_cannot: "adjacent-usecases.md section 4: audits in the notes are human-led (MGATS 150-250 hours, Can I Play That?); no AI vendor found for footage-based audit"
+  willingness_to_pay: "3: MGATS shows buyers pay for per-build human audits (adjacent-usecases.md section 4); no price for consumer-law audits"
+
+- id: privacy-29
+  title: "Vendor-side sub-processor register that updates per clip when a model or cloud region changes"
+  level: L3
+  cell: {buyer-role: white-label-vendor, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, delivery-form: white-label-embed, constraint-to-overcome: security-review-soc2-residency, processing-location: vendor-cloud, go-to-market-channel: oem-white-label, pricing-model: oem-royalty-or-white-label}
+  object: "market.md section 2: PlaytestCloud's AI 'uses the OpenAI API on video transcripts and survey responses'; B-perspectives analytics-or-attribution-vendor-white-label"
+  situation: "An analytics vendor white-labels 'see why' to 2,000 games; the model behind it changes from one LLM provider to another in week 6"
+  consequence: "Each white-label customer's counsel must be told of the new sub-processor before the change, or the vendor is in breach in 2,000 contracts"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "PlaytestCloud's AI runs on the OpenAI API (market.md section 1); no source shows sub-processor notices in the notes"
+  proposed: "A public register with 30-day notice emails and a per-customer flag for blocked sub-processors"
+  shallow: false
+  mechanism: "Treats model and region changes as notifiable events, with a customer opt-out that pins them to the old route"
+  example: "Week 6 notice: 'frames now processed by region X'; 14 customers pin the old route and the pipeline keeps two paths"
+  cost: M
+  depends_on: "Routing layer per customer; white-label agreement"
+  buyer: "BD or product lead at an analytics vendor, with their counsel"
+  input: "Pipeline routing config and customer contracts"
+  why_existing_tools_cannot: "market.md section 1: PlaytestCloud names OpenAI use in a help-centre note only; no white-label vendor in the notes publishes a register"
+  willingness_to_pay: "2: a precondition of an OEM licence rather than a product; no price signal"
+
+- id: privacy-30
+  title: "Anti-cheat compatibility statement: capture hook declared and tested against EAC and BattlEye before an engine-level SDK is enabled"
+  level: L3
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: performance-fps-and-load, analysis-type: anomaly-alert, constraint-to-overcome: anti-cheat-conflict, delivery-form: engine-editor-plugin, go-to-market-channel: engine-asset-store-or-marketplace, game-platform-and-genre: pc}
+  object: "B-perspectives cto-or-engine-lead-veto: 'anti-cheat (EAC, BattlEye) may flag screen capture hooks'"
+  situation: "A PC shooter with BattlEye enables the capture SDK on 2 percent of players; hooks into the swap chain look like an overlay cheat"
+  consequence: "Legitimate players are kicked or banned for the SDK; counsel treats a ban caused by the vendor's hook as the vendor's liability"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Anti-cheat vendors run kernel-level detection (adjacent-usecases.md section 2: Riot Vanguard); the flag risk itself is from the B-perspectives note, not a research note"
+  proposed: "Use the engine's own render target readback rather than an external hook, and publish a compatibility matrix per anti-cheat version"
+  shallow: false
+  mechanism: "Captures through an engine-level callback that anti-cheat sees as game code, backed by a tested list of versions"
+  example: "Matrix says: EAC 2026.3 pass, BattlEye 1.9 pass with allowlist request filed; the studio enables 2 percent sampling with a rollback switch"
+  cost: M
+  depends_on: "Engine plugin; anti-cheat vendor allowlisting"
+  buyer: "Engine lead at a PC multiplayer studio, with counsel's liability concern"
+  input: "Render target readback, anti-cheat version"
+  why_existing_tools_cannot: "market.md section 2: PostHog Unity is screenshot-based and alpha; none of the replay tools in the notes document anti-cheat compatibility"
+  willingness_to_pay: "2: a blocker removal; no price signal"
