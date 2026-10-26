@@ -1,0 +1,2280 @@
+- id: a11y-12
+  title: Status change from Queued to Running to Done is not announced and may be shown by colour or icon only
+  level: L4
+  cell:
+    surface:
+    - history-entry-row
+    - history-entry-status-badge
+    run-status:
+    - running
+    - queued
+    - done
+    actor: background-agent-job
+    action: open-history-entry
+    mode: report
+    observer-location-at-status-change: on-history-tab-top
+  object: 'History entry status (statuses unspecified in the spec: ''Statuses an entry can have on the History tab'')'
+  situation: User keeps the History tab open while a Report moves Queued, Running, Done over about 90 seconds.
+  consequence: Screen-reader user must re-navigate to the row to learn it is done; a colour-blind user sees a green or amber dot with no text; no status message reaches either.
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- Queued is not named in the spec (only running, done, failed); announcement/colour design is assumed'
+  already_specified: false
+  proposed: 'Status as visible text in the row; changes announced via a polite role=status region that names the entry (''Q4 test: Done'').'
+  shallow: false
+- id: a11y-14
+  title: 'History row interaction model is unspecified: whole-row click target versus a real link, and which element receives focus'
+  level: L3
+  cell:
+    surface: history-entry-row
+    action: open-history-entry
+    history-state: 100-entries
+    actor: creator-owner
+  object: History tab entry list
+  situation: Rows are clickable in the mouse design; the spec only says 'Lists past and current submissions'.
+  consequence: A div with an onClick handler is not focusable, so a keyboard user cannot open any of the 100 entries; if it is a link wrapping the whole row, the accessible name becomes a long string of name, mode, status, time, video count.
+  p_typical: 0.1
+  grounded: quote
+  evidence: Lists past and current submissions from both modes.
+  already_specified: false
+  proposed: One link per row, whose text is the entry title; status and time outside the link but inside the list item.
+  shallow: false
+- id: backend-10
+  title: 'Model returns an empty string or a refusal: spec does not say whether that entry is Done or Failed'
+  level: L3
+  cell:
+    surface: history-entry-row
+    run-status: done-with-empty-output
+    mode: ask-question
+    text-input-state: question-unrelated-to-videos
+    videos-selected: 2-5
+  object: History entry statuses (listed unknown)
+  situation: Question 'What's the weather tomorrow?' over 2 videos; model answers 'The videos don't cover this' or returns nothing
+  consequence: Row shows a green Done with an empty body; user cannot tell success from silent failure
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed." -- Ask question runs can end done or failed; an empty or refused model output is a general-knowledge case not named in the spec'
+  already_specified: false
+  proposed: Define Done = non-empty output of at least 1 sentence; empty output = Failed with reason 'no answer produced'
+  shallow: false
+  also_from:
+  - history-23
+- id: backend-12
+  title: 'No maximum run duration: a stuck run shows Running in History forever; spec needs a wall-clock limit (e.g. 30 min) and a reaper that marks it Failed'
+  level: L4
+  cell:
+    surface: history-entry-row
+    run-status: stuck-over-1h
+    actor: background-agent-job
+    time-and-connection: page-open-for-hours
+  object: History tab 'Lists past and current submissions'
+  situation: Worker crashes after picking the job; no heartbeat; user returns 3 hours later
+  consequence: Row still reads Running at 3 h; user waits or resubmits, creating a duplicate
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- "current" submissions implies a Running row can exist; a stuck run is a failure mode the spec does not mention'
+  already_specified: false
+  proposed: Heartbeat every 30 s; no heartbeat for 5 min or runtime over 30 min -> status Failed (timed out)
+  shallow: false
+  also_from:
+  - history-16
+  - notify-30
+  - qa-lead-48
+  - realtime-33
+  - support-5
+  - sre-1
+- id: backend-33
+  title: 'No cancel: a mistaken 20-video report keeps consuming tokens for its full run; if cancel is added, spec must say whether partial per-video output is kept'
+  level: L3
+  cell:
+    action: cancel-run-not-in-spec
+    run-status:
+    - cancelled-not-in-spec
+    - running
+    videos-selected: 6-20
+    surface: history-entry-row
+  object: History entry row actions (none specified)
+  situation: User realises 2 min in that the wrong 20 videos were selected
+  consequence: Full cost spent; user waits ~30 min for an unwanted report, then resubmits
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- current submissions can be running; no cancel action is mentioned anywhere in the spec'
+  already_specified: false
+  proposed: Add Cancel on Queued/Running rows; cancelled runs keep no output and show status Cancelled
+  shallow: false
+  also_from:
+  - history-39
+  - support-30
+- id: cost-7
+  title: 'Failed runs: whether the failed entry is charged is not specified'
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    run-status: failed
+    permission-and-plan: quota-remaining
+    mode: report
+    videos-selected: 21-100
+  object: 'History tab entry statuses (spec: "Statuses an entry can have ... unspecified")'
+  situation: A run fails after 40 minutes of processing 30 videos; the entry shows Failed
+  consequence: Unclear whether quota is deducted, refunded or partly kept; support tickets asking for credit back; Finance cannot book a failure rate into unit cost
+  p_typical: 0.15
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed." -- a failed entry is possible, but quota or charging is not mentioned in the spec'
+  already_specified: false
+  proposed: State that Failed runs are not charged to quota, or state the partial-charge rule, and show it on the Failed entry
+  shallow: false
+  also_from:
+  - admin-6
+- id: cost-16
+  title: Run cost is not shown on the history entry row, so spend cannot be traced to a run
+  level: L3
+  cell:
+    surface: history-entry-row
+    history-state: 100-entries
+    mode: report
+    actor: creator-owner
+  object: History tab entry row ("a new entry appears with whatever was submitted")
+  situation: User has 100 entries and wants to see which runs used the most quota
+  consequence: Row shows only what was submitted; no video count, video-minutes or units used; no way to find the 5 expensive runs
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"a new entry appears with whatever was submitted" -- entries exist as rows, but cost or usage fields are not mentioned'
+  already_specified: false
+  proposed: Add columns videos count and units charged to the row, and a sort by units charged
+  shallow: false
+- id: cost-18
+  title: A Running entry with no cancel keeps accruing cost when stuck over 1 hour
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    run-status:
+    - stuck-over-1h
+    - running
+    action: cancel-run-not-in-spec
+    mode: report
+    videos-selected: 21-100
+  object: History entry status (statuses unspecified) and the absence of cancel in the spec
+  situation: A Report over 80 videos shows Running at 90 minutes
+  consequence: User cannot stop the spend; the run may complete later and charge in full; no timeout after which the run is marked Failed and billing stops
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- a Running entry can exist; cancel, timeout and billing are not in the spec'
+  already_specified: false
+  proposed: Add a Cancel action on Running entries and a maximum run duration of N minutes after which the status becomes Timed out and charging stops
+  shallow: false
+- id: cost-19
+  title: Automatic retries inside a run may bill the same video twice
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    actor: background-agent-job
+    run-status: retrying
+    time-and-connection: deploy-during-run
+    videos-selected: 21-100
+  object: History entry status (no Retrying status in the assumed Queued / Running / Done / Failed set)
+  situation: A deploy during a run restarts the job; the first attempt already read 20 of 40 videos
+  consequence: Retry may re-read the 20 videos and charge twice, while the entry shows plain Running with no sign of the retry
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Resume from the last completed video, charge once per video per run, and log attempts on the entry
+  shallow: false
+- id: cost-20
+  title: Rate-limited run waits with no status and no statement of whether quota is reserved
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    run-status: rate-limited-waiting
+    time-and-connection: rate-limit-at-submit
+    history-state: several-running-at-once
+    mode: report
+    action: submit
+  object: History entry statuses; Submit
+  situation: User submits 8 Reports within 2 minutes and the agent provider rate-limits after 3
+  consequence: Entries 4 to 8 sit as Queued or Running with no explanation; unclear whether they hold quota while waiting and whether they expire
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- entries can be running at once; provider rate limiting and quota reservation are not in the spec'
+  already_specified: false
+  proposed: Add a status "Waiting (rate limit)" with an expected start time, and deduct quota only when the run starts
+  shallow: false
+- id: cost-40
+  title: Billing-day boundary for an entry depends on a timestamp whose timezone is unspecified
+  level: L3
+  cell:
+    surface: history-entry-row
+    time-and-connection: timezone-of-entry-timestamp
+    actor: admin
+    history-state: two-entries-same-second
+  object: History entry timestamp
+  situation: Run submitted at 23:50 UTC on the last day of the period by a user in UTC+5:30, so local date is the first of next month
+  consequence: Usage resets and invoices attribute the run to different periods than the History timestamp shows; Finance reconciliation is off by one period for boundary runs
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Show timestamps in the user's timezone with the UTC date available on hover, and bill by UTC submit time
+  shallow: false
+- id: dup-5
+  title: Two History rows with blank run name and the same creation minute are visually indistinguishable
+  level: L4
+  cell:
+    surface: history-entry-row
+    history-state:
+    - entries-with-blank-run-name
+    - two-entries-same-second
+    text-input-state: run-name-empty
+    action: double-submit
+  object: '"Run name (optional)" and the History entry row label'
+  situation: User leaves Run name empty and double-submits; both rows are labelled with whatever fallback the spec leaves undefined and show a timestamp to the minute
+  consequence: User cannot tell which row to open, delete or ask a follow-up on; the spec gives no fallback label (for example "Report - 3 videos - 14:03:07")
+  p_typical: 0.07
+  grounded: quote
+  evidence: Run name (optional)
+  already_specified: false
+  proposed: Define the default row label, including seconds in the timestamp and the video count
+  shallow: false
+  also_from:
+  - lowvision-30
+  - a11y-11
+  - dup-31
+- id: dup-16
+  title: After a double-submitted question creates two entries, the follow-up attaches to whichever entry the user opened - the rows give no cue which one has the thread
+  level: L3
+  cell:
+    surface: history-entry-row
+    history-state: two-entries-same-second
+    thread-state:
+    - thread-opened-from-history
+    - follow-up-1
+    action:
+    - open-history-entry
+    - ask-follow-up
+    mode: ask-question
+  object: '"Follow-up questions are supported after the first answer." and History entry rows'
+  situation: Two identical Ask question entries E1 and E2 exist; the user asks a follow-up in E2, later opens E1 and sees no follow-up
+  consequence: 'Threads diverge: the conversation is split across two entries and neither row shows a follow-up count; the user thinks the follow-up was lost'
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Follow-up questions are supported after the first answer." -- a double-submitted question creates two entries each with its own follow-up thread; double submit is not mentioned'
+  already_specified: false
+  proposed: Show follow-up count on each Ask question row and offer merge or delete for the duplicate
+  shallow: false
+- id: dup-20
+  title: Two accepted runs on the same videos running concurrently - concurrency cap and queued status are unspecified
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    history-state: several-running-at-once
+    run-status:
+    - rate-limited-waiting
+    - running
+    action: double-submit
+    videos-selected: 21-100
+    mode: report
+  object: '"History tab - past and current submissions" and "Statuses an entry can have on the History tab" (unspecified)'
+  situation: Double submit of a Report over 40 videos; both runs start; each needs about the same model throughput
+  consequence: Both runs take about twice as long, or the second sits Queued with no explanation; the user sees two identical rows with the same status badge and may cancel (not in spec) the wrong one
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- "current" submissions can run concurrently; concurrency cap is not stated'
+  already_specified: false
+  proposed: Define per-user concurrency (for example 2 running) and show "Queued behind 1 run" on the later entry
+  shallow: false
+- id: dup-22
+  title: Second submission fires after a selected video was deleted between the two clicks
+  level: L3
+  cell:
+    video-state: deleted-after-selection-before-run
+    action: double-submit
+    run-status: failed-before-start-validation
+    per-video-outcome-within-run: video-skipped-because-deleted
+    surface: history-entry-row
+    videos-selected: 2-5
+    actor: other-user-same-workspace
+    history-state: two-entries-same-second
+  object: Selected videos list and the entry created by Submit
+  situation: Click 1 at 14:03:07 creates entry E1 with videos A, B, C; a colleague deletes C at 14:03:07.4; click 2 at 14:03:07.8 submits A, B, C
+  consequence: E1 and E2 differ in outcome (E1 Done over 3 videos, E2 Failed or Done over 2) although the user sees two identical rows; spec has no rule for deleted videos at validation time
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"Videos are selected from already-uploaded, ingested videos via the Add video pop-up, filterable by tags or search." -- video deletion between selection and submit is not mentioned'
+  already_specified: false
+  proposed: Validate at submit; if any video is gone, reject with a message naming the video, creating no entry
+  shallow: false
+- id: dup-33
+  title: Two simultaneous runs complete within seconds - two notifications and a global badge count are unspecified
+  level: L3
+  cell:
+    surface: global-running-indicator-or-badge
+    history-state: several-running-at-once
+    run-status:
+    - done-but-unread
+    - done
+    observer-location-at-status-change: other-page-in-app
+    actor: background-agent-job
+    action: double-submit
+  object: '"History tab - past and current submissions"'
+  situation: A double submit produces E1 and E2, both finishing at 14:07:41 while the user is on the Videos page
+  consequence: The user receives two identical alerts or one badge showing "2", though the spec has no notifications, badge or unread concept; opening one entry leaves the other unread
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Decide whether completion alerts exist; if yes, group by minute ("2 runs finished")
+  shallow: false
+- id: dup-34
+  title: Deleting one duplicate entry - deletion is not in the spec, and its thread and the twin are affected unknown
+  level: L3
+  cell:
+    action: delete-entry-not-in-spec
+    history-state: two-entries-same-second
+    surface: history-entry-row
+    thread-state: follow-up-1
+    run-status: deleted-entry
+  object: '"History tab" row actions (none specified)'
+  situation: User wants to remove the accidental twin E2 but E1 has a follow-up thread and E2 has none; both rows look identical
+  consequence: Without delete the History permanently carries both rows; with delete a user may remove the entry with the thread instead of the empty one
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- rows exist, so a duplicate can exist; deletion is not mentioned'
+  already_specified: false
+  proposed: Decide delete in or out of v1; if in, confirm dialog showing run name, timestamp and follow-up count
+  shallow: false
+- id: firsttime-15
+  title: After the first redirect, whether the single new row is highlighted, auto-opened, or just listed is unspecified
+  level: L4
+  cell:
+    surface: history-entry-row
+    history-state: 1-entry
+    run-status: queued
+    time-and-connection: first-ever-use
+    action: submit
+  object: History tab new entry
+  situation: User lands on History with exactly 1 row for the first time
+  consequence: User does not know whether to click the row, wait, or go back; no instruction tells them the run is in progress
+  p_typical: 0.06
+  grounded: quote
+  evidence: a new entry appears with whatever was submitted
+  already_specified: false
+  proposed: New row highlighted for 3 s with status chip "Running" and copy "This usually takes ~N min; you can leave this page"
+  shallow: false
+- id: sharing-1
+  title: Blank run name has no fallback label once the History list mixes entries from several people
+  level: L3
+  cell:
+    surface: history-entry-row
+    history-state: entries-with-blank-run-name
+    actor: other-user-same-workspace
+    text-input-state: run-name-empty
+  object: Report form 'Run name (optional)' and the history entry row
+  situation: Team of 8 shares History; 5 of 30 visible rows have no run name (field is optional), and rows differ only by timestamp
+  consequence: Rows are indistinguishable; with per-user history a person could recognise their own blank rows by recency, with a shared list they cannot, so entries become unfindable
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"Run name (optional)" -- the optional name can be blank; a shared multi-author list is not in the spec'
+  already_specified: false
+  proposed: Specify the row title fallback (for example first 60 chars of prompt, else video names) and add it as an acceptance criterion
+  shallow: false
+- id: sharing-2
+  title: History entry row has no author field, so a shared list cannot say who ran an entry
+  level: L3
+  cell:
+    surface: history-entry-row
+    actor: other-user-same-workspace
+    history-state: report-and-question-entries-interleaved
+    mode:
+    - report
+    - ask-question
+  object: 'History tab: ''Lists past and current submissions from both modes. History is per user.'''
+  situation: Two teammates each submit a Report and an Ask question run within the same hour; list shows 4 rows
+  consequence: Nothing on the row says whose each is; the spec lists no submitter column, avatar or name, because per-user history made it implicit
+  p_typical: 0.15
+  grounded: inferred
+  evidence: '"History is per user, currently." -- "currently" implies a future change to sharing; no author field or shared list is specified'
+  already_specified: false
+  proposed: Add a 'Run by' element to the row and entry detail, with a rule for removed users (see sharing-14)
+  shallow: false
+  also_from:
+  - admin-32
+- id: sharing-13
+  title: The filter that today does not exist ('my history') has no defined default or scope once History is shared
+  level: L3
+  cell:
+    surface: history-filter-or-sort-controls
+    action:
+    - filter-history-by-mode-or-status
+    - submit
+    history-state: filtered-so-new-entry-hidden
+    actor: creator-owner
+  object: History tab 'Lists past and current submissions from both modes.'
+  situation: Team of 10 with 400 entries; A opens History expecting her own runs; default shows everyone's. A filters 'Mine' then submits a new run via redirect
+  consequence: Default scope (mine vs team) undefined; 'Mine' toggle persistence undefined; if filter is 'Others' and A submits, redirect lands on a list that hides her new entry
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"History is per user, currently." -- "currently" implies a future shared History; a Mine filter is not specified'
+  already_specified: false
+  proposed: Default to Mine with a Team toggle; redirect forces scope to Mine and highlights the new row
+  shallow: false
+- id: sharing-14
+  title: Entries of a removed or deactivated user have no owner label or retention rule
+  level: L3
+  cell:
+    surface: history-entry-row
+    actor: removed-or-deactivated-user
+    permission-and-plan: member-removed-from-workspace
+    history-state: 1000-entries
+  object: History entry 'Run by' (not in spec) and 'History is per user'
+  situation: A leaves the company; her 120 entries remain in shared History
+  consequence: Rows show a blank or broken author, follow-ups on her threads have no owner, and with per-user history those entries simply disappeared with the account
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Show 'Former member' label, keep entries 90 days, let admin reassign or delete
+  shallow: false
+- id: sharing-21
+  title: Global running indicator would count whose runs, mine or the whole team's
+  level: L3
+  cell:
+    surface: global-running-indicator-or-badge
+    actor: other-user-same-workspace
+    observer-location-at-status-change: other-page-in-app
+    run-status: running
+    history-state: several-running-at-once
+  object: '''There is no loading page'' (the only progress cue is the History entry); no badge specified'
+  situation: A adds a badge on the nav 'Agent (3 running)'; 3 runs are B's and C's
+  consequence: A sees '3 running' with nothing of hers in progress; or the badge counts only hers and misses that the team is queueing behind a large run
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Badge = own runs only; team view shows count in the History header
+  shallow: false
+- id: sharing-22
+  title: Entry timestamps have no time zone rule for a team spread across zones
+  level: L3
+  cell:
+    surface: history-entry-row
+    time-and-connection: timezone-of-entry-timestamp
+    actor: other-user-same-workspace
+    history-state: 100-entries
+  object: History entry row timestamp (format not specified)
+  situation: A in Mumbai submits at 23:30 IST on 26 Oct; B in San Francisco views it at 11:00 PDT 26 Oct
+  consequence: Same entry displays as 26 Oct for one and 25 Oct for the other if absolute dates are shown; 'today' grouping differs; per-user history hid this because it was always one zone
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Render in viewer's local zone with tooltip showing UTC and the author's zone
+  shallow: false
+- id: sharing-24
+  title: A teammate watching a Running entry should see it flip to Done, but live status updates for non-authors are not specified
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    observer-location-at-status-change: on-history-tab-top
+    actor: other-user-same-workspace
+    run-status:
+    - running
+    - done
+    mode: report
+  object: History entry status (statuses unspecified; assumed Queued / Running / Done / Failed)
+  situation: A's Report goes Running to Done at 10:42 while B has History open since 10:30
+  consequence: B sees Running for as long as B has the tab open (no refresh/poll interval specified); B opens the entry and finds the finished report, or asks A 'is it done?'
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- a status can change while open; teammates viewing the entry depend on a future shared History'
+  already_specified: false
+  proposed: Poll or push status every 10 seconds on History for all visible rows
+  shallow: false
+- id: sharing-26
+  title: Rename of an entry has no permission rule when entries are shared
+  level: L3
+  cell:
+    surface: history-entry-row
+    action: rename-entry-not-in-spec
+    actor: other-user-same-workspace
+    text-input-state: run-name-empty
+    mode: report
+    history-state: entries-with-blank-run-name
+  object: '''Run name (optional)'' (blank names are the trigger for others to fix titles)'
+  situation: B wants to give A's blank-name Report a title so the team can find it
+  consequence: Unspecified whether B may rename; if yes, A's own name is overwritten and the name history is lost; if no, blank names stay blank for everyone
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Rename = author or admin; show 'renamed by' in entry detail
+  shallow: false
+- id: sharing-28
+  title: Unread/read state of a finished entry is per user, but no read marker exists
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    run-status: done-but-unread
+    actor: other-user-same-workspace
+    action: mark-read
+    mode: report
+  object: History entry status 'Done' (no unread concept in spec)
+  situation: A submits a Report; B opens it first; A returns later
+  consequence: If 'unread' is stored on the entry, B opening it clears A's unread dot; if per user, spec must add a read table; with 50 team entries per day, a shared unread count becomes noise
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Unread is stored per (user, entry); only the submitter's own runs can show an unread dot
+  shallow: false
+- id: sharing-29
+  title: Concurrency and queue fairness across the team are unspecified (one user's 100-video run starves others)
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    run-status:
+    - rate-limited-waiting
+    - queued
+    actor: background-agent-job
+    history-state: several-running-at-once
+    videos-selected: 21-100
+    mode:
+    - report
+    - ask-question
+  object: '''Statuses an entry can have'' and ''maximum number of videos per run'' (both unspecified)'
+  situation: B submits 100-video Report while 6 teammates submit short Ask question runs in the next 10 minutes
+  consequence: Short runs sit Queued behind B's run for up to an hour; per-user history made this a personal wait, a shared list makes it visible and blames the feature; no queue-position text or concurrency cap exists
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Cap 2 concurrent runs per user and show 'Queued, position 3' on the row
+  shallow: false
+- id: sharing-35
+  title: Searching shared History matches teammates' prompts and run names, but no history search or scope exists
+  level: L3
+  cell:
+    surface: history-filter-or-sort-controls
+    action: search-history
+    actor: other-user-same-workspace
+    history-state: 1000-entries
+  object: History tab (no search box specified; Add video pop-up search is by name only)
+  situation: B types 'pricing' in a future History search; 40 matches across 9 authors
+  consequence: Undefined whether search covers prompt text, answers and run names, and whether results from private entries are excluded
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Search covers run name and prompt of entries visible to the viewer; show author in results
+  shallow: false
+- id: history-17
+  title: No delete for history entries; failed, test and sensitive runs stay forever
+  level: L3
+  cell:
+    surface: history-entry-row
+    action: delete-entry-not-in-spec
+    history-state: 1000-entries
+    run-status: failed
+  object: History tab; History is per user
+  situation: User wants to remove 40 failed or throw-away runs from 500 entries
+  consequence: List grows without bound; a report containing confidential video content cannot be removed by the user
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- past submissions accumulate; deleting entries is not mentioned'
+  already_specified: false
+  proposed: Add delete (single and multi-select) with a confirmation, or state retention period
+  shallow: false
+- id: history-20
+  title: Timestamp format and timezone on rows are unspecified
+  level: L3
+  cell:
+    surface: history-entry-row
+    time-and-connection: after-a-year
+    history-state: 1000-entries
+    actor: creator-owner
+  object: History entry row (submission time)
+  situation: Rows from 5 months ago read '5 months ago' with no date; user in IST and a workspace server in UTC; entries at 23:50 and 00:10 fall on different days depending on zone
+  consequence: User cannot locate 'the run I did before the March release'; relative times make same-second entries look identical
+  p_typical: 0.07
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Show absolute local date and time on rows (for example '12 Mar 2026, 14:05'), relative time as tooltip
+  shallow: false
+  also_from:
+  - a11y-48
+  - output-31
+- id: history-24
+  title: Partial runs (some videos unusable) have no row-level indicator
+  level: L4
+  cell:
+    surface: history-entry-row
+    run-status: partial-some-videos-unusable
+    videos-selected: 6-20
+    video-state: ingestion-failed
+    mode: report
+    per-video-outcome-within-run: some-videos-unusable
+  object: Assumed statuses Queued / Running / Done / Failed (no 'partial')
+  situation: A report of 12 videos where 2 are unusable
+  consequence: 'Row must read Done or Failed; user cannot find from the list which reports are missing videos; expected: ''Done (10/12 videos)'''
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"A Report produces one output covering all selected videos, not one per video." -- a Report covers all selected videos so some may be unusable; a partial status is not in the spec'
+  already_specified: false
+  proposed: Add status 'Partial (10/12)' with a filter value
+  shallow: false
+- id: history-34
+  title: 'Follow-up changes the video set: row video count and the list entry change or not'
+  level: L3
+  cell:
+    surface: history-entry-row
+    thread-state:
+    - follow-up-with-changed-video-set
+    - follow-up-1
+    mode: ask-question
+    action: ask-follow-up
+    videos-selected: 2-5
+  object: 'Ask question: same video selection, ''Follow-up questions are supported'''
+  situation: Thread started with 3 videos; follow-up adds 2 more via the pop-up
+  consequence: Row still reads 3 videos while the latest answer cites 5; whether the original answer is re-run is unstated
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"Follow-up questions are supported after the first answer." -- follow-ups exist; adding videos during a follow-up is not mentioned'
+  already_specified: false
+  proposed: Row shows the current video count; thread shows the video set per message
+  shallow: false
+- id: ingest-5
+  title: 'Video deleted after Submit while the run is still queued: run snapshots content at Submit or reads it at start'
+  level: L3
+  cell:
+    surface: history-entry-row
+    actor: background-agent-job
+    video-state: deleted-after-selection-before-run
+    run-status: queued
+    videos-selected: 2-5
+  object: History entry row status
+  situation: Run queued behind 10 others for 3 minutes; user deletes 1 of its 5 videos during the wait
+  consequence: Entry flips to Failed or to partial with no explanation; the user never connects it to the delete
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"a new entry appears with whatever was submitted" -- an entry exists after submit; video deletion while queued is not mentioned'
+  already_specified: false
+  proposed: 'Spec line: content is resolved at run start; a deleted video yields status ''Partial'' with ''video X was deleted before the run started'''
+  shallow: false
+  also_from:
+  - realtime-38
+- id: ingest-13
+  title: If still-ingesting videos are selectable, ingestion that fails after Submit leaves the run status undefined
+  level: L3
+  cell:
+    surface: history-entry-row
+    actor: ingestion-job
+    video-state:
+    - ingestion-failed
+    - still-ingesting
+    run-status: partial-some-videos-unusable
+    videos-selected: 2-5
+    action: submit
+  object: History entry row status
+  situation: User submits 5 videos, 1 still ingesting; its ingestion fails 6 minutes later
+  consequence: Run either waits forever, fails as a whole, or reports on 4 with no notice
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Whether a video that is still ingesting, or failed ingestion, can be selected." -- if an ingesting video is selectable, its later failure can affect the run; the spec lists this as unspecified'
+  already_specified: false
+  proposed: 'Spec line: run proceeds with remaining videos, status ''Partial (4/5)'', detail names the failed video and reason'
+  shallow: false
+- id: ingest-14
+  title: If runs may wait on ingestion, no maximum wait or distinct History status for 'waiting for ingestion'
+  level: L4
+  cell:
+    surface: history-entry-row
+    video-state:
+    - still-ingesting
+    - 3-hour-long
+    run-status: stuck-over-1h
+    videos-selected: 2-5
+  object: History entry status column
+  situation: Run includes a 3-hour video whose ingestion takes 70 minutes
+  consequence: Entry shows 'Queued' for over an hour; user cannot tell if the agent or ingestion is the bottleneck
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Whether a video that is still ingesting, or failed ingestion, can be selected." -- if an ingesting video is selectable, a run may wait on it; the spec lists this as unspecified'
+  already_specified: false
+  proposed: Status 'Waiting for ingestion (1 video)'; fail the wait after 120 minutes with a named reason
+  shallow: false
+  also_from:
+  - realtime-37
+- id: ingest-26
+  title: 'History entry row: whether it shows video thumbnails and what placeholder appears when a thumbnail is missing'
+  level: L3
+  cell:
+    surface: history-entry-row
+    video-state:
+    - ingested
+    - ingested-but-thumbnail-missing
+    history-state: 100-entries
+    action: open-history-entry
+  object: History entry row; 'a new entry appears with whatever was submitted'
+  situation: 100 entries, each with 1-20 videos, some without thumbnails
+  consequence: Rows render inconsistently; 20 thumbnails per row overflows layout
+  p_typical: 0.02
+  grounded: inferred
+  evidence: '"a new entry appears with whatever was submitted" -- the row shows what was submitted (videos); thumbnails are not mentioned'
+  already_specified: false
+  proposed: Row shows up to 3 thumbnails + '+N' counter, placeholder for missing
+  shallow: false
+- id: draft-14
+  title: Video deleted on the Videos page between selection and Submit causes a post-redirect failure with no way back to the draft
+  level: L3
+  cell:
+    surface: history-entry-row
+    video-state: deleted-after-selection-before-run
+    run-status: failed-before-start-validation
+    action:
+    - edit-and-resubmit-from-entry
+    - submit
+    videos-selected: 2-5
+    actor: same-user-second-tab
+  object: History entry with "whatever was submitted"; selected-videos list
+  situation: User has 3 videos selected, deletes one on the Videos page in another tab, returns and presses Submit.
+  consequence: Entry fails or runs on 2 videos; the user wants to fix and resubmit but the form is gone.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"a new entry appears with whatever was submitted" -- an entry is created at submit; deleting a selected video beforehand is not mentioned'
+  already_specified: false
+  proposed: Specify validity check at Submit and a "Copy to new run" action on the entry that refills form fields and selection.
+  shallow: false
+- id: draft-38
+  title: Unsent draft is not visible in History, so a user who left mid-compose has no cue that a draft exists
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    entry-point-and-lifecycle-phase: returning-mid-compose
+    action: return-to-draft
+    history-state: empty
+  object: History tab statuses (assumed Queued / Running / Done / Failed)
+  situation: User has a saved draft (if drafts are saved) and opens the History tab looking for it.
+  consequence: No Draft status exists in the assumed list, so the user thinks the run was lost; support cannot tell either.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Decide whether drafts show in History with a Draft badge or live only on the form.
+  shallow: false
+- id: l10n-2
+  title: A picked suggested question is stored as submitted text, so the History entry keeps the old UI language after the user switches locale
+  level: L3
+  cell:
+    surface: history-entry-row
+    text-input-state:
+    - question-picked-from-suggested
+    - non-english-text
+    history-state: report-and-question-entries-interleaved
+    action:
+    - pick-suggested-question
+    - submit
+    mode: ask-question
+  object: 'History entry row: ''a new entry appears with whatever was submitted'''
+  situation: User picks the German chip 'Was sind die größten Probleme?', submits, then switches the UI to Japanese. The entry row shows the German string while the mode badge and date are in Japanese.
+  consequence: One row mixes two languages; the user cannot tell if the question was typed or picked, and a translator cannot fix the stored string after release.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Suggested questions are shown and can be picked" -- a picked question is submitted as text and appears as submitted; UI language switching is not mentioned'
+  already_specified: false
+  proposed: Spec states that entry content is stored verbatim in the language it was submitted and only UI chrome (badges, dates, mode names) follows the current locale.
+  shallow: false
+- id: l10n-8
+  title: History entry row timestamp format is not specified per locale
+  level: L3
+  cell:
+    surface: history-entry-row
+    history-state: 100-entries
+    time-and-connection: timezone-of-entry-timestamp
+    entry-point-and-lifecycle-phase: arriving-from-nav
+  object: 'History tab: ''Lists past and current submissions from both modes.'''
+  situation: The same entry submitted at 2026-10-26 14:05 reads '26.10.2026, 14:05' in German, '2026年10月26日 14:05' in Japanese and '10/26/2026, 2:05 PM' in English; the spec shows no timestamp field at all.
+  consequence: Row width differs by about 6 characters per locale at 360px; a user in Tokyo reading a day-month-year string cannot tell 03.10 from 10.03 if the locale is mixed with the browser setting.
+  p_typical: 0.07
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Spec adds a timestamp to the row, formatted with the UI locale using Intl.DateTimeFormat, in the user's profile time zone.
+  shallow: false
+- id: l10n-13
+  title: Right-to-left run name loses its order and punctuation in the History entry row
+  level: L3
+  cell:
+    surface: history-entry-row
+    text-input-state:
+    - emoji-or-rtl
+    - non-english-text
+    history-state: entries-with-blank-run-name
+    action: type-run-name
+  object: Report mode field 'Run name (optional)'
+  situation: A user types the Arabic or Hebrew name 'اختبار المستخدم (2)' mixed with 'v2' and a trailing date; the row is laid out left-to-right with the mode badge to the left.
+  consequence: The '(2)' jumps to the wrong end and the digits attach to the neighbouring badge; the row reads as a different name.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Spec asks that user-entered text be rendered in an element with dir='auto' so each name picks its own direction.
+  shallow: false
+  also_from:
+  - prompt-28
+- id: l10n-16
+  title: Entry status badge labels Queued, Running, Done, Failed grow in German and may not fit at 360px
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    run-status: partial-some-videos-unusable
+    history-state: several-running-at-once
+    time-and-connection: steady-state
+  object: Assumed statuses Queued / Running / Done / Failed (frame assumption), History entry row
+  situation: German labels are 'In Warteschlange', 'Wird ausgeführt', 'Abgeschlossen', 'Fehlgeschlagen', and 'Teilweise abgeschlossen' for partial; 6 to 23 characters against 4 to 7 in English.
+  consequence: Badges wrap to two lines or are cut to 'Fehlgeschla…' on a 360px row, so Done and Failed look alike at a glance.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- status labels exist; their wording and translation are not in the spec'
+  already_specified: false
+  proposed: Spec sets a max badge width of 120px and requires a status icon plus a tooltip with the full label.
+  shallow: false
+- id: l10n-18
+  title: Fallback row title for a blank run name is a translated string or a stored string, and is not specified
+  level: L3
+  cell:
+    surface: history-entry-row
+    text-input-state:
+    - run-name-empty
+    - non-english-text
+    history-state: entries-with-blank-run-name
+    mode: report
+  object: Run name (optional)
+  situation: The user leaves Run name empty and 40 entries get a title. If the server writes 'Untitled report' at submit time it stays English; if the client renders 'Unbenannter Bericht' it changes with the locale; if it derives the title from the first 40 characters of the prompt, Japanese is cut at 40 characters.
+  consequence: A German user sees a column of 'Untitled report' rows, or two entries read differently after a locale change; a Japanese prompt gives a title of 40 characters with no spaces.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"Run name (optional)" -- the name can be blank; the fallback label is not specified'
+  already_specified: false
+  proposed: Spec states blank names are stored as null and the fallback 'Bericht vom <date>' is rendered at display time.
+  shallow: false
+- id: l10n-32
+  title: Entry timestamps on 2026-10-25 in Berlin repeat the hour 02:00-03:00 after the clock change, so two entries read the same time
+  level: L4
+  cell:
+    surface: history-entry-row
+    time-and-connection: timezone-of-entry-timestamp
+    history-state: two-entries-same-second
+    action: open-history-entry
+  object: History tab list of submissions (no ordering or time display specified)
+  situation: German user submits at 02:30 CEST and again at 02:30 CET on 2026-10-25, the day before this spec date; rows show '25.10.2026, 02:30' for both, and date-only grouping puts them under one heading.
+  consequence: The row that is older appears newer when the sort uses the displayed string; a user cannot tell which of two Reports came first.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Spec requires sorting by UTC timestamp, showing seconds or an offset when two rows have the same minute, and storing UTC.
+  shallow: false
+- id: l10n-36
+  title: Searching History entries by Japanese text has no word boundary rule
+  level: L3
+  cell:
+    surface: history-filter-or-sort-controls
+    action: search-history
+    text-input-state: non-english-text
+    history-state: 1000-entries
+  object: 'History tab: ''Lists past and current submissions from both modes.'' (search and filter not specified)'
+  situation: 1000 entries; a user searches '離脱' (drop-off) and the entry name is 'ユーザー離脱の分析'; a space-based tokenizer finds no word and returns 0 matches.
+  consequence: Search works for German 'Abbruch' and fails for Japanese on the same data; no spec line says substring or word match.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Spec says History search is a case-insensitive substring match over the entry name, prompt and question after NFKC normalisation.
+  shallow: false
+- id: lowvision-25
+  title: History row status badges (assumed Queued / Running / Done / Failed) distinguished by hue only, e.g. green Done vs red Failed
+  level: L4
+  cell:
+    surface:
+    - history-entry-row
+    - history-entry-status-badge
+    run-status: failed
+    history-state: 100-entries
+    action: open-history-entry
+  object: History tab, entry row status badge
+  situation: Colour-blind user scans 100 rows of same-shape coloured dots
+  consequence: Failed runs indistinguishable from Done; user shares a failed or empty report
+  p_typical: 0.22
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- statuses exist; their visual treatment is not in the spec'
+  already_specified: false
+  proposed: Each badge = text word + icon with distinct shape (clock, spinner, check, exclamation), text contrast 4.5:1
+  shallow: false
+- id: lowvision-26
+  title: Running status conveyed by an animated spinner only, which disappears or freezes under prefers-reduced-motion
+  level: L4
+  cell:
+    surface: history-entry-row
+    run-status: running
+    history-state: 1-entry
+    time-and-connection: steady-state
+  object: History entry row, running indicator
+  situation: OS reduced-motion setting is on; spinner stops rotating and looks like a static circle identical to Queued
+  consequence: User cannot tell queued from running from stuck-over-1h
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Running badge carries text 'Running' and elapsed time ('Running · 4 min')
+  shallow: false
+- id: lowvision-31
+  title: History row secondary text (timestamp, mode label, video count) in light grey small text below 4.5:1
+  level: L4
+  cell:
+    surface: history-entry-row
+    history-state: report-and-question-entries-interleaved
+    time-and-connection: steady-state
+    mode:
+    - ask-question
+    - report
+  object: History entry row metadata line
+  situation: 'Mode (''Report'' vs ''Question'') shown as 12px #9E9E9E text or a colour-coded icon'
+  consequence: Interleaved report and question entries cannot be told apart outdoors
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Mode shown as text label with distinct icon; metadata text at least 14px and 4.5:1
+  shallow: false
+- id: lowvision-35
+  title: Windows High Contrast / forced-colors mode removes background-colour status badges and background-image check overlays
+  level: L4
+  cell:
+    surface:
+    - history-entry-row
+    - history-entry-status-badge
+    - add-video-popup
+    run-status: failed
+    actor: creator-owner
+    time-and-connection: steady-state
+  object: History status badges and Add video pop-up check overlay
+  situation: 'User runs forced-colors: active; badges are background-colour only, check is a CSS background image'
+  consequence: All statuses render as plain text-less boxes and selections disappear
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Acceptance criterion: test pop-up and History in forced-colors mode; use SVG icons with currentColor and text labels'
+  shallow: false
+- id: lowvision-40
+  title: Stuck run (over 1 hour) and Running look identical when status is a colour dot; no elapsed-time text
+  level: L4
+  cell:
+    surface: history-entry-row
+    run-status:
+    - stuck-over-1h
+    - running
+    history-state: 1-entry
+    time-and-connection: during-agent-outage
+  object: History entry row status
+  situation: Agent outage; run sits at the same blue 'running' dot for 70 minutes
+  consequence: User keeps waiting, cannot tell a stuck run from a long 3-hour-video run
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- a Running entry can exist; colour-dot display and elapsed-time text are not in the spec'
+  already_specified: false
+  proposed: Show 'Running · 1 h 10 min' and switch to a text warning after a threshold (e.g. 60 min)
+  shallow: false
+- id: mobile-13
+  title: History row at 360px has no layout rule for status badge and video count, so one truncates or wraps
+  level: L3
+  cell:
+    surface:
+    - history-entry-row
+    - history-entry-status-badge
+    run-status: queued
+    videos-selected: 2-5
+    history-state: 100-entries
+  object: History tab entries, "Lists past and current submissions from both modes"
+  situation: Row has to show title, mode, status ("Queued"/"Running"/"Done"/"Failed" per assumption), video count, and time within about 328px of width
+  consequence: Status text clipped to "Que..." or wrapped to a second line, making a 100-entry list uneven and hard to scan; which field drops first is unspecified
+  p_typical: 0.1
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- rows exist; their layout at 360px is not specified'
+  already_specified: false
+  proposed: Spec a two-line mobile row with title line, then a line with status chip, count, and relative time; title truncates first
+  shallow: false
+- id: mobile-23
+  title: Run name of 200 characters has no truncation rule in the History row and detail header at 360px
+  level: L3
+  cell:
+    surface: history-entry-row
+    text-input-state: run-name-200-chars
+    mode: report
+    history-state: 1-entry
+    action: type-run-name
+  object: '"Run name (optional)" shown in the History entry'
+  situation: User pastes a 200-character name with no spaces (a long URL) into Run name
+  consequence: Unbroken string overflows the row and causes horizontal page scroll at 360px, hiding the status chip
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Run name (optional)" -- a run name can be long; its display in the entry is not specified'
+  already_specified: false
+  proposed: Spec a max length (for example 80 characters) on the field and word-break plus 2-line clamp in the row
+  shallow: false
+  also_from:
+  - prompt-4
+  - redirect-18
+- id: mobile-28
+  title: Status of a Running entry is not refreshed after the app returns from the background, so the row shows stale status
+  level: L3
+  cell:
+    surface: history-entry-row
+    run-status:
+    - running
+    - done
+    time-and-connection: page-open-for-hours
+    actor: background-agent-job
+    action: open-history-entry
+  object: History entry status, "Lists past and current submissions"
+  situation: Entry shows Running at 14:02, phone sleeps 40 minutes while the run finishes; user returns at 14:42
+  consequence: Row still says Running until a manual refresh; user opens the entry and sees a mismatch between row and detail; no polling or visibility-change refresh interval is specified
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- "current" submissions can be running while the app is backgrounded; refresh behaviour is not in the spec'
+  already_specified: false
+  proposed: Spec refresh on tab visibility and a 15 s poll while any entry is Queued or Running
+  shallow: false
+- id: notify-3
+  title: No expected duration shown for a run of 21-100 videos, so the user cannot choose between waiting 2 minutes and coming back tomorrow
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    videos-selected: 21-100
+    video-state: 3-hour-long
+    run-status: running
+    mode: report
+  object: History entry for a run; 'Minimum and maximum number of videos per run; video length and size limits' listed as unspecified
+  situation: User submits a Report covering 40 videos, several of them 3 hours long; the entry shows only a running state.
+  consequence: User has no basis for deciding whether to wait or leave; they check back at the wrong time and see 'Running' again with no progress.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"Minimum and maximum number of videos per run; video length and size limits." -- video count and length limits are listed as unspecified; expected duration display is not mentioned'
+  already_specified: false
+  proposed: Show an ETA range on the entry row derived from total ingested minutes (e.g., '~15-25 min for 40 videos, 31 h of footage').
+  shallow: false
+  also_from:
+  - firsttime-17
+- id: notify-4
+  title: 'What ''unread'' means is undefined: row seen in the list, detail opened, or output scrolled to the end'
+  level: L4
+  cell:
+    surface: history-entry-row
+    run-status:
+    - done-but-unread
+    - done
+    action: mark-read
+    history-state: 100-entries
+  object: History tab rows ('Lists past and current submissions from both modes')
+  situation: User returns to History with 3 newly Done entries among 100; the list paints all 3 rows in the viewport.
+  consequence: If 'seen in list' counts as read, the unread marker vanishes before the user opens anything; if 'opened' counts, a quick glance at a detail clears an output never read.
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Acceptance criterion: an entry is unread from Done/Failed until its detail is opened; opening the detail marks it read; a manual ''Mark unread'' exists.'
+  shallow: false
+- id: notify-6
+  title: A Failed entry is not counted in any unread badge, so a run that failed 2 minutes after the user left is discovered days later
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    run-status: failed
+    observer-location-at-status-change: other-page-in-app
+    entry-point-and-lifecycle-phase: app-closed-while-running
+    videos-selected: 6-20
+    mode: report
+  object: Entry statuses 'when failed' (listed as unspecified)
+  situation: Report on 6 videos fails at minute 2 (agent error); the user closed the app at minute 1 and returns 3 days later, expecting the report.
+  consequence: Three days of waiting for nothing; the stakeholder meeting the report was for has passed.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed." -- a failed entry can exist; unread badges and notification are not in the spec'
+  already_specified: false
+  proposed: Failed entries notify on the same channels as Done and carry a distinct red unread marker; the notification copy says 'failed', not 'finished'.
+  shallow: false
+- id: notify-9
+  title: 'Global running/unread indicator scope: does a header badge (''2 running'') appear on the Videos page, or only inside the Agent page?'
+  level: L3
+  cell:
+    surface: global-running-indicator-or-badge
+    run-status: running
+    observer-location-at-status-change: other-page-in-app
+    history-state: several-running-at-once
+  object: Videos page and Agent page as separate pages
+  situation: User has 3 runs in Running state and spends 20 minutes on the Videos page tagging uploads.
+  consequence: Without an app-wide indicator, the user has no awareness of in-flight runs while on the page where they spend most time.
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'App header indicator: spinner + ''N running'' while any run is non-terminal; turns into ''N ready'' dot after completion until read.'
+  shallow: false
+- id: notify-20
+  title: 'A read Ask-question entry gets a new follow-up answer: does it become unread again, and does its row status return to Running while the follow-up is pending?'
+  level: L4
+  cell:
+    surface: history-entry-status-badge
+    thread-state: follow-up-while-first-still-running
+    run-status: done-but-unread
+    mode: ask-question
+  object: History entry for an Ask question thread; entry statuses unspecified
+  situation: Entry was Done and read; user posts follow-up 2; the row still reads 'Done' for the 60 s the follow-up runs, then nothing changes visually when it lands.
+  consequence: Row status misreports work in progress, and the new answer is indistinguishable from the old read state.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"Follow-up questions are supported after the first answer." -- a follow-up on a Done entry can run; the row status then is not specified'
+  already_specified: false
+  proposed: Thread entries show the state of the latest turn ('Answering…' / 'New answer'); a new answer resets the entry to unread.
+  shallow: false
+- id: notify-22
+  title: 'Ordering on History when a follow-up lands on an old thread: row stays at its original submit time or jumps to the top by last activity'
+  level: L4
+  cell:
+    surface: history-entry-row
+    thread-state: follow-up-10
+    history-state: 100-entries
+    observer-location-at-status-change: on-history-tab-scrolled-or-filtered
+  object: History tab list order (unspecified)
+  situation: A 3-week-old thread at row 63 receives its 10th follow-up answer while the user is scrolled to row 40.
+  consequence: If ordered by submit time, the new answer is buried at row 63; if by last activity, the list reorders under the user's cursor.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- entries are listed and follow-ups exist; list ordering is not specified'
+  already_specified: false
+  proposed: Sort by last activity, but do not reorder the visible list until the user scrolls to top or refreshes; show 'N updated, show' pill.
+  shallow: false
+- id: notify-27
+  title: Browser tab title/favicon does not change on completion, so a user in another site's tab has no cue
+  level: L4
+  cell:
+    surface: global-running-indicator-or-badge
+    observer-location-at-status-change: other-tab
+    run-status: done
+    entry-point-and-lifecycle-phase: post-submit-elsewhere-in-app
+    action: submit
+  object: History tab page (browser document title not specified)
+  situation: User submits, switches to a Slack tab; run finishes 8 minutes later.
+  consequence: No title change like '(1) Ready · User Test'; the user only learns by returning to the tab by chance.
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Prefix document title with '(N)' unread count; optional desktop browser notification if permission granted.
+  shallow: false
+- id: notify-35
+  title: Validation failure seconds after submit (e.g., a video still ingesting) is only visible on the History row the user already left
+  level: L3
+  cell:
+    surface: history-entry-row
+    run-status: failed-before-start-validation
+    video-state: still-ingesting
+    observer-location-at-status-change: other-page-in-app
+    videos-selected: 2-5
+    action: submit
+    entry-point-and-lifecycle-phase: post-submit-elsewhere-in-app
+  object: '''Whether a video that is still ingesting, or failed ingestion, can be selected'' (unspecified)'
+  situation: User selects 4 videos, one still ingesting; submit is accepted; the run fails validation at 4 s; user already navigated to the Videos page.
+  consequence: User believes a report is being produced; discovers the failure only on a later visit.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Whether a video that is still ingesting, or failed ingestion, can be selected." -- selection of an ingesting video may be allowed; the spec lists this as unspecified'
+  already_specified: false
+  proposed: Validate synchronously at Submit and keep the user on the form with an error; otherwise notify the failure on all channels.
+  shallow: false
+- id: notify-39
+  title: 'Completion time in notification and on the row: relative (''2 h ago'') vs absolute, and in which timezone when the email is read on another device'
+  level: L4
+  cell:
+    surface: history-entry-row
+    time-and-connection:
+    - timezone-of-entry-timestamp
+    - two-devices-same-user
+    observer-location-at-status-change: other-device
+    run-status: done
+  object: History entry row (timestamp not specified)
+  situation: User submits from a laptop in UTC+5:30; reads the email on a phone set to UTC-7 while travelling.
+  consequence: Email says 'Finished at 14:02', row says '2:32 AM'; user cannot match the email to the row with blank run names.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Rows show submitted-at and finished-at in the viewer's local time; email shows the same with explicit timezone.
+  shallow: false
+- id: notify-40
+  title: No 'Unread' filter or 'next unread' jump on a 100-entry History, so 3 new outputs must be found by scanning
+  level: L4
+  cell:
+    surface: history-filter-or-sort-controls
+    history-state: 100-entries
+    run-status: done-but-unread
+    action: filter-history-by-mode-or-status
+  object: History tab list
+  situation: User returns after a day with 3 unread entries spread among rows 1, 7 and 22 (positions depend on sort).
+  consequence: User finds 2 of 3; the third stays unread indefinitely.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Filter chips: All / Unread / Running / Failed, each with a count.'
+  shallow: false
+- id: notify-41
+  title: 'Unread badge with 1000 historic entries never opened: badge stuck at ''99+'' with no ''Mark all read'''
+  level: L4
+  cell:
+    surface: global-running-indicator-or-badge
+    history-state: 1000-entries
+    action: mark-read
+    actor: creator-owner
+  object: History tab
+  situation: Heavy user who reads outputs via email excerpts or export never opens detail pages; 1000 entries accumulate as unread.
+  consequence: Badge is permanently on and stops carrying information; the next real Failed run is not noticed.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: '''Mark all as read'' on History; badge counts only entries finished in the last 7 days.'
+  shallow: false
+- id: uploader-10
+  title: History entry video list after the uploader renames a video is neither defined as snapshot nor live
+  level: L3
+  cell:
+    surface: history-entry-row
+    actor: video-uploader-other-than-runner
+    run-status: done
+    action: open-history-entry
+  object: '''a new entry appears with whatever was submitted'''
+  situation: Runner's entry lists 'raw_0412.mp4'; uploader renames it to 'Maria - checkout flow' a week later
+  consequence: If the entry shows the submit-time name, it no longer matches the Videos page and search; if live, the entry no longer shows 'whatever was submitted' and the runner cannot recognise what they ran
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"a new entry appears with whatever was submitted" -- entries record submitted videos; renaming a video is not mentioned'
+  already_specified: false
+  proposed: Show the current name with 'renamed from raw_0412.mp4' tooltip, or store and show both; pick one and write it
+  shallow: false
+  also_from:
+  - backend-43
+- id: uploader-17
+  title: History entry row gives no stale marker when a source video changed after the report was done
+  level: L4
+  cell:
+    surface:
+    - history-entry-status-badge
+    - history-entry-row
+    run-status: done-then-source-video-changed-stale
+    actor: video-uploader-other-than-runner
+    observer-location-at-status-change: on-history-tab-top
+    video-state: deleted-after-run
+    history-state: entry-referencing-deleted-video
+  object: History tab entry row and status
+  situation: 3 of a runner's 40 Done entries use videos that an uploader since trimmed, renamed or deleted
+  consequence: All 40 rows look identical; runner shares a stale report without knowing; entry statuses list (unspecified) has no state for source changed
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"users upload videos; uploaded videos get ingested." -- videos are uploaded and ingested; later trimming or renaming is not mentioned'
+  already_specified: false
+  proposed: Add a secondary marker 'Source changed' on Done rows when any referenced video was edited, replaced or deleted after the run
+  shallow: false
+  also_from:
+  - participant-30
+- id: output-14
+  title: Entry marked Done whose body is an error message string
+  level: L4
+  cell:
+    surface: history-entry-status-badge
+    run-status: done
+    mode: report
+    actor: background-agent-job
+  object: History entry status badge and entry detail body
+  situation: Upstream agent call returns HTTP 500 text; job wrapper treats a returned string as success and sets Done
+  consequence: User sees Done on the row and a stack-trace or "Internal error" text as the Report
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed." -- done and failed are the named outcomes; an error text stored as Done is an implementation fault not in the spec'
+  already_specified: false
+  proposed: Acceptance test - injected agent 500 produces status Failed, never Done; body text is never raw error output
+  shallow: false
+- id: output-28
+  title: Same question asked twice gives different answers with no version note
+  level: L4
+  cell:
+    surface: history-entry-row
+    history-state: report-and-question-entries-interleaved
+    action: edit-and-resubmit-from-entry
+    run-status:
+    - superseded-by-re-run
+    - done
+  object: Two History entries with identical selection, prompt and question, submitted 1 day apart
+  situation: Entry A says "7 of 10 users abandoned the cart", entry B says "5 of 10"
+  consequence: Both Done, no link between them, reviewer cannot tell if the difference is agent randomness, model version or changed videos
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- the same question can be submitted twice and both are listed; nondeterministic answers are general knowledge'
+  already_specified: false
+  proposed: Show agent version and run time on both rows; allow marking an entry as a re-run of another
+  shallow: false
+- id: prompt-7
+  title: Ask question mode has no run name, so the history row title for a question entry is undefined (question text? truncated how?)
+  level: L3
+  cell:
+    surface: history-entry-row
+    mode: ask-question
+    history-state: report-and-question-entries-interleaved
+    text-input-state: question-picked-from-suggested
+  object: Ask question mode field list (no run name); History tab 'from both modes'
+  situation: History mixes 10 named reports and 10 questions; questions have no name field
+  consequence: Question rows have no defined label; if the question text is used, a 1,000-char question floods the row, and 6 rows titled 'What frustrated users most?' (picked from suggestions) are identical
+  p_typical: 0.06
+  grounded: quote
+  evidence: Lists past and current submissions from both modes.
+  already_specified: false
+  proposed: Question rows show the first 80 chars of the first question plus video count and date; spec states whether Ask question gets an optional name field
+  shallow: false
+  also_from:
+  - firsttime-23
+  - history-2
+  - mobile-14
+  - support-16
+  - thread-30
+- id: prompt-25
+  title: Run name containing HTML ('<img src=x onerror=alert(1)>') must render as literal text in the history row and detail header
+  level: L4
+  cell:
+    surface: history-entry-row
+    text-input-state: text-contains-html-or-markdown
+    action: type-run-name
+    history-state: 1-entry
+  object: '''Run name (optional)''; History tab entry row'
+  situation: User (or a pasted string) puts HTML into the run name
+  consequence: If rendered as HTML, script runs in the user's History tab; and later in an admin view or a shared link if those are added
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Run name (optional)" -- a free-text name is shown in the entry; escaping is not mentioned'
+  already_specified: false
+  proposed: 'Acceptance test: row shows the exact characters ''<img src=x onerror=alert(1)>'' and no request is made'
+  shallow: false
+  also_from:
+  - history-30
+  - sec-11
+  - support-43
+  - redirect-35
+- id: prompt-45
+  title: Typo in a run name cannot be fixed after submit; rename is not in spec
+  level: L3
+  cell:
+    surface: history-entry-row
+    action: rename-entry-not-in-spec
+    text-input-state: run-name-empty
+    run-status: running
+  object: History entry; 'Run name (optional)'
+  situation: User notices 'Q3 onbaording' on the new row right after the redirect, or wants to name a run submitted blank
+  consequence: Wrong or missing name stays for the life of the entry
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"Run name (optional)" -- a name is entered at submit; renaming afterwards is not mentioned'
+  already_specified: false
+  proposed: Inline rename on the row and detail header, allowed in any status
+  shallow: false
+  also_from:
+  - history-9
+- id: qa-lead-9
+  title: 'History entry row for a Report submitted with empty run name: fallback label (e.g. ''Report - 3 videos - 26 Oct 14:02'') unspecified'
+  level: L4
+  cell:
+    surface: history-entry-row
+    mode: report
+    text-input-state: run-name-empty
+    history-state: entries-with-blank-run-name
+  object: Report mode 'Run name (optional)' and the History entry row
+  situation: User submits 5 reports without a run name in one afternoon
+  consequence: 5 rows with blank titles; test cannot assert what text the row shows
+  p_typical: 0.12
+  grounded: quote
+  evidence: Run name (optional)
+  already_specified: false
+  proposed: Blank run name renders as '<Mode> - <N> videos - <date time>'
+  shallow: false
+  also_from:
+  - a11y-10
+  - firsttime-22
+  - history-1
+  - draft-36
+  - mobile-12
+  - prompt-2
+  - redirect-17
+  - support-15
+- id: qa-lead-10
+  title: 'Which submitted fields the History entry row displays (''whatever was submitted''): mode, run name, video count or names, prompt/question excerpt, timestamp, status - list and truncation lengths unspecified'
+  level: L4
+  cell:
+    surface: history-entry-row
+    mode:
+    - ask-question
+    - report
+    history-state: report-and-question-entries-interleaved
+    text-input-state: prompt-5000-chars
+  object: History entry 'with whatever was submitted'
+  situation: History contains interleaved Report entries with 5000-char prompts and Ask question entries
+  consequence: Row layout breaks or shows 5000 chars; no mode indicator to tell Report from Ask question entries
+  p_typical: 0.09
+  grounded: quote
+  evidence: a new entry appears with whatever was submitted
+  already_specified: false
+  proposed: 'Row fields: mode icon, title, first 120 chars of prompt/question, video count, submitted time, status chip'
+  shallow: false
+  also_from:
+  - history-13
+- id: qa-lead-12
+  title: 'History entry row status transition Queued -> Running -> Done without page refresh: live update mechanism and polling interval unspecified'
+  level: L4
+  cell:
+    surface: history-entry-row
+    run-status: running
+    time-and-connection: steady-state
+    action: open-history-entry
+    observer-location-at-status-change: on-history-tab-top
+  object: History tab 'past and current submissions'
+  situation: User stays on History tab for 4 minutes after redirect
+  consequence: Status chip stuck on the value at render time; user refreshes repeatedly or never sees Done
+  p_typical: 0.15
+  grounded: inferred
+  evidence: '"There is no loading page, to save the user''s time." -- with no loading page the History row must show progress; update mechanism is not specified'
+  already_specified: false
+  proposed: Row status updates within 10 s of the backend change while the tab is open
+  shallow: false
+  also_from:
+  - firsttime-16
+  - realtime-13
+  - redirect-22
+- id: qa-lead-44
+  title: 'Follow-up #10 fails after 9 answered: entry-level status (Done / Failed) and retry of only that follow-up unspecified'
+  level: L4
+  cell:
+    surface: history-entry-row
+    thread-state:
+    - follow-up-10
+    - thread-where-an-answer-failed
+    run-status: failed
+    mode: ask-question
+  object: History entry status; follow-up thread
+  situation: 10th follow-up errors on agent timeout
+  consequence: Row turns Failed and hides 9 good answers, or stays Done and hides the failure
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"Follow-up questions are supported after the first answer." -- a follow-up can fail; its entry status and retry are not specified'
+  already_specified: false
+  proposed: Entry status reflects the latest turn; failed turn shows inline 'Retry this question'
+  shallow: false
+- id: qa-lead-53
+  title: 'HTML / markdown in prompt or question echoed in History row: escaped plain text or rendered - unspecified'
+  level: L4
+  cell:
+    surface: history-entry-row
+    text-input-state: text-contains-html-or-markdown
+    action: type-prompt
+    mode: report
+  object: History entry 'with whatever was submitted'
+  situation: Prompt contains '<img src=x onerror=alert(1)>' and '## Heading'
+  consequence: Rendered HTML in row is an XSS vector; rendered markdown breaks row layout
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"a new entry appears with whatever was submitted" -- the entry shows submitted text; escaping or rendering is not specified'
+  already_specified: false
+  proposed: Row shows submitted text as escaped plain text, first line only
+  shallow: false
+- id: thread-10
+  title: 'History row for a thread: one row per thread or one row per follow-up'
+  level: L3
+  cell:
+    surface: history-entry-row
+    history-state: 100-entries
+    thread-state: follow-up-10
+    mode: ask-question
+  object: '''Lists past and current submissions from both modes.'''
+  situation: A thread has 1 question and 10 follow-ups; each follow-up is also a 'submission'
+  consequence: History grows by 11 rows for one conversation, or one row hides activity; the row's sort position (created time vs last follow-up time) is unspecified
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- follow-ups exist and each could count as a submission; row granularity is not specified'
+  already_specified: false
+  proposed: One row per thread, sorted by last activity, with a badge '11 messages'
+  shallow: false
+  also_from:
+  - support-29
+- id: thread-36
+  title: Row status for a thread whose last follow-up is Running but whose first answer is Done
+  level: L3
+  cell:
+    surface: history-entry-row
+    run-status: running
+    thread-state: follow-up-1
+    history-state: 1-entry
+  object: '''Statuses an entry can have on the History tab'' (unspecified)'
+  situation: Thread has 1 Done answer and follow-up 1 Running
+  consequence: Row reads Done and the user does not realise a new answer is coming, or reads Running and they cannot open the readable answer
+  p_typical: 0.1
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- follow-ups exist and entries have statuses; a thread-level status is not specified'
+  already_specified: false
+  proposed: Row status mirrors the latest turn; row also shows 'Answer 1 ready'
+  shallow: false
+  also_from:
+  - realtime-30
+- id: realtime-4
+  title: History sort order and page size are unspecified, so the new entry may land on page 2+ or below the fold with 100 entries
+  level: L3
+  cell:
+    surface: history-entry-row
+    history-state:
+    - 100-entries
+    - sorted-not-by-newest
+    run-status: queued
+    action: submit
+  object: 'History tab: ''Lists past and current submissions from both modes'''
+  situation: List sorted by completion time, by run name, or with running items grouped below completed ones; 20 rows per page
+  consequence: A Queued row with no completion time sorts last and sits on page 5; user concludes the submit did not happen
+  p_typical: 0.12
+  grounded: quote
+  evidence: Lists past and current submissions from both modes.
+  already_specified: false
+  proposed: 'Spec line: History sorted by created time descending; the newly submitted entry is row 1 on page 1 after redirect'
+  shallow: false
+- id: realtime-5
+  title: Two entries with the same created-at second have no tiebreak, so their order swaps between polls
+  level: L4
+  cell:
+    surface: history-entry-row
+    history-state: two-entries-same-second
+    action: double-submit
+    run-status: queued
+    actor: same-user-second-tab
+  object: History entry rows
+  situation: Two submits within 1 s (double-click or two tabs); created_at stored at second precision; list sorted by created_at only
+  consequence: Rows trade places on each refresh or poll; user clicks one and opens the other
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"where a new entry appears" -- two submits can create entries; double submit and tiebreak ordering are not mentioned'
+  already_specified: false
+  proposed: 'Spec line: sort key is created_at (ms) then entry id; order is stable across refreshes'
+  shallow: false
+  also_from:
+  - history-19
+  - redirect-32
+  - support-17
+  - sharing-20
+  - thread-35
+- id: realtime-9
+  title: Row committed but job enqueue fails, leaving the entry Queued forever with no reaper or timeout
+  level: L4
+  cell:
+    surface: history-entry-row
+    run-status:
+    - stuck-over-1h
+    - queued
+    actor: background-agent-job
+    time-and-connection: during-agent-outage
+    action: submit
+  object: 'History entry status (spec: statuses unspecified)'
+  situation: DB insert succeeds, queue publish fails (broker down 2 min); Submit already returned success and redirected
+  consequence: Entry says Queued indefinitely; user waits hours; no failed state ever arrives
+  p_typical: 0.15
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- an entry can be queued or running; enqueue failure is an implementation case not in the spec'
+  already_specified: false
+  proposed: 'Spec line: row and job created atomically (outbox); any entry not Running within 5 min is marked Failed with reason ''could not start'' and a Retry'
+  shallow: false
+  also_from:
+  - redirect-34
+- id: realtime-18
+  title: Two tabs show different statuses for the same entry (Done in one, Running in the other)
+  level: L4
+  cell:
+    surface: history-entry-row
+    actor: same-user-second-tab
+    run-status: done
+    time-and-connection: steady-state
+    observer-location-at-status-change: other-tab
+  object: History entry status
+  situation: Tab A receives push Done; tab B polls every 60 s, or its socket dropped
+  consequence: User compares and distrusts both; may open tab B detail and see no output for a run that is Done
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- current submissions are shown; multiple tabs are a general browser case'
+  already_specified: false
+  proposed: 'Acceptance criterion: max status divergence between two open sessions of the same user is 5 s'
+  shallow: false
+- id: realtime-22
+  title: Out-of-order status events can move an entry backwards from Done to Running
+  level: L4
+  cell:
+    surface: history-entry-row
+    run-status:
+    - done
+    - running
+    actor: background-agent-job
+    time-and-connection: steady-state
+  object: History entry status
+  situation: Worker emits Running (retry heartbeat) and Done 50 ms apart; push delivers Done then the late Running
+  consequence: Row flips back to Running and stays there until reload
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Spec line: statuses are monotonic (Queued < Running < Done/Failed); client ignores any event older than the current status version'
+  shallow: false
+- id: realtime-36
+  title: If an untitled entry later gets an auto-generated title, the row label changes under the user while they look for it
+  level: L3
+  cell:
+    surface: history-entry-row
+    text-input-state: run-name-empty
+    run-status:
+    - queued
+    - running
+    mode: report
+  object: History entry row label; 'Run name (optional)'
+  situation: Row first shows 'Untitled'; job generates a title at Running and the label updates
+  consequence: User searching for 'Untitled' loses the row; spec says the entry appears 'with whatever was submitted', which excludes generated labels
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Decision line: blank run name shows a fixed fallback label at creation and never changes, or the auto-title rule is stated'
+  shallow: false
+- id: realtime-40
+  title: Relative timestamps on a fresh row can read 'in 2 minutes' or a negative elapsed time from client clock skew
+  level: L4
+  cell:
+    surface: history-entry-row
+    run-status: running
+    time-and-connection: steady-state
+    history-state: two-entries-same-second
+  object: History entry row timestamp
+  situation: Client clock 3 min behind server; row created_at comes from the server, elapsed computed on the client
+  consequence: New entry shows 'in 3 minutes' or appears below older rows when sorted client-side by a client timestamp
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Spec line: created_at is server time; elapsed/relative times computed against server-offset-adjusted clock'
+  shallow: false
+- id: realtime-46
+  title: 'No progress granularity: a report over 21-100 videos shows only ''Running'' for its whole duration'
+  level: L4
+  cell:
+    surface: history-entry-row
+    videos-selected: 21-100
+    run-status: running
+    mode: report
+  object: History entry status
+  situation: Report over 80 videos runs 30 min
+  consequence: User cannot tell 2/80 from 79/80 and reopens the entry repeatedly; no basis for estimating finish
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"A Report produces one output covering all selected videos, not one per video." -- one output for all videos means one long run; progress granularity is not mentioned'
+  already_specified: false
+  proposed: 'Spec line: row shows ''Processing 34/80 videos'' updated at least every 30 s, or explicitly states no progress is shown'
+  shallow: false
+  also_from:
+  - support-50
+- id: redirect-4
+  title: 'No spec of which History row belongs to the submission just made: no highlight, no scroll-to, no ''new'' marker'
+  level: L3
+  cell:
+    surface:
+    - history-entry-row
+    - redirect-transition
+    history-state: 100-entries
+    run-status: queued
+    action: submit
+  object: history entry row
+  situation: User with 100 existing entries submits; History opens with the list in whatever scroll position and sort order it has.
+  consequence: User must scan up to 100 rows to find 'mine'; with blank run names (run name is optional) rows look alike.
+  p_typical: 0.15
+  grounded: quote
+  evidence: On submit the user is redirected to the **History** tab, where a new entry appears with whatever was submitted.
+  already_specified: false
+  proposed: New entry is first row, highlighted for 5s, and scrolled into view.
+  shallow: false
+  also_from:
+  - realtime-8
+- id: redirect-6
+  title: User was scrolled down 40 rows on History earlier; redirect restores that scroll position and the new entry is off-screen
+  level: L3
+  cell:
+    surface:
+    - history-entry-row
+    - redirect-transition
+    history-state: 100-entries
+    action: submit
+    actor: creator-owner
+  object: History tab scroll position on redirect
+  situation: User scrolled History, opened Agent page, submitted; History is restored from cache/scroll memory instead of reset to top.
+  consequence: New entry (top row) is not visible; user thinks submit failed.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Redirect always resets History to scroll-top and any active list state to default.
+  shallow: false
+- id: redirect-19
+  title: 'Run name duplicates an existing entry: two identical rows after redirect, user cannot tell new from old'
+  level: L3
+  cell:
+    surface: history-entry-row
+    text-input-state: run-name-duplicate-of-existing
+    history-state: 100-entries
+    action: submit
+    mode: report
+  object: Run name (optional), History row
+  situation: User reuses the name 'Weekly review' that exists on 3 earlier entries.
+  consequence: Row identity depends only on timestamp; with redirect-5 sorting unspecified, the new row is indistinguishable.
+  p_typical: 0.08
+  grounded: quote
+  evidence: Run name (optional)
+  already_specified: false
+  shallow: false
+  also_from:
+  - qa-lead-50
+- id: redirect-20
+  title: Mode (Report vs Question) is not stated as visible on the new row, so interleaved entries look alike
+  level: L3
+  cell:
+    surface: history-entry-row
+    history-state: report-and-question-entries-interleaved
+    mode: ask-question
+    action: submit
+  object: 'History tab: ''past and current submissions from both modes'''
+  situation: User submits a question; History has 10 Reports and 10 questions interleaved; no type column or icon is specified.
+  consequence: User cannot confirm that their action registered as a question rather than a report, and the wrong mode is only noticed when opening the entry.
+  p_typical: 0.15
+  grounded: quote
+  evidence: Lists past and current submissions from both modes.
+  already_specified: false
+  shallow: false
+  also_from:
+  - firsttime-24
+- id: redirect-21
+  title: 'What the entry shows at t=0 for a 21-100 video selection: list of names, count, or nothing'
+  level: L3
+  cell:
+    surface: history-entry-row
+    videos-selected: 21-100
+    run-status: submitted-not-yet-visible-in-history
+    action: submit
+  object: '''with whatever was submitted'''
+  situation: User submits 60 videos; the row must show 'whatever was submitted' in one row.
+  consequence: Row renders 60 names, or only a count ('60 videos'), or none; user cannot verify the selection was right without opening an entry whose content is also unspecified.
+  p_typical: 0.07
+  grounded: quote
+  evidence: a new entry appears with whatever was submitted
+  already_specified: false
+  proposed: Row shows '<n> videos'; hover or detail lists names.
+  shallow: false
+- id: redirect-38
+  title: 'Entry referencing a deleted video: row created by the redirect shows a name that later disappears or turns into a placeholder'
+  level: L3
+  cell:
+    surface: history-entry-row
+    history-state: entry-referencing-deleted-video
+    video-state: deleted-after-run
+    run-status: done
+  object: history entry row, Videos page
+  situation: User deletes a video on the Videos page 1 day after the run finished.
+  consequence: Entry detail lists a video name that no longer resolves; unspecified whether history keeps a name snapshot, hides the video, or breaks the link.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"users upload videos; uploaded videos get ingested." -- videos exist on the Videos page; deleting one after a run is not mentioned'
+  already_specified: false
+  shallow: false
+- id: consumer-33
+  title: Entry link pasted in a Slack channel unfurls a preview whose content (title, first lines of output) is unspecified and may expose the report to non-owners
+  level: L4
+  cell:
+    actor: report-recipient-without-access
+    action: share-or-export-not-in-spec
+    surface: history-entry-row
+    permission-and-plan: video-in-folder-user-cannot-see
+  object: History entry; 'History is per user'
+  situation: Link posted in a 300-person channel
+  consequence: Either the unfurl shows first 2 lines of findings to everyone, bypassing per-user access, or a generic app card with no context
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Unfurl shows only run name, mode and video count; never output text
+  shallow: false
+- id: consumer-35
+  title: Renaming an entry after sharing changes the title the recipient referenced in a doc, and the old name no longer finds it
+  level: L4
+  cell:
+    action: rename-entry-not-in-spec
+    history-state: 100-entries
+    surface: history-entry-row
+    actor: other-user-same-workspace
+  object: Run name (optional); History entry row
+  situation: Doc says 'see Checkout study (Oct)'; runner renames it 'Checkout v1'
+  consequence: Recipient searches History for the old name and finds nothing
+  p_typical: 0.02
+  grounded: inferred
+  evidence: '"Run name (optional)" -- an entry has a name; renaming and sharing links are not mentioned'
+  already_specified: false
+  proposed: Spec whether run name is editable after submit; if yes, show 'renamed from <old>' on the entry
+  shallow: false
+- id: privacy-4
+  title: No delete action exists for a history entry, so a report or question containing personal data cannot be removed by its owner
+  level: L3
+  cell:
+    surface: history-entry-row
+    action: delete-entry-not-in-spec
+    run-status: done
+    actor: creator-owner
+    text-input-state: text-contains-participant-personal-data
+  object: History tab row; spec line Lists past and current submissions from both modes.
+  situation: User submitted a prompt naming a participant (Maria G., clinic interview) and now wants the entry gone. The History tab lists entries but offers no removal.
+  consequence: Only a support request can remove it, with no stated owner or turnaround; erasure obligations (for example a 30-day response window) cannot be met from the product.
+  p_typical: 0.22
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- past submissions are retained; deleting entries is not mentioned'
+  already_specified: false
+  proposed: Add Delete on the row and in the detail view, with a confirm stating exactly what is removed.
+  shallow: false
+  also_from:
+  - participant-27
+- id: privacy-5
+  title: Deleting an Ask question entry does not say whether the 10 follow-up turns, their answers and the original question go with it
+  level: L3
+  cell:
+    surface: history-entry-row
+    thread-state: follow-up-10
+    action: delete-entry-not-in-spec
+    mode: ask-question
+    run-status: deleted-entry
+  object: Ask question history entry plus its follow-up thread
+  situation: Entry with a first question and 10 follow-ups is deleted from the History tab.
+  consequence: If the thread is stored as separate records keyed by thread id, the entry row disappears while 11 question and answer texts remain in the database and in provider conversation state.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Follow-up questions are supported after the first answer." -- an Ask question entry can hold follow-ups; deleting entries is not mentioned'
+  already_specified: false
+  proposed: 'Spec the deletion set per entry type: Report = report, prompt, run name, logs, transcript snapshots; Ask question = all turns, answers, logs, transcript snapshots.'
+  shallow: false
+  also_from:
+  - thread-29
+- id: privacy-18
+  title: During an agent outage or model change, the run may be re-routed to another provider or region without notice
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    time-and-connection: during-agent-outage
+    run-status: retrying
+    actor: background-agent-job
+  object: Entry with status Retrying or Running during an outage
+  situation: Primary provider is down for 40 minutes; the system falls back to a secondary provider in a different region.
+  consequence: Residency and retention terms differ from the ones advertised; the entry gives no indication which provider produced the report.
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Forbid failover outside the contracted region, or record provider and region on the entry.
+  shallow: false
+- id: privacy-31
+  title: Cancelled or abandoned run leaves partial output and transcript snapshots with no deletion rule
+  level: L3
+  cell:
+    surface: history-entry-row
+    run-status: cancelled-not-in-spec
+    action: cancel-run-not-in-spec
+    video-state: ingested
+    videos-selected: 6-20
+    mode: report
+  object: Entry whose run is cancelled (cancel is not in spec)
+  situation: User cancels at minute 6 of a 10-minute Report over 8 videos after the agent has written 60 percent of the output.
+  consequence: Partial report and per-run transcript snapshots stay in storage; the entry may show half a report with no marker, and nothing says if cancelled partials are deleted.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Spec that cancel deletes partial output and snapshots within 24 hours and the row shows Cancelled, no output.
+  shallow: false
+- id: privacy-34
+  title: Deleted history entries persist in backups for an unstated period
+  level: L3
+  cell:
+    surface: history-entry-row
+    run-status: deleted-entry
+    time-and-connection: after-a-year
+    action: delete-entry-not-in-spec
+  object: Entry deletion (not in spec)
+  situation: User deletes an entry on day 1; nightly backups are kept 35 days and monthly backups 12 months.
+  consequence: The deleted report remains restorable for up to a year, so the deletion confirmation text (Permanently deleted) would be untrue.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: State backup retention and use the confirm copy Removed now, fully purged within 35 days.
+  shallow: false
+- id: sec-41
+  title: Run name or prompt containing participant PII shown in History list rows to anyone looking at the screen
+  level: L4
+  cell:
+    surface: history-entry-row
+    text-input-state: text-contains-participant-personal-data
+    action: type-run-name
+    history-state: report-and-question-entries-interleaved
+  object: Run name (optional); History list entries
+  situation: User names a run 'Jane Doe – checkout – jane@acme.com'; list shows it in full during a screen share
+  consequence: PII exposed in list views and any future notifications or exports that reuse run name
+  p_typical: 0.02
+  grounded: inferred
+  evidence: '"Run name (optional)" -- the name is free text shown in the list; PII exposure is general knowledge'
+  already_specified: false
+  proposed: Help text under run name warns against personal data; same plain-text rendering rule as sec-11
+  shallow: false
+  also_from:
+  - prompt-42
+  - privacy-21
+- id: sre-9
+  title: A Queued entry shows no queue position or ETA, so during a backlog users cannot tell "waiting 2 min" from "waiting 2 hours"
+  level: L4
+  cell:
+    surface: history-entry-status-badge
+    run-status: queued
+    observer-location-at-status-change: on-history-tab-top
+    history-state: several-running-at-once
+  object: History entry row status badge
+  situation: Queue backlog of 600 jobs after a recovery
+  consequence: Badge reads Queued for 90 min; users resubmit, growing the backlog further
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- "current" submissions can be waiting; queue position or ETA is not mentioned'
+  already_specified: false
+  proposed: Queued badge shows "Queued - about N min" or "Position N" once backlog > 5 min
+  shallow: false
+  also_from:
+  - firsttime-39
+  - notify-36
+- id: sre-15
+  title: No per-entry log record is specified, so support cannot answer "where is my report" for a given user and time
+  level: L4
+  cell:
+    actor: support-staff-impersonating
+    surface: history-entry-row
+    run-status: submit-accepted-but-entry-never-created
+    time-and-connection: steady-state
+  object: History entry (no id, timestamps or lifecycle events defined in spec)
+  situation: User writes "I submitted a report at about 3pm yesterday and it is not there"
+  consequence: Support has to grep raw logs by user id and guess; average time to answer measured in hours
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- rows exist per user; logging is not mentioned'
+  already_specified: false
+  proposed: Log per entry - entry id, user id, workspace id, mode, video ids, submitted_at, enqueued_at, started_at, finished_at, attempt count, provider request ids, terminal status, reason code; searchable by user id + time
+  shallow: false
+- id: sre-19
+  title: A run waiting on provider 429 rate limits shows as Running, indistinguishable from active processing
+  level: L4
+  cell:
+    run-status: rate-limited-waiting
+    surface: history-entry-status-badge
+    videos-selected: 21-100
+    observer-location-at-status-change: on-history-tab-top
+    mode: report
+  object: History entry status badge (assumed Queued / Running / Done / Failed)
+  situation: A 60-video Report hits provider token-per-minute limits and backs off for 25 min
+  consequence: Badge reads Running for 40 min with no change; user assumes it is stuck and resubmits
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- a Running status can exist; rate-limit waiting is not mentioned'
+  already_specified: false
+  proposed: Add a "Waiting for capacity" sub-state or a progress line "Processed 12 of 60 videos" updated at least every 60 s
+  shallow: false
+- id: sre-22
+  title: Automatic retry count, backoff and the user-visible state during retries are unspecified
+  level: L4
+  cell:
+    run-status: retrying
+    actor: background-agent-job
+    surface: history-entry-status-badge
+    time-and-connection: during-agent-outage
+  object: History entry status
+  situation: Job hits a transient provider 503 and is retried by the worker
+  consequence: Without a cap, jobs retry forever during long outages and amplify load on the provider at recovery; user sees no indication
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Max 3 attempts with exponential backoff (30 s, 2 min, 8 min) plus jitter; badge shows "Retrying (2 of 3)"
+  shallow: false
+- id: sre-33
+  title: A retry or re-run after a model upgrade uses the new model, and whether the original entry is replaced or kept alongside is unspecified
+  level: L3
+  cell:
+    run-status:
+    - superseded-by-re-run
+    - failed
+    action: retry-whole-run
+    time-and-connection:
+    - agent-model-version-changed-since-entry
+    - during-agent-outage
+    surface: history-entry-row
+  object: History entry row
+  situation: Run failed on v1 in an outage; bulk retry 2 days later runs on v2
+  consequence: User sees two rows or one row whose output silently comes from a different model than other runs from that week
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Retry reuses the same entry id and records "Retried on <date> with agent vN"; History shows one row
+  shallow: false
+- id: sre-35
+  title: When a backlog drains out of order, History sort key (submitted_at vs finished_at) decides whether a just-finished old run appears at the top or on page 3
+  level: L4
+  cell:
+    history-state:
+    - mix-of-done-and-failed-across-recent-runs
+    - several-running-at-once
+    surface: history-filter-or-sort-controls
+    run-status: done
+    observer-location-at-status-change: on-history-tab-scrolled-or-filtered
+    time-and-connection: during-agent-outage
+  object: History tab list ordering (not specified)
+  situation: User submitted 12 runs during an outage; they finish in a different order over 40 min
+  consequence: Rows jump positions as statuses change; user loses the row they were watching
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- rows are listed; sort order is not specified'
+  already_specified: false
+  proposed: Sort by submitted_at descending, stable; status changes update in place without reordering
+  shallow: false
+- id: sre-36
+  title: Which timestamp an entry shows (submitted, started, finished) and in which timezone is unspecified, so support cannot correlate a user's report with UTC logs
+  level: L4
+  cell:
+    time-and-connection: timezone-of-entry-timestamp
+    surface: history-entry-row
+    actor: support-staff-impersonating
+    run-status: failed
+  object: History entry row
+  situation: User in IST says "my 3:10 report failed"; logs are in UTC
+  consequence: Support searches the wrong 5.5 h window
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Row shows submitted time in viewer local time; detail shows submitted / started / finished with UTC on hover
+  shallow: false
+- id: tags-31
+  title: History entry shows videos selected by tag filter as a list of names with no record of the filter used
+  level: L4
+  cell:
+    surface: history-entry-row
+    history-state: 100-entries
+    videos-selected: 21-100
+    action:
+    - open-history-entry
+    - filter-by-tag
+  object: history entry ('a new entry appears with whatever was submitted')
+  situation: Entry made from a 'q3' tag filter with 60 videos; user returns 2 months later with 100 entries
+  consequence: Entry shows 60 file names or '60 videos'; the tag used is not stored, so the user cannot tell what the set represented; 100 entries of '60 videos' look identical in the list
+  p_typical: 0.06
+  grounded: quote
+  evidence: a new entry appears with whatever was submitted
+  already_specified: false
+  proposed: Entry row shows the run name, mode, video count, and up to 3 video names with '+57 more'
+  shallow: false
+- id: participant-3
+  title: No stored lineage from History entry to source video IDs, so an erasure job cannot find which entries (out of 1000+) were derived from video X
+  level: L3
+  cell:
+    surface: history-entry-row
+    history-state: 1000-entries
+    video-state: deleted-after-run
+    actor:
+    - background-agent-job
+    - test-participant-data-subject
+  object: 'History entry: ''a new entry appears with whatever was submitted'''
+  situation: Erasure request names one session video. Entries store run name, prompt and output text, but the spec does not say the selected video IDs are persisted on the entry.
+  consequence: Purge relies on text search for the participant's name, missing entries that quote them without naming them; derived data survives silently.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"a new entry appears with whatever was submitted" -- entries hold what was submitted; whether video IDs are persisted is not stated'
+  already_specified: false
+  proposed: 'Acceptance criterion: every entry and every follow-up answer stores the immutable list of source video IDs; a lookup ''entries derived from video X'' returns results in under 5 s.'
+  shallow: false
+- id: admin-8
+  title: Workspace owner deletes another member's history entry or whole history - not specified, and delete-entry is not in spec at all
+  level: L3
+  cell:
+    surface: history-entry-row
+    actor: workspace-owner
+    action: delete-entry-not-in-spec
+    history-state: 1000-entries
+    text-input-state: text-contains-participant-personal-data
+  object: History entry row
+  situation: Owner must remove an entry that holds a participant's personal data from a member's history
+  consequence: No delete control exists for owner or member, so the data stays; a data-removal request cannot be met
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Spec delete for the entry owner, plus an owner/admin delete with a confirmation naming the member
+  shallow: false
+  also_from:
+  - sharing-6
+- id: admin-9
+  title: Member removed from workspace while a run is Running - job fate not specified
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    actor:
+    - removed-or-deactivated-user
+    - workspace-owner
+    run-status: running
+    permission-and-plan: member-removed-from-workspace
+    videos-selected: 6-20
+    mode: report
+  object: History entry with status Running
+  situation: Owner removes a member 10 minutes into a Report over 20 videos
+  consequence: Job either finishes and bills the workspace for output nobody can open, or is killed and leaves a Running entry forever; no one is told
+  p_typical: 0.08
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Spec that running jobs are cancelled on removal (status Cancelled by admin) or finish and are kept for the owner
+  shallow: false
+  also_from:
+  - cost-35
+- id: admin-13
+  title: No audit trail of who ran what on which videos - History tab is the only record and is per user
+  level: L3
+  cell:
+    surface: history-entry-row
+    actor: workspace-owner
+    history-state: report-and-question-entries-interleaved
+    action: search-history
+    permission-and-plan: full-access
+  object: History entry row fields (run name, mode, status) and 'History is per user'
+  situation: Compliance asks which members ran the agent on videos of one customer in the last 90 days
+  consequence: Owner cannot answer without opening each user's account; deletion of an entry by its owner erases the only evidence
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"History is per user, currently." -- entries per user are the only record; audit trail is not mentioned'
+  already_specified: false
+  proposed: Add a workspace audit log (user, mode, timestamp, video ids, prompt/question hash) kept independent of user-deletable entries
+  shallow: false
+- id: admin-14
+  title: Member demoted to viewer or access revoked while a run is Running
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    actor: viewer-role-member
+    run-status: running
+    permission-and-plan: access-revoked-mid-run
+    observer-location-at-status-change: other-tab
+  object: History entry with status Running and follow-up thread
+  situation: Owner changes a member's role from member to viewer 5 minutes into a run, and the member has a follow-up open in another tab
+  consequence: Run completes under old rights; the member can still press Ask follow-up on a thread whose rights were removed
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Specify that permission is checked at Submit and at each follow-up, not only at page load
+  shallow: false
+- id: admin-15
+  title: Queued runs of a deactivated user are neither cancelled nor attributed
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    actor: removed-or-deactivated-user
+    run-status: queued
+    time-and-connection: deploy-during-run
+    history-state: several-running-at-once
+  object: History entry with status Queued
+  situation: User is deactivated with 3 Queued entries behind a long run
+  consequence: Queued jobs start later and consume workspace quota after the user is gone
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Cancel Queued entries on deactivation and mark them Cancelled
+  shallow: false
+- id: admin-27
+  title: Workspace-wide concurrency cap - 10 members submit at once and entries sit in Queued or Rate-limited with no explanation
+  level: L3
+  cell:
+    surface: history-entry-status-badge
+    actor: other-user-same-workspace
+    run-status:
+    - rate-limited-waiting
+    - queued
+    history-state: several-running-at-once
+    time-and-connection: rate-limit-at-submit
+    videos-selected: 6-20
+    mode: report
+  object: History entry status badge (assumed Queued / Running / Done / Failed)
+  situation: 10 members submit Reports of 20 videos within 1 minute and the workspace can run 3
+  consequence: 7 entries show Queued with no position or time estimate; owner cannot tell if a job is stuck or waiting
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Statuses an entry can have on the History tab" -- entries can be queued or running; a workspace concurrency cap is not mentioned'
+  already_specified: false
+  proposed: Add status 'Waiting for capacity' with queue position and a workspace-level concurrency number in the spec
+  shallow: false
+- id: admin-28
+  title: Admin cannot cancel another member's runaway run, and cancel is not in spec even for the owner of the run
+  level: L3
+  cell:
+    surface: history-entry-row
+    actor: admin
+    run-status:
+    - stuck-over-1h
+    - running
+    action: cancel-run-not-in-spec
+    permission-and-plan: quota-remaining
+  object: History entry with status Running for over 1 hour
+  situation: A run stays Running for 3 hours and consumes capacity while quota ticks down
+  consequence: Admin has no control; member may not notice; the run blocks the queue for the rest of the workspace
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Specify cancel for the run owner and workspace admin plus an automatic timeout (for example 2 hours) with status Failed
+  shallow: false
+  also_from:
+  - sharing-25
+- id: admin-31
+  title: Retention window for History entries and outputs - owner cannot set or read one
+  level: L3
+  cell:
+    surface: history-entry-row
+    entry-point-and-lifecycle-phase: long-after-retention-window
+    actor: workspace-owner
+    history-state:
+    - 1000-entries
+    - entry-referencing-deleted-video
+    time-and-connection: after-a-year
+    video-state: deleted-after-run
+    mode: report
+  object: History tab ('Lists past and current submissions')
+  situation: An entry from 14 months ago holds a Report on videos that were deleted from the library 9 months ago
+  consequence: Output on removed source material stays indefinitely; no policy exists, and the owner has no setting to purge at 90 or 365 days
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Lists past and current submissions from both modes." -- past submissions accumulate; retention is not mentioned'
+  already_specified: false
+  proposed: Define a default retention (for example 365 days) and an owner setting; show the expiry on the entry
+  shallow: false
+  also_from:
+  - privacy-7
+# Counts: quote=12 inferred=65 speculative=41; already_specified true = 0 (none)
