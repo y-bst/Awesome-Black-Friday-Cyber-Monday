@@ -1,0 +1,552 @@
+- id: realtime-1
+  title: "Spec does not say whether the History entry is written before Submit returns; if the job worker creates it, the History tab renders right after redirect without the new row"
+  level: L4
+  cell: {surface: redirect-transition, run-status: submitted-not-yet-visible-in-history, time-and-connection: redirect-lands-before-entry-exists, action: submit, actor: background-agent-job}
+  object: "After submit sentence + History tab list"
+  situation: "Submit API enqueues the job and returns 202; the history row is inserted by the worker when it picks the job up 0.5-30 s later; client redirects on the 202 and fetches the list immediately"
+  consequence: "User lands on History and sees no new entry, contradicting 'a new entry appears'; many will press Back and submit again"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "On submit the user is redirected to the History tab, where a new entry appears with whatever was submitted."
+  proposed: "Acceptance criterion: Submit returns 2xx only after the history row is committed with status Queued and its id; the first History render after redirect contains that id with no manual reload"
+  shallow: false
+- id: realtime-2
+  title: "History list read from a replica can lag the primary write, so the row committed at Submit is absent from the first list fetch after redirect"
+  level: L3
+  cell: {surface: history-tab, run-status: submitted-not-yet-visible-in-history, time-and-connection: redirect-lands-before-entry-exists, actor: creator-owner}
+  object: "History tab list fetch immediately after the redirect"
+  situation: "Row written to primary at t=0; History GET at t=150 ms served by a read replica with 200 ms-5 s replication lag"
+  consequence: "Entry missing for up to 5 s, intermittently, and only under load, so it passes QA and fails in production"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "where a new entry appears with whatever was submitted"
+  proposed: "Spec line: the redirect carries the new entry id; History renders that row from the Submit response (or reads it from primary) regardless of list freshness"
+  shallow: false
+- id: realtime-3
+  title: "A client-side cached History list from an earlier visit is shown instantly on redirect and does not include the new row"
+  level: L3
+  cell: {surface: history-tab, history-state: 100-entries, action: submit, time-and-connection: steady-state}
+  object: "History tab list after redirect"
+  situation: "User opened History 10 min ago (list cached in the SPA query cache with a 5-min stale time), then went to Report mode and submitted"
+  consequence: "Cached 100-row list paints first with no new entry; the row pops in 1-2 s later or never if the cache is considered fresh"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "On submit the user is redirected to the History tab, where a new entry appears"
+  proposed: "Acceptance criterion: a successful Submit invalidates the cached History list and inserts the returned row before navigation"
+  shallow: false
+- id: realtime-4
+  title: "History sort order and page size are unspecified, so the new entry may land on page 2+ or below the fold with 100 entries"
+  level: L3
+  cell: {surface: history-entry-row, history-state: 100-entries, run-status: queued, action: submit}
+  object: "History tab: 'Lists past and current submissions from both modes'"
+  situation: "List sorted by completion time, by run name, or with running items grouped below completed ones; 20 rows per page"
+  consequence: "A Queued row with no completion time sorts last and sits on page 5; user concludes the submit did not happen"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Spec line: History sorted by created time descending; the newly submitted entry is row 1 on page 1 after redirect"
+  shallow: false
+- id: realtime-5
+  title: "Two entries with the same created-at second have no tiebreak, so their order swaps between polls"
+  level: L4
+  cell: {surface: history-entry-row, history-state: two-entries-same-second, action: double-submit, run-status: queued}
+  object: "History entry rows"
+  situation: "Two submits within 1 s (double-click or two tabs); created_at stored at second precision; list sorted by created_at only"
+  consequence: "Rows trade places on each refresh or poll; user clicks one and opens the other"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "where a new entry appears"
+  proposed: "Spec line: sort key is created_at (ms) then entry id; order is stable across refreshes"
+  shallow: false
+- id: realtime-6
+  title: "If History gains a mode filter or search, a filter left on 'Report' hides a just-submitted Ask question entry after redirect"
+  level: L3
+  cell: {surface: history-tab, mode: ask-question, history-state: report-and-question-entries-interleaved, action: submit}
+  object: "History tab, 'submissions from both modes'"
+  situation: "History filter persisted to Report only from the previous visit; user submits in Ask question mode"
+  consequence: "Redirect lands on a filtered list without the new question entry"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Spec line: redirect after Submit clears any History filter/search or forces the new entry to show with a 'filtered view' notice"
+  shallow: false
+- id: realtime-7
+  title: "Scroll restoration returns the user to their previous History scroll offset, leaving the new top row off-screen"
+  level: L4
+  cell: {surface: history-tab, history-state: 1000-entries, action: submit, time-and-connection: steady-state}
+  object: "History tab scroll position on redirect"
+  situation: "User previously scrolled 3000 px down a 1000-entry History, went to Report mode, submitted; router restores the saved scroll position"
+  consequence: "New entry is at row 1 but the viewport shows rows 60-80; no visible confirmation of the submit"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "redirected to the History tab, where a new entry appears"
+  proposed: "Acceptance criterion: after Submit redirect, History scrollTop = 0 and the new row is in the viewport"
+  shallow: false
+- id: realtime-8
+  title: "No marker distinguishes the just-submitted entry from older ones with blank run names and the same videos"
+  level: L4
+  cell: {surface: history-entry-row, history-state: entries-with-blank-run-name, text-input-state: run-name-empty, action: submit}
+  object: "History entry row; 'Run name (optional)'"
+  situation: "User submitted 3 unnamed reports on the same 4 videos today; the 4th arrives"
+  consequence: "User cannot tell which row is the one they just created; opens the wrong one"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Run name (optional) ... a new entry appears with whatever was submitted."
+  proposed: "Spec line: the new row is highlighted for 3 s and shows a fallback label (first 60 chars of prompt/question or 'Report - 4 videos - 14:02')"
+  shallow: false
+- id: realtime-9
+  title: "Row committed but job enqueue fails, leaving the entry Queued forever with no reaper or timeout"
+  level: L4
+  cell: {surface: history-entry-row, run-status: stuck-over-1h, actor: background-agent-job, time-and-connection: during-agent-outage}
+  object: "History entry status (spec: statuses unspecified)"
+  situation: "DB insert succeeds, queue publish fails (broker down 2 min); Submit already returned success and redirected"
+  consequence: "Entry says Queued indefinitely; user waits hours; no failed state ever arrives"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed."
+  proposed: "Spec line: row and job created atomically (outbox); any entry not Running within 5 min is marked Failed with reason 'could not start' and a Retry"
+  shallow: false
+- id: realtime-10
+  title: "Job enqueued but history row insert fails, so a run executes with no entry to attach its output to"
+  level: L3
+  cell: {surface: history-tab, run-status: submitted-not-yet-visible-in-history, actor: background-agent-job, time-and-connection: redirect-lands-before-entry-exists}
+  object: "History tab, 'a new entry appears'"
+  situation: "Queue publish succeeds, history insert fails (constraint or timeout); API returns 500 or times out"
+  consequence: "User sees no entry and resubmits; the orphan job still consumes agent capacity across all selected videos and its output is unreachable"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "where a new entry appears with whatever was submitted"
+  proposed: "Spec line: no job starts without a committed history row; a job with no row is discarded at pickup"
+  shallow: false
+- id: realtime-11
+  title: "If redirect is optimistic, the spec has no state for an entry whose Submit request then fails with 5xx"
+  level: L4
+  cell: {surface: error-toast-or-banner, run-status: submitted-not-yet-visible-in-history, time-and-connection: during-agent-outage, action: submit}
+  object: "Redirect rule 'There is no loading page'"
+  situation: "To avoid any wait, client redirects and shows a placeholder row immediately; Submit returns 503 at 2 s"
+  consequence: "Placeholder row silently vanishes, or stays as a ghost that can never complete; prompt text is lost either way"
+  p_typical: 0.10
+  grounded: quote
+  evidence: "There is no loading page, to save the user's time."
+  proposed: "Spec line: on Submit failure the placeholder row turns to 'Not submitted' with the submitted text kept and a Resubmit button; banner copy defined"
+  shallow: false
+- id: realtime-12
+  title: "Session expired at Submit: no rule for whether an entry is created and whether a 5000-char prompt survives the login bounce"
+  level: L3
+  cell: {surface: redirect-transition, time-and-connection: session-expired-at-submit, action: submit, text-input-state: prompt-5000-chars}
+  object: "Submit -> redirect to History tab"
+  situation: "Agent page open 9 h, token expired; Submit returns 401; app sends user to login, then back to History"
+  consequence: "History shows no new entry and the typed prompt is gone; user does not know if it was submitted"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "On submit the user is redirected to the History tab"
+  proposed: "Spec line: on 401 at Submit, form content is kept and auto-resubmitted (once) after re-login; no entry exists until then"
+  shallow: false
+- id: realtime-13
+  title: "Mechanism and latency for a History row to change status (poll, push, or manual refresh) are unspecified"
+  level: L4
+  cell: {surface: history-entry-row, run-status: running, time-and-connection: steady-state, actor: background-agent-job}
+  object: "History entry status (statuses unspecified in spec)"
+  situation: "Job moves Queued -> Running -> Done while the user stays on History"
+  consequence: "Without a defined update path, the row shows Queued until the user reloads; users reload repeatedly or assume it hung"
+  p_typical: 0.20
+  grounded: quote
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Acceptance criterion: a status transition appears on an open History tab within 5 s without reload"
+  shallow: false
+- id: realtime-14
+  title: "Polling the whole History list every few seconds with 1000 entries costs about 1000 rows per poll per open tab"
+  level: L4
+  cell: {surface: history-tab, history-state: 1000-entries, time-and-connection: page-open-for-hours, run-status: running}
+  object: "History tab list"
+  situation: "Status refresh implemented by re-fetching the full list every 5 s; tab left open 8 h"
+  consequence: "Roughly 5,760 full-list fetches per tab per day; slow scroll and backend load scale with history size, not with active runs"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Spec line: only non-terminal entries are refreshed; polling stops when none are Queued/Running"
+  shallow: false
+- id: realtime-15
+  title: "History left open for hours stops updating after laptop sleep or background-tab throttling, with no stale indicator"
+  level: L4
+  cell: {surface: history-tab, time-and-connection: page-open-for-hours, run-status: running, actor: creator-owner}
+  object: "History tab status display"
+  situation: "Browser throttles timers in a hidden tab to once per minute after 5 min; laptop sleeps 40 min and the push socket drops without reconnect"
+  consequence: "Row reads Running long after the run is Done; user waits on a finished run"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Lists past and current submissions"
+  proposed: "Acceptance criterion: on visibilitychange/focus or network reconnect, History re-fetches non-terminal rows within 2 s"
+  shallow: false
+- id: realtime-16
+  title: "Status polling that hits an expired session returns 401 silently and freezes every row at its last status"
+  level: L3
+  cell: {surface: history-tab, time-and-connection: page-open-for-hours, run-status: done, actor: creator-owner}
+  object: "History entry statuses"
+  situation: "Tab open overnight; token expires at hour 8; poll requests fail 401 and the UI keeps last values"
+  consequence: "Done runs still show Running next morning; no sign-in prompt appears"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "History is per user."
+  proposed: "Spec line: when status refresh fails auth, History shows a 'Session expired - sign in to refresh' banner instead of stale statuses"
+  shallow: false
+- id: realtime-17
+  title: "A History tab already open in a second browser tab does not gain the entry submitted from the first tab"
+  level: L3
+  cell: {surface: history-tab, actor: same-user-second-tab, run-status: submitted-not-yet-visible-in-history, action: submit}
+  object: "History tab, 'History is per user'"
+  situation: "Tab B shows History; user submits a report in tab A"
+  consequence: "Tab B misses the new entry until reload; if push is per-entry subscription, tab B never receives its status either"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "History is per user."
+  proposed: "Spec line: new entries and status changes are delivered to every open session of the same user within 5 s"
+  shallow: false
+- id: realtime-18
+  title: "Two tabs show different statuses for the same entry (Done in one, Running in the other)"
+  level: L4
+  cell: {surface: history-entry-row, actor: same-user-second-tab, run-status: done, time-and-connection: steady-state}
+  object: "History entry status"
+  situation: "Tab A receives push Done; tab B polls every 60 s, or its socket dropped"
+  consequence: "User compares and distrusts both; may open tab B detail and see no output for a run that is Done"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "History is per user."
+  proposed: "Acceptance criterion: max status divergence between two open sessions of the same user is 5 s"
+  shallow: false
+- id: realtime-19
+  title: "'History is per user' does not say it is server-stored, so a new device could show an empty History"
+  level: L3
+  cell: {surface: empty-state, actor: creator-owner, history-state: empty, time-and-connection: first-ever-use}
+  object: "History tab rule 'History is per user, currently'"
+  situation: "History implemented in browser storage keyed to the session; user signs in on a second laptop"
+  consequence: "Second device shows empty state though the user has 40 past runs"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "History is per user, currently."
+  proposed: "Spec line: History is stored server-side per user account and identical across devices and browsers"
+  shallow: false
+- id: realtime-20
+  title: "Status change while the user is inside entry detail: no rule whether the output renders in place or needs back-and-reopen"
+  level: L4
+  cell: {surface: history-entry-detail, run-status: running, action: open-history-entry, mode: report}
+  object: "Entry detail ('what opening an entry shows while running, when done')"
+  situation: "User opens a Running report entry; it finishes 3 min later while detail stays open"
+  consequence: "Detail keeps showing the running view; user closes it believing it is still running"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "what opening an entry shows while running, when done, and when failed."
+  proposed: "Acceptance criterion: open detail switches from running view to output within 5 s of Done without user action"
+  shallow: false
+- id: realtime-21
+  title: "Final output arriving into an open detail re-renders it and resets the user's scroll while reading partial output"
+  level: L4
+  cell: {surface: history-entry-detail, run-status: done, mode: report, videos-selected: 6-20}
+  object: "Entry detail for a report over 6-20 videos"
+  situation: "Detail streams partial sections; user scrolled 2000 px to read section 3; final payload replaces the whole body"
+  consequence: "View jumps to top; user loses their place"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "A Report produces one output covering all selected videos"
+  proposed: "Spec line: completion updates the status header in place and keeps the reader's scroll position"
+  shallow: false
+- id: realtime-22
+  title: "Out-of-order status events can move an entry backwards from Done to Running"
+  level: L4
+  cell: {surface: history-entry-row, run-status: done, actor: background-agent-job, time-and-connection: steady-state}
+  object: "History entry status"
+  situation: "Worker emits Running (retry heartbeat) and Done 50 ms apart; push delivers Done then the late Running"
+  consequence: "Row flips back to Running and stays there until reload"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Statuses an entry can have on the History tab"
+  proposed: "Spec line: statuses are monotonic (Queued < Running < Done/Failed); client ignores any event older than the current status version"
+  shallow: false
+- id: realtime-23
+  title: "No signal when a run finishes while the user is elsewhere on the agent page composing the next run"
+  level: L3
+  cell: {surface: report-form, mode: report, run-status: done, action: type-prompt}
+  object: "Agent page outside the History tab"
+  situation: "User is redirected to History, then switches to Report mode to write a second run; the first finishes"
+  consequence: "Nothing tells them; the History tab label shows no count or dot, the browser title does not change"
+  p_typical: 0.10
+  grounded: quote
+  evidence: "There is no loading page, to save the user's time."
+  proposed: "Spec line: a completed or failed run shows a toast with 'Open' and a dot on the History tab label until viewed"
+  shallow: false
+- id: realtime-24
+  title: "Long runs (21-100 videos) finish after the user has closed the browser and nothing reaches them"
+  level: L3
+  cell: {surface: history-tab, videos-selected: 21-100, run-status: done, actor: background-agent-job}
+  object: "After submit rule and History tab"
+  situation: "Report over 60 videos takes 25 min; user closes the browser after the redirect"
+  consequence: "User learns the result only if they return and open History; no email or notification defined"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "There is no loading page, to save the user's time."
+  proposed: "Decision line: runs longer than N min send an email/in-app notification on Done/Failed, or the spec states none is sent"
+  shallow: false
+- id: realtime-25
+  title: "Back from History to a still-filled form allows a second Submit that creates a duplicate entry and job"
+  level: L4
+  cell: {surface: report-form, action: back-button-after-redirect, run-status: queued, history-state: two-entries-same-second}
+  object: "Submit -> redirect to History; browser Back"
+  situation: "User presses Back after redirect; form restored from bfcache with run name, 5 videos, prompt; presses Submit again"
+  consequence: "Two identical Queued entries and two jobs; no rule says the form clears or warns"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "On submit the user is redirected to the History tab"
+  proposed: "Spec line: form is cleared after a successful Submit; Back from History returns to an empty form"
+  shallow: false
+- id: realtime-26
+  title: "Double-click on Submit before redirect creates two entries; no idempotency key is specified"
+  level: L4
+  cell: {surface: submit-button, action: double-submit, history-state: two-entries-same-second, videos-selected: 2-5}
+  object: "Submit button"
+  situation: "Two clicks 200 ms apart; no loading state exists to disable the button"
+  consequence: "History shows 2 identical rows; agent runs twice over the same 2-5 videos"
+  p_typical: 0.18
+  grounded: quote
+  evidence: "There is no loading page"
+  proposed: "Acceptance criterion: Submit disables on first click; server dedupes requests with the same client idempotency key within 30 s"
+  shallow: false
+- id: realtime-27
+  title: "Refresh right after redirect: if History is in-memory tab state, reload lands on Report mode and any optimistic row is lost"
+  level: L3
+  cell: {surface: history-tab, action: refresh-after-redirect, run-status: submitted-not-yet-visible-in-history, time-and-connection: redirect-lands-before-entry-exists}
+  object: "History tab as a tab inside the agent page"
+  situation: "Tab selection held in component state, no URL; user presses F5 1 s after redirect"
+  consequence: "Page reloads on default mode; user must find History again; the not-yet-persisted placeholder row disappears"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The 'third thing' in the UI is the History tab."
+  proposed: "Spec line: History tab has its own URL; redirect targets it; refresh shows the server list including the new entry"
+  shallow: false
+- id: realtime-28
+  title: "Submit succeeds but the client-side redirect fails, leaving the user on the form with no confirmation"
+  level: L3
+  cell: {surface: redirect-transition, time-and-connection: submit-succeeds-redirect-fails, action: submit, mode: ask-question}
+  object: "Redirect rule"
+  situation: "Submit returns 201; History route code chunk fails to load (deploy in progress) or a JS error interrupts navigation"
+  consequence: "User sees the unchanged Ask question form, submits again, and gets two entries"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "On submit the user is redirected to the History tab"
+  proposed: "Spec line: if navigation fails after a successful Submit, show 'Submitted - view in History' with a link and clear the form"
+  shallow: false
+- id: realtime-29
+  title: "Offline at Submit with no loading page: no rule for whether a local pending entry is shown or the submit is blocked"
+  level: L3
+  cell: {surface: submit-button, time-and-connection: offline-at-submit, run-status: submitted-not-yet-visible-in-history, action: submit}
+  object: "Submit / redirect"
+  situation: "Wi-Fi drops; Submit request never reaches the server"
+  consequence: "Either a phantom row appears that never syncs, or the user is redirected to a History with nothing new and no error"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "There is no loading page, to save the user's time."
+  proposed: "Spec line: when offline, Submit stays on the form with an inline 'You are offline - not submitted' message; no redirect"
+  shallow: false
+- id: realtime-30
+  title: "An Ask question entry's single row status is undefined once a follow-up is running behind a Done first answer"
+  level: L3
+  cell: {surface: history-entry-row, thread-state: follow-up-while-first-still-running, run-status: running, action: ask-follow-up}
+  object: "History entry row for an Ask question thread; 'Follow-up questions are supported'"
+  situation: "First answer Done; user asks follow-up 1 and returns to History"
+  consequence: "Row still reads Done, or flips to Running, or jumps to the top; spec says none of these"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: "Spec line: thread row shows status of the latest message and is re-sorted by last activity (or not, stated)"
+  shallow: false
+- id: realtime-31
+  title: "A follow-up answer that lands after the user leaves the thread gives no unread marker on the History row"
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: thread-opened-from-history, action: ask-follow-up, run-status: done}
+  object: "Follow-up thread opened from a History entry"
+  situation: "User asks follow-up 3, goes back to History before the answer arrives (40 s)"
+  consequence: "Answer arrives silently; row looks unchanged; user does not know there is a new reply"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: "Spec line: rows with unseen answers show an unread dot until the thread is opened"
+  shallow: false
+- id: realtime-32
+  title: "Same thread open in two tabs: a follow-up sent in tab A is not shown in tab B, so tab B branches the conversation"
+  level: L3
+  cell: {surface: follow-up-thread, actor: same-user-second-tab, thread-state: follow-up-1, action: ask-follow-up}
+  object: "Follow-up thread"
+  situation: "Tab A asks follow-up 1; tab B, still showing only the first answer, asks a different follow-up 1"
+  consequence: "Two follow-ups with the same parent; order and context for follow-up 2 undefined"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: "Spec line: follow-ups append to one linear thread; other open sessions receive the new message within 5 s and the composer shows it before sending"
+  shallow: false
+- id: realtime-33
+  title: "No maximum run time: a stuck report over long videos stays Running with no elapsed time and no transition to Failed"
+  level: L4
+  cell: {surface: history-entry-row, run-status: stuck-over-1h, video-state: 3-hour-long, videos-selected: 6-20}
+  object: "History entry status"
+  situation: "Report over 10 three-hour videos; worker hangs at minute 20 but keeps the row Running"
+  consequence: "User cannot tell slow from stuck; row reads Running after 6 h"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "Statuses an entry can have on the History tab, and what opening an entry shows while running"
+  proposed: "Spec line: row shows elapsed time; server marks Failed ('timed out') after no heartbeat for 10 min or total run > X h"
+  shallow: false
+- id: realtime-34
+  title: "During an agent outage the History list may load but statuses are last-known, with no staleness or outage notice"
+  level: L3
+  cell: {surface: history-tab, time-and-connection: during-agent-outage, run-status: queued, history-state: 100-entries}
+  object: "History tab"
+  situation: "Agent backend down 45 min; new submissions sit Queued; status service partly unavailable"
+  consequence: "Users keep submitting into a stalled queue; queued count grows with no message"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Spec line: when the agent is degraded, History shows a banner and Submit warns 'runs are delayed'"
+  shallow: false
+- id: realtime-35
+  title: "First-ever submit: History shows its empty state for the moment before the new row arrives"
+  level: L4
+  cell: {surface: empty-state, history-state: empty, time-and-connection: first-ever-use, action: submit}
+  object: "History tab empty state"
+  situation: "User's first ever run; list fetch returns [] before the row is visible (200 ms-2 s)"
+  consequence: "User reads 'No submissions yet' right after submitting and believes it failed"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "where a new entry appears with whatever was submitted"
+  proposed: "Acceptance criterion: after a Submit redirect, the empty state never renders; the new row is shown from the Submit response"
+  shallow: false
+- id: realtime-36
+  title: "If an untitled entry later gets an auto-generated title, the row label changes under the user while they look for it"
+  level: L3
+  cell: {surface: history-entry-row, text-input-state: run-name-empty, run-status: queued, mode: report}
+  object: "History entry row label; 'Run name (optional)'"
+  situation: "Row first shows 'Untitled'; job generates a title at Running and the label updates"
+  consequence: "User searching for 'Untitled' loses the row; spec says the entry appears 'with whatever was submitted', which excludes generated labels"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "a new entry appears with whatever was submitted"
+  proposed: "Decision line: blank run name shows a fixed fallback label at creation and never changes, or the auto-title rule is stated"
+  shallow: false
+- id: realtime-37
+  title: "If still-ingesting videos are selectable, the entry waits on ingestion and no status describes that wait"
+  level: L3
+  cell: {surface: history-entry-row, video-state: still-ingesting, run-status: queued, actor: ingestion-job}
+  object: "Assumed statuses Queued / Running / Done / Failed; 'Whether a video that is still ingesting ... can be selected'"
+  situation: "Run includes a video 35 min from ingested; job blocks until ingestion completes"
+  consequence: "Row reads Queued for 35 min with no reason; ingestion failure must then propagate into this entry"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Whether a video that is still ingesting, or failed ingestion, can be selected."
+  proposed: "Spec line: either ingesting videos are not selectable, or the entry shows 'Waiting for 1 video to finish processing' and fails if ingestion fails"
+  shallow: false
+- id: realtime-38
+  title: "Video deleted on the Videos page in another tab after Submit: the failure reason and timing on the entry are unspecified"
+  level: L3
+  cell: {surface: history-entry-row, video-state: deleted-after-selection-before-run, actor: same-user-second-tab, run-status: failed}
+  object: "History entry; Videos page"
+  situation: "Run Queued with 4 videos; user deletes one in tab B before the job starts"
+  consequence: "Entry fails, or runs on 3 videos and reports Done, with no visible note of the missing video"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Videos page: users upload videos; uploaded videos get ingested."
+  proposed: "Spec line: entry shows Partial with 'video X was deleted before the run started', or deletion of a video in a Queued run is blocked"
+  shallow: false
+- id: realtime-39
+  title: "Offset pagination plus a newly inserted entry duplicates or skips one row when the user is on page 2"
+  level: L4
+  cell: {surface: history-tab, history-state: 1000-entries, actor: same-user-second-tab, action: submit}
+  object: "History tab list paging"
+  situation: "User on page 2 (rows 21-40) in tab B; a submit from tab A inserts a row at the top; user goes to page 3"
+  consequence: "Row 40 shows again at the top of page 3, or a row is skipped by infinite scroll"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Spec line: History uses cursor (created_at, id) paging; new rows prepend with a '1 new entry' pill instead of shifting the list"
+  shallow: false
+- id: realtime-40
+  title: "Relative timestamps on a fresh row can read 'in 2 minutes' or a negative elapsed time from client clock skew"
+  level: L4
+  cell: {surface: history-entry-row, run-status: running, time-and-connection: steady-state, history-state: two-entries-same-second}
+  object: "History entry row timestamp"
+  situation: "Client clock 3 min behind server; row created_at comes from the server, elapsed computed on the client"
+  consequence: "New entry shows 'in 3 minutes' or appears below older rows when sorted client-side by a client timestamp"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "none"
+  proposed: "Spec line: created_at is server time; elapsed/relative times computed against server-offset-adjusted clock"
+  shallow: false
+- id: realtime-41
+  title: "Entries left Running from a crash a year ago are never reconciled and still show Running"
+  level: L3
+  cell: {surface: history-tab, time-and-connection: after-a-year, run-status: stuck-over-1h, history-state: 1000-entries}
+  object: "History tab, 'past and current submissions'"
+  situation: "Worker crashed during a deploy 12 months ago; 7 entries never reached a terminal status"
+  consequence: "Old rows still read Running; any 'active runs' counter or poller keeps polling them forever"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Spec line: a sweeper marks any entry non-terminal for >24 h as Failed ('interrupted')"
+  shallow: false
+- id: realtime-42
+  title: "If the status push channel is scoped to the workspace rather than the user, other users' entries appear in my History"
+  level: L3
+  cell: {surface: history-tab, actor: other-user-same-workspace, run-status: running, action: submit}
+  object: "'History is per user, currently.'"
+  situation: "Teammate submits a run; the realtime 'entry created' event is broadcast on a workspace channel and the client prepends it"
+  consequence: "My History shows a teammate's run until reload, leaking their question text"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "History is per user, currently."
+  proposed: "Acceptance criterion: entry-created and status events are delivered only to the owning user's sessions"
+  shallow: false
+- id: realtime-43
+  title: "If cancel is added, a cancel in one tab must reach an open detail in another tab that still offers follow-up"
+  level: L3
+  cell: {surface: history-entry-detail, action: cancel-run-not-in-spec, actor: same-user-second-tab, run-status: cancelled-not-in-spec}
+  object: "Entry detail; statuses unspecified"
+  situation: "User cancels a Running question in tab A; tab B detail still shows Running with the follow-up box enabled"
+  consequence: "Follow-up sent from tab B against a cancelled entry; outcome undefined"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "Statuses an entry can have on the History tab"
+  proposed: "Decision line: cancel exists or not; if yes, Cancelled is terminal and propagates to all sessions within 5 s"
+  shallow: false
+- id: realtime-44
+  title: "Entry deleted in one tab while its detail is open in another: detail keeps polling a 404 and accepts follow-ups"
+  level: L3
+  cell: {surface: history-entry-detail, action: delete-entry-not-in-spec, actor: same-user-second-tab, thread-state: thread-opened-from-history}
+  object: "Entry detail / follow-up thread"
+  situation: "Delete action (not in spec) used in tab A; tab B has the thread open"
+  consequence: "Tab B shows a spinner forever or errors on the next follow-up with no explanation"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Spec line: an open detail of a deleted entry shows 'This entry was deleted' and disables follow-up"
+  shallow: false
+- id: realtime-45
+  title: "Done event published before the output is committed, so opening the entry immediately shows an empty result"
+  level: L4
+  cell: {surface: history-entry-detail, run-status: done-with-empty-output, actor: background-agent-job, action: open-history-entry}
+  object: "Entry detail 'when done'"
+  situation: "Worker emits Done, then writes the report blob 1-3 s later; user clicks the row on the Done flip"
+  consequence: "Detail shows a blank report; user reports a bug or reruns"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "what opening an entry shows while running, when done, and when failed."
+  proposed: "Acceptance criterion: an entry is marked Done only after its output is readable; detail never renders empty for a Done entry"
+  shallow: false
+- id: realtime-46
+  title: "No progress granularity: a report over 21-100 videos shows only 'Running' for its whole duration"
+  level: L4
+  cell: {surface: history-entry-row, videos-selected: 21-100, run-status: running, mode: report}
+  object: "History entry status"
+  situation: "Report over 80 videos runs 30 min"
+  consequence: "User cannot tell 2/80 from 79/80 and reopens the entry repeatedly; no basis for estimating finish"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "A Report produces one output covering all selected videos"
+  proposed: "Spec line: row shows 'Processing 34/80 videos' updated at least every 30 s, or explicitly states no progress is shown"
+  shallow: false
