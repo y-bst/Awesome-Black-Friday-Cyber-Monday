@@ -1,0 +1,629 @@
+- id: design-1
+  title: "Per-level fail-margin histogram read from the fail screen (targets left, moves left), so the designer sees whether Level 37 fails are near-misses (1-2 targets left) or blowouts (6+ left)"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: funnel-drop-off-why, lifecycle-moment: d1-to-d7, delivery-form: dashboard, game-platform-and-genre: mobile-casual-hypercasual, capture-trigger-and-sampling: event-triggered-clip}
+  object: "GameAnalytics Progression funnel 'Fail/Complete' ratio (methods-churn-funnel.md §1)"
+  situation: "Match-3 Level 37 shows Fail/Complete of 4.1 after build 1.42; the funnel gives the ratio but not how close each fail was"
+  consequence: "Without the margin the designer adds +3 moves blind; if 70% of fails end with 1-2 targets left, +2 moves fixes it; if 70% end with 6+ left, the board layout is the problem and extra moves change nothing"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "'Progression' funnels take Progression events only and add Complete/Start and Fail/Complete ratios (methods-churn-funnel.md §1)"
+  proposed: "OCR the fail-screen counters on a 3 s clip at each Fail event; histogram per level per build"
+  shallow: false
+  mechanism: "A per-title fail-screen detector plus OCR reads targets-remaining and moves-remaining at every fail; output is a fail-margin histogram per level, joined to level ID from the progression event"
+  example: "Level 37: 68% of 2,400 sampled fails end with 1 target left; the designer adds 2 moves in remote config instead of redrawing the board"
+  cost: S
+  depends_on: "per-title fail-screen classifier trained on a few hundred labelled frames (methods-churn-funnel.md §4 inferred); level ID from progression events"
+  buyer: "Lead level designer at a mid-size mobile casual studio"
+  input: "3 s event-triggered clip at each Fail progression event from consented SDK players + GameAnalytics progression events"
+  why_existing_tools_cannot: "Funnels report historical drop-off, 'not prediction', and no fail state (methods-churn-funnel.md §1); targets-left could be logged only if anticipated (methods-churn-funnel.md §2 inferred)"
+  willingness_to_pay: "3: designers already pay about EUR 113-141 per recorded session for playtest video (market.md §1 PlaytestCloud); a studio that already logs targets-left as an event gets this free"
+
+- id: design-2
+  title: "Clip reel of each churned player's last failed attempt per level, for the 10 levels with the most 'quit without completing' 7-day churners"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, lifecycle-moment: d1-to-d7, delivery-form: clip-reel, capture-trigger-and-sampling: always-on-ring-buffer, constraint-to-overcome: bandwidth-and-storage}
+  object: "Roohi et al. 'churn without completing the level' correlation r = -0.586 (methods-churn-funnel.md §3)"
+  situation: "A player fails Level 52 three times, kills the app on the fail screen and does not return for 7 days"
+  consequence: "The designer watches 20 last-attempt clips for Level 52 instead of guessing between 'too hard' and 'bug', the two causes Unity's docs list"
+  p_typical: 0.22
+  grounded: inferred
+  evidence: "Real pass rate vs churn: Spearman r = -0.144; vs 'churn without completing the level': r = -0.586 (methods-churn-funnel.md §3)"
+  proposed: "Keep the last 2 attempts on device (about 15 MB at 1 Mbps), upload on Wi-Fi once the 7-day churn label resolves"
+  shallow: false
+  mechanism: "60 s on-device ring buffer per level attempt; upload is held until the 7-day churn label resolves, then the churned player's last attempt is uploaded and grouped by level"
+  example: "Puzzle game Level 52: 14 of 20 last-attempt clips show the player never found the hidden key tile; the designer adds a sparkle hint on attempt 3"
+  cost: M
+  depends_on: "capture SDK with ring buffer and deferred upload; churn label from telemetry"
+  buyer: "Lead designer at a mobile casual or midcore F2P studio"
+  input: "60 s ring buffer per attempt from consented own players + level and session events for the churn label"
+  why_existing_tools_cannot: "Sentry-style replay keeps 'about the last minute before the error' only on errors, not churn triggers (methods-churn-funnel.md §6); no paper predicts churn from human gameplay frames (methods-churn-funnel.md §3)"
+  willingness_to_pay: "4: EA paired funnels with Session Replay for a 30% cut in onboarding time (methods-churn-funnel.md §1); Unity replay is still 'alpha' at PostHog (methods-churn-funnel.md §6)"
+
+- id: design-3
+  title: "'Visible-but-never-used' report per mechanic: seconds the booster or ability button was on screen before the first tap, and share of players with zero uses by Level 30"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: cohort-comparison, lifecycle-moment: ftue-first-session, delivery-form: per-cohort-report, companion-data: touch-and-controller-input, capture-trigger-and-sampling: random-sample}
+  object: "methods-churn-funnel.md §2 inferred list item 'a visible CTA never tapped (UI not noticed)'"
+  situation: "Hammer booster unlocks at Level 8; telemetry shows 61% of players reach Level 20 with zero hammer uses and cannot say whether they saw the button"
+  consequence: "The designer cannot tell 'not noticed' (fix: highlight or forced use) from 'noticed and judged useless' (fix: raise its power); Levels 15-20 stay tuned on the assumption players use it"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Signals that exist in screen video (plus touch overlay) but not in standard event streams: ... a visible CTA never tapped (UI not noticed) (methods-churn-funnel.md §2)"
+  proposed: "Per-mechanic exposure-to-first-use table, 10 clips of players opening the info card and closing it"
+  shallow: false
+  mechanism: "A button detector (mAP about 90% on mobile game UI, methods-churn-funnel.md §4) marks frames where each mechanic's button is visible; the touch overlay gives the first tap; output is visible-seconds-before-first-use and never-used share per mechanic per cohort"
+  example: "Hammer visible a median 410 s across Levels 8-14 before first tap; 38% open the booster info card then close it; the designer moves the forced-use tutorial from Level 8 to Level 11, where the board needs it"
+  cost: S
+  depends_on: "per-title labels for each mechanic button; touch overlay in capture"
+  buyer: "Lead game designer owning core mechanics, mobile casual or midcore studio"
+  input: "random 2% of new installs, first 30 levels at 1-5 fps screenshots + touch input + level events"
+  why_existing_tools_cannot: "Event streams log taps, not exposure: 'a step that was never instrumented ... does not exist in the data' (methods-churn-funnel.md §1 inferred)"
+  willingness_to_pay: "3: no direct price; nearest is Gamedexy Pro at $99/year for human-captured FTUE flows (competitor-and-ua.md §1), so designers pay small sums for UI-flow evidence"
+
+- id: design-4
+  title: "Per-move think-time strip for a puzzle level: median seconds between moves by move number, split into no-touch pauses (reading the board) and touch-down-without-commit pauses (hovering)"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: beta-and-early-access-testers, signal-extracted: input-timing-and-hesitation, analysis-type: funnel-drop-off-why, lifecycle-moment: soft-launch, delivery-form: in-tool-annotation, companion-data: touch-and-controller-input, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "UXCam rage-tap rule '3 taps ... at most 300 ms between taps' and the Unreal 'Universal Boredom Detector' (methods-churn-funnel.md §2)"
+  situation: "Level 64 has a normal fail rate, but session length is +40% and next-day return is -6 points; telemetry has moves, not pauses"
+  consequence: "The designer finds cognitive overload (9+ s pauses before moves 3-6 on a board with 4 blocker types) that the fail rate never shows; players who pass still quit tired"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "'Universal Boredom Detector' tracks idle time and 'shorter inactivity or low-action time before full idle' (methods-churn-funnel.md §2)"
+  proposed: "Heat strip of pause seconds per move number drawn over the level thumbnail"
+  shallow: false
+  mechanism: "Touch timestamps plus board-change detection from frames give per-move latency and hover-without-commit events; aggregated into a per-move strip per level"
+  example: "Level 64: median pause 11 s at move 4 vs 3 s level average; the designer removes one blocker type and the pause falls to 5 s in build 1.44"
+  cost: S
+  depends_on: "touch input captured in sync with video"
+  buyer: "Puzzle level designer at a casual mobile studio"
+  input: "consented soft-launch beta recordings + touch stream + move events"
+  why_existing_tools_cannot: "Rage-tap and idle detectors flag frustration or boredom, not per-move thinking load (methods-churn-funnel.md §2); funnels carry no timing between moves (methods-churn-funnel.md §1)"
+  willingness_to_pay: "2: a designer can ask engineers to log move timestamps for free; value is retroactive for levels nobody instrumented (methods-churn-funnel.md §2 inferred)"
+
+- id: design-5
+  title: "Death classifier for a 3D action level: 'route not known' deaths (camera wandering or backtracking for 10+ s before death) vs 'execution' deaths (same spot, 3+ retries, jump input under 150 ms late)"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: beta-and-early-access-testers, signal-extracted: player-skill-and-mechanics, analysis-type: root-cause-of-a-metric-change, lifecycle-moment: soft-launch, game-platform-and-genre: pc, companion-data: touch-and-controller-input, constraint-to-overcome: per-game-ui-generalisation}
+  object: "'camera spinning/wandering (lost)' (methods-churn-funnel.md §2 inferred) and the Roohi population model of 'skill, persistence' (methods-churn-funnel.md §3)"
+  situation: "Chapter 3 bridge in a Steam Early Access build: 23% of players die there 5+ times"
+  consequence: "Execution deaths call for a wider platform or a checkpoint; knowledge deaths call for a sightline or landmark; tuning the wrong one leaves the wall in place"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "camera spinning/wandering (lost) listed among signals absent from standard event streams (methods-churn-funnel.md §2)"
+  proposed: "Per death zone: knowledge/execution split plus 5 clips of each"
+  shallow: false
+  mechanism: "Controller input stream plus camera-motion estimate from frames classify the 20 s before each death; output is a per-zone split with sample clips"
+  example: "Bridge: 71% execution deaths at one jump with input 120 ms late; the designer extends coyote time from 80 to 150 ms instead of adding a signpost"
+  cost: M
+  depends_on: "death events with position from telemetry; controller input capture"
+  buyer: "Lead level designer at an indie or mid-size PC action-platformer studio"
+  input: "Steam Playtest / Early Access opt-in recordings + controller input + death events with xyz"
+  why_existing_tools_cannot: "Steam Playtest gives distribution with 'No recording or analysis' (market.md §1 Valve); death heatmaps show where, not whether the player knew the route"
+  willingness_to_pay: "3: indie anchors $49-99/month (IV Metrics, market.md §2) and $115-475 per game per month (Antidote, market.md §1)"
+
+- id: design-6
+  title: "Continue-offer margin table: for every '+5 moves' purchase, OCR of targets left when the offer appeared, per level and per price point"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: economy-and-store-events, analysis-type: cohort-comparison, lifecycle-moment: price-or-economy-change, delivery-form: warehouse-table-export, companion-data: purchase-and-ad-revenue-events, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "Continue offer on the fail screen, joined to purchase events; GameAnalytics 'Resource' events (methods-churn-funnel.md §1)"
+  situation: "Continue price raised from 900 to 1,200 coins in build 1.45; continue purchase rate falls 18%"
+  consequence: "If near-miss buyers (1-2 targets left) kept buying, the drop comes from far-off players and the price holds; if near-miss buyers dropped, the price cuts both revenue and pass rate"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Standard funnels take Design, Resource and Progression events (methods-churn-funnel.md §1); no vendor links device video to monetisation telemetry (market.md §9)"
+  proposed: "Table rows: level, price, targets_left_bucket, offers_shown, offers_bought"
+  shallow: false
+  mechanism: "At each continue-offer screen, OCR reads targets and moves remaining; joined to the purchase event; one row per offer exported to the warehouse"
+  example: "Level 120 at 1,200 coins: near-miss buy rate unchanged at 34%, 5+-targets buy rate 9% to 2%; the designer keeps the price and adds a cheaper '+3 moves' tier"
+  cost: S
+  depends_on: "fail-screen OCR from design-1"
+  buyer: "Economy designer at a casual F2P studio, with the monetisation lead"
+  input: "event-triggered clip at the continue-offer screen + purchase and resource events"
+  why_existing_tools_cannot: "Purchase events record that a continue was bought, not the board state at the offer; no vendor applies CV to production player video linked to monetisation (market.md §9 gap map)"
+  willingness_to_pay: "4: economy prices move revenue directly; buyers pay $30K-$115K/yr for monetisation intelligence on competitors (competitor-and-ua.md §8 inferred)"
+
+- id: design-7
+  title: "'Can't afford' upgrade-screen log: each visit where the OCR'd upgrade price exceeds the OCR'd wallet balance, counted per player day and item tier, as a churn feature"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: economy-and-store-events, analysis-type: churn-prediction-features, lifecycle-moment: d1-to-d7, delivery-form: warehouse-table-export, game-platform-and-genre: mobile-midcore-f2p, constraint-to-overcome: joining-video-to-events}
+  object: "methods-churn-funnel.md §1 inferred example 'player looked at the shop button for 6 s and did not tap'"
+  situation: "Midcore RPG days 3-5: the hero level-15 upgrade costs 12,000 gold while the median day-4 wallet is 4,300"
+  consequence: "Players open the upgrade screen 6+ times a day without buying; no event fires because nothing was bought; the gold wall stays invisible until D7 drops"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "a step that was never instrumented (e.g. 'player looked at the shop button for 6 s and did not tap') does not exist in the data (methods-churn-funnel.md §1)"
+  proposed: "Column unaffordable_views_per_day per player, joined on session ID"
+  shallow: false
+  mechanism: "Screen classifier detects the upgrade screen; OCR reads price and wallet; emits one 'unaffordable view' row per visit with player and session ID"
+  example: "Day-4 players with 5+ unaffordable views churn by D7 at 2.1x the rate of others; the designer raises day-3 daily-quest gold from 1,500 to 2,500"
+  cost: M
+  depends_on: "screen classifier and OCR per title; session ID shared between SDK and analytics"
+  buyer: "Economy designer at a midcore F2P studio; the studio data scientist consumes the table"
+  input: "random 1% of D1-D7 players at 1 fps + session and resource events"
+  why_existing_tools_cannot: "Resource events log completed sources and sinks, not attempted sinks; packaged churn prediction caught 275 of 145k churn instances in one case (methods-churn-funnel.md §1), so new features are needed"
+  willingness_to_pay: "3: Halfbrick gained +5 pp D7 acting on predicted churners (methods-churn-funnel.md §1); no direct price for a feature table"
+
+- id: design-8
+  title: "Economy audit: wallet balance timeline rebuilt from HUD OCR every 5 s, diffed against summed Resource events, listing unlogged sources and sinks by amount and screen"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, delivery-form: issue-tracker-ticket, companion-data: telemetry-events, constraint-to-overcome: ground-truth-labels}
+  object: "Q3Vision HUD OCR of health, armour and ammo (methods-churn-funnel.md §4)"
+  situation: "Build 1.46 adds a daily login chest; the HUD shows +500 gems per player per day that no Resource event records"
+  consequence: "Economy dashboards understate gem inflow by 500/day, so gem-price tuning runs on wrong faucet data for weeks"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Q3Vision ... OCR for health, armour, ammo and weapon; OCR limited by low-resolution, stylised HUD fonts (methods-churn-funnel.md §4)"
+  proposed: "Ticket per mismatch over 5% with clip, screen name and build"
+  shallow: false
+  mechanism: "HUD currency counters OCR'd at 0.2 fps; deltas compared to Resource source/sink events in the same window; mismatches over 5% open a ticket with the clip"
+  example: "Ticket: 'Gems +500 at 08:02 with no Resource:Source event, screen = Daily Chest, 312 of 400 sampled players, build 1.46.0'"
+  cost: S
+  depends_on: "HUD OCR per title; Resource events in GameAnalytics or the warehouse"
+  buyer: "Economy designer or live-ops economist at a F2P studio with 3+ currencies"
+  input: "0.2 fps screenshots from 400 sampled players per build + resource events"
+  why_existing_tools_cannot: "Analytics tools trust the events they receive; funnel and economy views are bounded by instrumentation (methods-churn-funnel.md §1 inferred)"
+  willingness_to_pay: "2: a QA tester can catch it by hand in one playthrough; no price signal in the notes"
+
+- id: design-9
+  title: "Build-to-build goal-visibility diff: share of frames where the level goal counter or target tiles are occluded by VFX, per level, alerted when fail rate rises with unchanged level data"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: build-to-build-regression-diff, lifecycle-moment: live-event-or-update, delivery-form: alert-or-slack, companion-data: build-and-config-metadata, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "VideoGameQA-Bench 'visual unit/regression tests' (methods-churn-funnel.md §4)"
+  situation: "Halloween event skin ships in build 1.47; Levels 200-240 fail rate +9% with identical level JSON"
+  consequence: "The designer spends 2 days re-checking level data; the cause is pumpkin particles covering the target counter and the bottom 2 rows"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "VideoGameQA-Bench (NeurIPS 2025 D&B): visual unit/regression tests, needle-in-a-haystack, glitch detection (methods-churn-funnel.md §4)"
+  proposed: "Slack alert when occlusion rises 10+ points and fail rate rises in the same build"
+  shallow: false
+  mechanism: "Detectors for the goal counter and target tiles measure occluded area per frame; compared across build IDs for the same level"
+  example: "Alert: 'L212 goal counter occluded in 34% of frames in 1.47 vs 2% in 1.46; fail +11%; clip attached'"
+  cost: M
+  depends_on: "build metadata per session; goal-UI detectors per title"
+  buyer: "Lead level designer and live-ops manager at a casual mobile studio"
+  input: "event-skin sessions from own players + build metadata + level fail events"
+  why_existing_tools_cannot: "AI QA tools (Razer, ManaMind) detect rendering, physics and animation bugs, not goal readability (market.md §3); Unity funnels list only candidate causes (methods-churn-funnel.md §1)"
+  willingness_to_pay: "3: QA buyers pay $15-50 per tester hour (adjacent-usecases.md §1); readability sits between QA and design budgets"
+
+- id: design-10
+  title: "Human-vs-bot difficulty gap per new level: agent attempts-to-pass vs human attempts from fail clips, flagging levels where humans need 2x+ the attempts the bot predicts"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: automated-bot-or-agent-playthrough, signal-extracted: player-skill-and-mechanics, analysis-type: cohort-comparison, lifecycle-moment: pre-launch-qa, delivery-form: per-cohort-report, capture-trigger-and-sampling: scheduled-bot-playthrough, effort: L-multi-quarter}
+  object: "Roohi et al. DRL agents on 168 Angry Birds Dream Blast levels (methods-churn-funnel.md §3)"
+  situation: "Weekly batch of 20 new levels; bot pass rate predicts difficulty, but the bot reads the board perfectly and humans do not"
+  consequence: "Levels with perceptual difficulty (a combo hard to see) ship rated 'easy' and become walls; the gap list names which levels to retune before release"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "a population model (skill, persistence, boredom) predicts per-level churn (methods-churn-funnel.md §3); AI playtesting 'complements humans, cannot replace them' (adjacent-usecases.md §10)"
+  proposed: "Gap ratio column next to the bot's predicted difficulty, with clips of humans missing the move the bot found"
+  shallow: false
+  mechanism: "Bot runs 500 seeds per level; the first 2,000 human attempts are classified pass/fail from video; gap ratio per level plus clips where humans miss the bot's key move"
+  example: "Level 812: bot 1.6 attempts, humans 4.9; clips show players miss a diagonal match under a jelly layer; the designer recolours the jelly"
+  cost: L
+  depends_on: "an agent playthrough vendor (modl.ai, nunu.ai) or in-house bot; fail capture from design-1"
+  buyer: "Level design lead at a large casual studio shipping 20+ levels a week"
+  input: "bot playthrough video + human event-triggered fail clips + level events"
+  why_existing_tools_cannot: "modl.ai and nunu.ai bots play builds before release and do not analyse real players' footage (market.md §3)"
+  willingness_to_pay: "3: King and Nitro are reported modl.ai customers (market.md §3), so bot budgets exist; the human side is an add-on"
+
+- id: design-11
+  title: "Felt-difficulty curve for Levels 1-40 from a gameplay-pixel arousal model, overlaid on the designer's intended sawtooth (a breather every 5 levels)"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: beta-and-early-access-testers, signal-extracted: emotion-arousal-from-pixels, analysis-type: cohort-comparison, lifecycle-moment: soft-launch, delivery-form: dashboard, companion-data: none-video-only, constraint-to-overcome: accuracy-and-trust}
+  object: "Makantasis et al. arousal from gameplay pixels (methods-churn-funnel.md §5)"
+  situation: "The level spreadsheet marks Levels 10, 15 and 20 as breathers; pass rates exist but say nothing about whether breathers feel restful"
+  consequence: "If arousal stays high on breathers, players get no relief and session length falls; the designer moves breathers or cuts their target count"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "arousal predicted from gameplay video alone, over 78% accuracy on average and 98% at best (methods-churn-funnel.md §5)"
+  proposed: "Per-level arousal vs intended-intensity line chart with 3 clips per outlier level"
+  shallow: false
+  mechanism: "A pixel-only arousal model trained per genre on AGAIN-style labels scores each level attempt; mean per level compared to the intended curve"
+  example: "Breather Level 15 scores 0.71 vs 0.44 target; cause is a 30 s timer the designer forgot; the timer is removed"
+  cost: L
+  depends_on: "per-genre arousal model and labels; AGAIN covers 9 games and 1,100 videos (methods-churn-funnel.md §5)"
+  buyer: "Lead designer at a mid-size studio in soft launch"
+  input: "beta tester gameplay video only, no face cam"
+  why_existing_tools_cannot: "PlaytestCloud's AI keys on think-aloud speech, not visible behaviour (methods-churn-funnel.md §2); no studio-facing pixel-arousal product was found (market.md §7)"
+  willingness_to_pay: "2: biometrics are 'often oversold' (market.md §1 Player Research); designers distrust a single arousal number"
+
+- id: design-12
+  title: "'Felt unfair' death list for a competitive shooter: deaths on public streams where the streamer swears or says 'broken' within 3 s, grouped by killing weapon read from the kill feed"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: public-streams-and-ugc, signal-extracted: speech-or-think-aloud, analysis-type: cohort-comparison, lifecycle-moment: new-version-release, delivery-form: weekly-digest-email, game-platform-and-genre: competitive-multiplayer, constraint-to-overcome: per-game-ui-generalisation}
+  object: "NiceShot AI kill/death pop-up detector (methods-churn-funnel.md §4); Hatchet viewership-only analytics (market.md §5)"
+  situation: "Patch 3.2 buffs a shotgun; telemetry win rate with it is 51%, yet community threads call it broken"
+  consequence: "The balance team sees 38% of streamer 'unfair' reactions come from shotgun deaths around corners at under 5 m, and cuts close-corner one-shot range instead of global damage"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "NiceShot AI (open source): YOLOv8n + OpenCV + FFmpeg detects kill, death and medal pop-ups in Call of Duty: Black Ops 6 and clips them; supports bulk Twitch channel analysis (methods-churn-funnel.md §4)"
+  proposed: "Weekly digest per weapon: share of deaths vs share of rage reactions, with clips"
+  shallow: false
+  mechanism: "Kill-feed OCR plus death detection plus transcription of streamer speech within 3 s of each death; reactions grouped by weapon, map zone and range"
+  example: "Digest line: 'Shotgun X: 4% of deaths, 38% of rage reactions, 61 clips, median range 3 m'"
+  cost: M
+  depends_on: "public VOD ingestion within platform terms; per-game kill-feed parser"
+  buyer: "Combat or balance designer at a PC/console multiplayer studio"
+  input: "public Twitch and YouTube VODs of the game with streamer audio + own win-rate telemetry"
+  why_existing_tools_cannot: "Hatchet and Streams Charts measure viewers and chat, not in-game moments (market.md §5)"
+  willingness_to_pay: "3: publishers pay $249-$1,249+/month for stream analytics (market.md §5)"
+
+- id: design-13
+  title: "New-mechanic intro card read time (seconds visible before dismiss) joined to misuse rate of that mechanic in the next 3 levels"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, lifecycle-moment: live-event-or-update, delivery-form: per-cohort-report, companion-data: touch-and-controller-input, constraint-to-overcome: joining-video-to-events}
+  object: "'>80%' of players clicked straight through the instruction screen (methods-churn-funnel.md §2)"
+  situation: "Update 2.3 adds a portal tile with a 3-line intro card at Level 401"
+  consequence: "If 70% dismiss the card in under 1.5 s and then route pieces into portals wrongly, the designer replaces text with a scripted first move instead of adding moves"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "a GameDev.net playtesting post reports '>80%' of players clicked straight through the instruction screen of a demo (methods-churn-funnel.md §2)"
+  proposed: "Cross-tab of dwell bucket (<1.5 s, 1.5-4 s, >4 s) by misuse rate"
+  shallow: false
+  mechanism: "Card shown/dismissed timestamps from frames; misuse = moves that send pieces into a portal with no match outcome, from board-state detection"
+  example: "Dismiss <1.5 s: 73% of players, misuse 41%; dwell >4 s: misuse 12%; the card becomes a forced demo move"
+  cost: S
+  depends_on: "portal-state detector; level events"
+  buyer: "Lead designer shipping a new mechanic in a live update"
+  input: "event-triggered clips on Levels 401-404 from own players + touch + level events"
+  why_existing_tools_cannot: "Funnels count tutorial-step completion, not reading time; PlaytestCloud multi-session memory checks use recruited testers only (methods-churn-funnel.md §2)"
+  willingness_to_pay: "3: PlaytestCloud credits Nitro Games with 90% tutorial completion (methods-churn-funnel.md §2); sessions cost EUR 113-141 (market.md §1)"
+
+- id: design-14
+  title: "'Lost zone' overlay in the engine editor for an open 3D level: map cells where beta players spend 60+ s with camera yaw sweeps over 270 degrees and no objective progress"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: beta-and-early-access-testers, signal-extracted: attention-proxy-cursor-or-camera, analysis-type: funnel-drop-off-why, lifecycle-moment: pre-launch-qa, delivery-form: engine-editor-plugin, game-platform-and-genre: single-player-narrative, constraint-to-overcome: integration-effort-per-engine}
+  object: "'camera spinning/wandering (lost)' (methods-churn-funnel.md §2); HUD eye-tracking study where players noticed enemies only after a redesign (methods-churn-funnel.md §2)"
+  situation: "Chapter 2 forest beta: the objective marker is hidden by foliage; 31% of testers take 4+ minutes to find the exit"
+  consequence: "The designer sees 3 lost zones on the level map and lights one path, instead of blanket waypoint arrows the creative director rejects"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Eye tracking on a game HUD showed players only noticed on- and off-screen enemies after a redesign (methods-churn-funnel.md §2)"
+  proposed: "Unreal/Unity editor overlay: red cells sized by lost seconds, click opens clips"
+  shallow: false
+  mechanism: "Optical-flow camera-motion estimate plus position telemetry give lost seconds per map cell; rendered as an overlay in the editor scene view"
+  example: "Overlay shows the ravine fork in red with 18 clips; a lit lantern is added; lost time falls from 4.2 to 1.1 minutes in the next beta"
+  cost: M
+  depends_on: "position events or minimap OCR; Unreal and Unity editor plugins"
+  buyer: "Level designer at a AAA or mid-size console/PC studio"
+  input: "beta tester video + position events + controller input"
+  why_existing_tools_cannot: "Antidote captures gameplay, inputs and events but its AI summarises recordings, surveys and transcripts (market.md §1), not spatial lostness"
+  willingness_to_pay: "3: Antidote $115-475 per game per month (market.md §1); AAA may build in-house on TRUE-style instrumentation (methods-churn-funnel.md §1)"
+
+- id: design-15
+  title: "Designer chat over a level's footage: 'every fail on Level 88 where the rocket booster was unused' returns a count and 10 clips"
+  level: L3
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: ask-a-question-over-footage, lifecycle-moment: d1-to-d7, delivery-form: ask-question-agent-chat, effort: XS-repackage-existing-user-test-product, constraint-to-overcome: commoditisation-by-general-video-llms}
+  object: "PlaytestCloud 'First Findings' linking each friction point to its clip (market.md §1); Gemini 1 FPS video sampling (competitor-and-ua.md §1)"
+  situation: "Level 88 fail rate is 3x its neighbours and the designer has 640 fail clips and no time to scrub them"
+  consequence: "Answers in minutes instead of a day of scrubbing; but an analytics head can point Gemini at a sample themselves"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "'First Findings' ... reviews all videos in an order, groups findings by theme, and links each friction point to its clip (market.md §1)"
+  proposed: "Reuse the User Test ask-question agent over per-level clip indexes with UI-state tags"
+  shallow: false
+  mechanism: "The existing ask-question agent queries an index of per-level clips tagged with UI state (booster bar, fail screen) and returns counts plus clips"
+  example: "212 of 640 fails had the rocket unused; clips show players saving it 'for later'; the designer adds a pre-level rocket reminder"
+  cost: S
+  depends_on: "existing User Test agent; per-level clip index with UI-state tags"
+  buyer: "Any game designer at a mid-size studio"
+  input: "indexed fail clips from own players + level events"
+  why_existing_tools_cannot: "Gemini takes video but 'No source covers game FTUE extraction' (competitor-and-ua.md §1); PlaytestCloud's AI reads transcripts and surveys, not pixels (market.md §1)"
+  willingness_to_pay: "3: 'The AI analysis has been a real time-saver for our team' (market.md §1); exposed to commoditisation by general video LLMs"
+
+- id: design-16
+  title: "On-device frustration trigger: after 3 consecutive fails plus a rage-tap burst (3 taps under 300 ms apart), the game offers a free hint before the player reaches the fail screen's quit button"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: input-timing-and-hesitation, analysis-type: real-time-in-session-intervention, lifecycle-moment: d1-to-d7, delivery-form: api-or-sdk, processing-location: on-device, automation-level: closed-loop-in-game-action, constraint-to-overcome: device-performance}
+  object: "UXCam rage-tap definition (methods-churn-funnel.md §2); Halfbrick churner gifting (methods-churn-funnel.md §1)"
+  situation: "Level 140: the player fails 3 times in 4 minutes and rage-taps the board on the third fail"
+  consequence: "Rescues players at the moment the Rovio result ties to churn; the designer then sees the frames add little over touch events alone, so video is not needed for the trigger"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Rage taps (UXCam definition): at least 3 taps within a set radius with at most 300 ms between taps (methods-churn-funnel.md §2)"
+  proposed: "A/B the hint on 10% of Level 120-160 attempts"
+  shallow: false
+  mechanism: "On-device classifier over touch stream and fail-screen detection; no upload; calls a game hook that shows the hint"
+  example: "Hint offered on 12% of attempts at Level 140; 7-day churn for that arm -3 points in the A/B"
+  cost: M
+  depends_on: "SDK hook into game logic; A/B framework"
+  buyer: "Lead designer owning difficulty, with engineering sign-off"
+  input: "live touch stream + on-device fail-screen detection"
+  why_existing_tools_cannot: "Firebase Predictions predicts a 7-day horizon (methods-churn-funnel.md §1), not in-session; but rage taps come from input events without video"
+  willingness_to_pay: "2: the lever is proven (Halfbrick +5 pp D7, methods-churn-funnel.md §1) yet a touch-event rule built in-house gives most of the signal"
+
+- id: design-17
+  title: "A/B economy variant explainer: per arm, 'not enough coins' popups per player on Levels 18-22 and what the player did next (bought, left, replayed an earlier level)"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: economy-and-store-events, analysis-type: ab-test-variant-explanation, lifecycle-moment: ab-test-running, delivery-form: per-cohort-report, capture-trigger-and-sampling: targeted-cohort, companion-data: build-and-config-metadata}
+  object: "methods-churn-funnel.md §1 inferred: 'Event funnels answer where and how many; every tool above leaves why to a hypothesis step'"
+  situation: "Variant B (upgrade costs +25%) shows D7 -1.8 points and revenue +4% after 14 days"
+  consequence: "The designer sees B players hit the popup 3.1x as often on Levels 18-22, 40% then replay Level 12 for coins and 22% quit; ships B prices with a Level-20 coin bonus"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Event funnels answer 'where' and 'how many'; every tool above leaves 'why' to a hypothesis step (methods-churn-funnel.md §1)"
+  proposed: "Sequence chart: popup -> next screen, per A/B arm, with 5 clips per branch"
+  shallow: false
+  mechanism: "Targeted capture for both arms on Levels 15-25; popup detection plus next-screen classification produces per-arm transition counts"
+  example: "Arm B: 3.1 popups per player vs 1.0 in A; 22% quit after the popup vs 9%"
+  cost: S
+  depends_on: "A/B arm ID in build/config metadata; popup classifier"
+  buyer: "Economy designer at a casual or midcore F2P studio"
+  input: "targeted-cohort clips for both arms + A/B arm ID + resource events"
+  why_existing_tools_cannot: "A/B and funnel tools report metric deltas per arm and leave 'why' to a hypothesis (methods-churn-funnel.md §1 inferred)"
+  willingness_to_pay: "4: Amplitude sells game outcomes with headline numbers, FunCraft +40% D1 (methods-churn-funnel.md signals)"
+
+- id: design-18
+  title: "Soft-launch 'levels to retune' package: analyst plus AI reviews about 500 fail clips across Levels 1-60 and delivers 10 ranked levels, each with a proposed change and 5 clips, in 5 working days"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, lifecycle-moment: soft-launch, delivery-form: managed-service-with-analyst, pricing-model: managed-project, value-lever-b2b: de-risk-a-go-kill-decision}
+  object: "PlaytestCloud 48-hour turnaround on recruited testers (market.md §1)"
+  situation: "Mid-core puzzle RPG in soft launch in Canada and the Philippines with D1 at 24%, below the P75 of just above 30%"
+  consequence: "The list puts Level 23 first (boss shield mechanic unread in 64% of clips); the patch ships in week 3 instead of a 6-week guess cycle"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "most results within 48 hours (market.md §1); median D1 about 22%, P75 just above 30% (methods-churn-funnel.md §1)"
+  proposed: "Fixed-scope project per soft-launch build"
+  shallow: false
+  mechanism: "AI clusters fail clips by level and failure pattern; an analyst writes the ranked list with proposed tuning per level"
+  example: "Deliverable row: 'L23 boss shield: 64% of 48 fail clips attack while shield is up; add shield-up flash; expected fail -15%'"
+  cost: S
+  depends_on: "capture SDK in the soft-launch build; analyst capacity"
+  buyer: "Game director or lead designer at a mid-size studio in soft launch"
+  input: "event-triggered fail clips from soft-launch players + progression events"
+  why_existing_tools_cannot: "PlaytestCloud analyses recruited testers with 'no churn or retention link to production telemetry' (market.md §1)"
+  willingness_to_pay: "4: PlaytestCloud contracts run EUR 13.6k-33.9k/year (market.md signals); soft-launch go/kill decisions carry the whole UA budget"
+
+- id: design-19
+  title: "Auto-filed level-tuning ticket per build: 'Level 37: 68% of fails with 1-2 targets left (was 22% in 1.42); proposed +2 moves; 5 clips', filed when fail margin or fail rate shifts by 10+ points"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, delivery-form: issue-tracker-ticket, automation-level: auto-created-ticket-or-asset, pricing-model: per-build-or-release}
+  object: "Razer QA Companion-AI Jira bug reports with repro steps and video (market.md §3)"
+  situation: "Build 1.43 changes the spawn table; 6 levels shift difficulty without anyone editing them"
+  consequence: "The designer gets 6 tickets with clips the day after release instead of finding the shift in the weekly retention review"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Bug reports include suggested repro steps and attached video ... Jira integration (market.md §3)"
+  proposed: "Jira ticket type 'Level tuning' with fail-margin chart and clips"
+  shallow: false
+  mechanism: "Per-build comparison of fail-margin histograms (design-1) and fail rates; threshold breach creates a ticket with the proposed move-count change"
+  example: "Ticket for Level 37 auto-filed 26 hours after 1.43 rollout, with 5 clips and a +2 moves suggestion"
+  cost: S
+  depends_on: "design-1 fail-margin histograms; Jira integration"
+  buyer: "Lead level designer at a casual studio shipping weekly"
+  input: "fail clips per build + build metadata + progression events"
+  why_existing_tools_cannot: "Razer files Jira tickets for rendering and physics bugs (market.md §3), not difficulty shifts"
+  willingness_to_pay: "3: Razer QA Companion is GA on AWS Marketplace with Jira (market.md §3), showing ticket-shaped output sells"
+
+- id: design-20
+  title: "Refuse: face-cam frustration scoring of real players per level from the front camera, to rank hard levels"
+  level: L3
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: facecam-expression, analysis-type: cohort-comparison, lifecycle-moment: d1-to-d7, companion-data: facecam, constraint-to-overcome: privacy-and-consent, pricing-model: per-mau}
+  object: "EU AI Act Art. 50(3) disclosure and GDPR biometric rules (methods-churn-funnel.md §7)"
+  situation: "Vendor pitches front-camera capture during Levels 1-100 to score frustration"
+  consequence: "Designer refuses: disclosure and biometric obligations, tiny and biased opt-in, and research found gameplay features beat facial ones for frustration, so it pays more for a worse signal"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "gameplay-feature models were 'significantly' more accurate than facial-feature models for perceived frustration (methods-churn-funnel.md §5)"
+  proposed: "Drop; use pixel and input signals from design-4 and design-11"
+  shallow: false
+  mechanism: "Facial expression classifier on front-camera video synced to level ID"
+  example: "Level 55 frustration score 0.8 from 40 opted-in faces; designer cannot act on it without the gameplay clip anyway"
+  cost: M
+  depends_on: "camera permission and biometric consent flow"
+  buyer: "Lead designer (would not buy)"
+  input: "front-camera video + level events"
+  why_existing_tools_cannot: "Affectiva's group 'now leans towards automotive' and no current game playtest product was found (market.md §7)"
+  willingness_to_pay: "1: no buyer signal; biometrics 'often oversold' (market.md §1 Player Research)"
+
+- id: design-21
+  title: "Refuse: a single 0-100 'AI difficulty score' per level from video, with no clips and no fail breakdown"
+  level: L3
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: player-skill-and-mechanics, analysis-type: anomaly-alert, delivery-form: dashboard, constraint-to-overcome: accuracy-and-trust, automation-level: insight-for-human}
+  object: "modl.ai survey trust figures (market.md §3)"
+  situation: "Dashboard shows Level 90 = 82/100 difficulty, Level 91 = 41/100"
+  consequence: "Designer refuses: they cannot argue a change to the producer on an opaque number and pass rate already ranks difficulty; only clip-backed output is used"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "only 16% fully trust AI outcomes, 10% not at all (market.md §3)"
+  proposed: "Drop; every metric ships with its clips (design-1, design-19)"
+  shallow: false
+  mechanism: "Model regresses a difficulty score from video features per level"
+  example: "Score disagrees with pass rate on 7 of 40 levels and nobody can say why"
+  cost: S
+  depends_on: "nothing"
+  buyer: "Lead designer (would not buy)"
+  input: "own player video + level events"
+  why_existing_tools_cannot: "Funnels already give pass rate per level (methods-churn-funnel.md §1); Naavik says AI-QA case studies are still hard to find (market.md §3)"
+  willingness_to_pay: "1: duplicates pass rate; low trust in AI outcomes (market.md §3)"
+
+- id: design-22
+  title: "Refuse: always-on full-session 720p recording of every player to 'see all balance problems'"
+  level: L3
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, capture-trigger-and-sampling: always-on-ring-buffer, constraint-to-overcome: bandwidth-and-storage, pricing-model: per-hour-of-video}
+  object: "methods-churn-funnel.md §7 upload arithmetic"
+  situation: "Vendor quotes per hour of video for 100% capture across 100k installs/day"
+  consequence: "Designer refuses: at 100k installs/day even 10 minutes at 1 Mbps is about 7.5 TB/day, and a 30-minute session is about 450 MB per device; balance needs only the 20-60 s around fails"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "A studio at 100k new installs/day recording only the first 10 minutes at 1 Mbps would ingest about 7.5 TB/day (methods-churn-funnel.md §7)"
+  proposed: "Buy event-triggered fail clips (design-1, design-2) instead"
+  shallow: false
+  mechanism: "Continuous capture and upload of all sessions"
+  example: "Upload complaints in store reviews before any balance insight arrives"
+  cost: L
+  depends_on: "nothing"
+  buyer: "Lead designer and CTO (would not buy)"
+  input: "full sessions from all players"
+  why_existing_tools_cannot: "Not a gap: ring-buffer sampling is the established pattern (Sentry, Steam, Medal) (methods-churn-funnel.md §6)"
+  willingness_to_pay: "1: cost per stored and uploaded hour exceeds the value; no buyer signal"
+
+- id: design-23
+  title: "Refuse: closed-loop auto-tuning that rewrites level move counts in remote config from video-detected fail margins without designer review"
+  level: L3
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: real-time-in-session-intervention, automation-level: closed-loop-in-game-action, lifecycle-moment: live-event-or-update, constraint-to-overcome: accuracy-and-trust}
+  object: "Halfbrick automated gifting to predicted churners (methods-churn-funnel.md §1)"
+  situation: "System adds +2 moves to Level 37 overnight because 68% of fails were near-misses"
+  consequence: "Designer refuses: an unreviewed +2 moves cuts continue-offer revenue (design-6) and flattens the intended sawtooth; they accept a recommendation, not an action"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Halfbrick gifted predicted churners in-game, +5 percentage points 7-day retention (methods-churn-funnel.md §1)"
+  proposed: "Ship as recommendation inside design-19 tickets"
+  shallow: false
+  mechanism: "Fail-margin threshold writes new move counts to remote config"
+  example: "Level 37 moves 25 -> 27 with no human sign-off; continue purchases on Level 37 drop 30%"
+  cost: M
+  depends_on: "design-1; remote config write access"
+  buyer: "Lead designer (would not buy)"
+  input: "fail-screen OCR + remote config"
+  why_existing_tools_cannot: "Automated rewards exist (Halfbrick), but level data is a design asset and AI trust is low: 16% fully trust AI outcomes (market.md §3)"
+  willingness_to_pay: "2: studios do automate rewards (methods-churn-funnel.md §1) but not level authorship"
+
+- id: design-24
+  title: "Competitor difficulty curve from public walkthrough videos: moves given, fails shown and 'hard level' badges for Levels 1-300 of a rival match-3, plotted against the studio's own curve"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: public-streams-and-ugc, signal-extracted: on-screen-text-ocr, analysis-type: benchmark-vs-competitor, lifecycle-moment: prototype-and-greenlight, delivery-form: dashboard, game-platform-and-genre: mobile-casual-hypercasual, constraint-to-overcome: per-game-ui-generalisation}
+  object: "GameRefinery's about 260 manually tracked features (competitor-and-ua.md §1)"
+  situation: "Designing Levels 1-300 of a new match-3; YouTube walkthrough channels upload every level of the market leader"
+  consequence: "Designer sees the rival puts a 'hard' badge every 6-9 levels and the first super-hard at Level 47 vs their own at 22, and moves theirs later"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "No source describes a product that ingests YouTube/Twitch/TikTok gameplay of a competitor and returns features, monetisation touchpoints or FTUE steps (competitor-and-ua.md §2)"
+  proposed: "Per-level table for the rival: level, moves, badge, attempts shown, boosters used"
+  shallow: false
+  mechanism: "Ingest walkthrough playlists; OCR level number, move count and difficulty badges; count fail screens shown; output a per-level table and curve"
+  example: "Rival curve: hard badges at 9, 15, 22, 31, 38, 47 (super-hard); own curve has super-hard at 22; designer moves it to 41"
+  cost: M
+  depends_on: "public video access within platform terms; per-title OCR"
+  buyer: "Lead level designer at a casual studio before launch"
+  input: "public walkthrough videos of a competitor + own level spreadsheet"
+  why_existing_tools_cannot: "GameRefinery and Playliner log features and live events by human play, and automated tags read store metadata, not gameplay (competitor-and-ua.md §1)"
+  willingness_to_pay: "4: competitor intel runs about $45-51k/yr (GameRefinery) and $75k median (Sensor Tower) (competitor-and-ua.md §1 prices)"
+
+- id: design-25
+  title: "Interruption-adjusted fail rate for timed levels: fails preceded within 10 s by a notification shade, incoming-call screen or app switch are separated from difficulty fails"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: platform-or-emulator-capture, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: root-cause-of-a-metric-change, lifecycle-moment: live-event-or-update, delivery-form: warehouse-table-export, game-platform-and-genre: mobile-casual-hypercasual, constraint-to-overcome: privacy-and-consent}
+  object: "methods-churn-funnel.md §2 inferred signal 'the exact screen state at the moment of app kill (rage quit vs. interruption)'"
+  situation: "Timed 60 s event levels show 48% fail; the designer plans +10 s for everyone"
+  consequence: "If 9-11% of fails follow an interruption while the timer kept running, the fix is pausing the timer on focus loss, not +10 s that makes the event trivial for uninterrupted players"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "the exact screen state at the moment of app kill (rage quit vs. interruption) (methods-churn-funnel.md §2)"
+  proposed: "Column interrupted_before_fail on each fail row"
+  shallow: false
+  mechanism: "OS-level screen capture (platform, emulator or ReplayKit/MediaProjection; engine framebuffer capture cannot see OS overlays) plus a classifier for notification shade and call screens flags fails preceded by interruption"
+  example: "Event level 'Speed Run 4': 11% of Android fails interruption-led; timer pause on focus loss ships; fail rate 48% -> 41% with no time change"
+  cost: S
+  depends_on: "OS-level capture or platform partner; notification content must be masked (methods-churn-funnel.md §7 privacy hazards)"
+  buyer: "Live-ops event designer at a casual mobile studio"
+  input: "OS-level screen video around fails + app focus events + level events"
+  why_existing_tools_cannot: "Funnels count a fail as a fail; focus-loss reasons exist only if instrumented (methods-churn-funnel.md §2 inferred)"
+  willingness_to_pay: "2: focus-loss events are cheap telemetry; video adds only the interruption type"
+
+- id: design-26
+  title: "Mis-swipe rate by screen size: swipes landing on a neighbouring tile or producing no move within 300 ms, per level, for devices under 6.1 inches vs larger"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: input-timing-and-hesitation, analysis-type: cohort-comparison, lifecycle-moment: d1-to-d7, delivery-form: per-cohort-report, companion-data: touch-and-controller-input, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "UXCam 'unresponsive gestures' (methods-churn-funnel.md §2)"
+  situation: "9x9 boards from Level 150 show a 9-point lower pass rate on small phones"
+  consequence: "Designer either caps boards at 8x8 for the small-screen cohort or widens swipe tolerance; telemetry sees fewer moves, not wasted gestures"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "'unresponsive gestures' = taps/swipes with no app reaction (methods-churn-funnel.md §2)"
+  proposed: "Mis-swipe share by device diagonal bucket per level"
+  shallow: false
+  mechanism: "Touch coordinates mapped to the tile grid detected from frames; a gesture with no board change within 300 ms or on the wrong tile counts as a mis-swipe; grouped by device model"
+  example: "Levels 150-180: 7.8% mis-swipes on 5.5-inch devices vs 2.1% on 6.7-inch; swipe tolerance widened 15%; pass-rate gap closes to 3 points"
+  cost: S
+  depends_on: "touch overlay; device model metadata"
+  buyer: "Puzzle level designer at a casual mobile studio"
+  input: "own player clips on Levels 150-180 + touch stream + device model"
+  why_existing_tools_cannot: "Generic replay tools see engine canvases 'as a black box or as screenshots' with no game-state understanding (market.md §2)"
+  willingness_to_pay: "2: narrow to grid puzzles; IV Metrics anchor $49-99/month (market.md §2)"
+
+- id: design-27
+  title: "Retry-loop timer at a wall: non-play seconds from fail screen to next level start (fail animation, interstitial ad, lives screen, load) per player on levels with 5+ consecutive fails"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: load-and-wait-screens, analysis-type: funnel-drop-off-why, lifecycle-moment: d1-to-d7, delivery-form: dashboard, companion-data: purchase-and-ad-revenue-events, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "methods-churn-funnel.md §2 inferred signals 'pause/menu toggling; time-to-first-meaningful-action'"
+  situation: "Level 66 wall: each retry costs 6 s fail animation + 30 s interstitial + 4 s load"
+  consequence: "Players on attempt 5 have spent 3+ minutes not playing; the designer moves the interstitial to every 3rd retry and trades some ad revenue for churn at the wall"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Signals that exist in screen video ... but not in standard event streams: ... pause/menu toggling; time-to-first-meaningful-action (methods-churn-funnel.md §2)"
+  proposed: "Stacked bar per retry number: play vs ad vs load vs menu seconds"
+  shallow: false
+  mechanism: "Screen classifier labels fail, ad, lives, load and play states; non-play seconds per retry computed and joined to ad revenue events"
+  example: "Attempt 5 on Level 66: 41 s non-play per 55 s play; after the change, wall churn falls 2 points and ad revenue per DAU falls 1%"
+  cost: S
+  depends_on: "state classifier per title (small vocabulary, methods-churn-funnel.md §4 inferred)"
+  buyer: "Lead designer with the monetisation lead"
+  input: "event-triggered sequences around consecutive fails + ad revenue events"
+  why_existing_tools_cannot: "Ad events record impressions, not their time cost inside a retry loop; replay tools do not parse game canvases (market.md §2)"
+  willingness_to_pay: "3: each D1 point matters against a 22% median (methods-churn-funnel.md §1); no direct price"
+
+- id: design-28
+  title: "Unwinnable-start detector: the board at level start is read from the first frame and replayed in the studio's solver, flagging random seeds unsolvable within the move limit"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, delivery-form: issue-tracker-ticket, game-platform-and-genre: mobile-casual-hypercasual, constraint-to-overcome: ground-truth-labels}
+  object: "Q3Vision game-state reconstruction from screen video (methods-churn-funnel.md §4)"
+  situation: "Level 230 uses random tile spawn; 1 in 12 starts gives no possible path to the goal in 25 moves"
+  consequence: "Players blame themselves or the game on a seed they cannot beat; the fail rate looks like normal difficulty"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Q3Vision (ACSW 2026, UTS): reconstructs Quake III game state from screen video only (methods-churn-funnel.md §4)"
+  proposed: "Ticket per level with share of unsolvable starts and example boards"
+  shallow: false
+  mechanism: "Tile classifier reads the 9x9 grid at the start frame; the studio solver runs 1,000 rollouts; seeds with 0% solve rate are flagged"
+  example: "Level 230: 8% of observed starts unsolvable; the spawn table is fixed; moves unchanged"
+  cost: M
+  depends_on: "studio solver or bot; tile classifier per tile set"
+  buyer: "Level designer at a match-3 studio with random spawns"
+  input: "first frame of each level start from own players + level events"
+  why_existing_tools_cannot: "Bots test chosen seeds before release (modl.ai, market.md §3), not the seeds players received"
+  willingness_to_pay: "2: a studio that logs the seed can replay it offline without video"
+
+- id: design-29
+  title: "Pro-play counter-pick report for a balance patch: hero picks, bans and first-death hero read from third-party tournament VODs where the studio has no tournament label in telemetry"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: esports-vod, signal-extracted: on-screen-text-ocr, analysis-type: cohort-comparison, lifecycle-moment: season-or-battle-pass-start, delivery-form: per-cohort-report, game-platform-and-genre: competitive-multiplayer, constraint-to-overcome: per-game-ui-generalisation}
+  object: "Omnic.AI CV on uploaded match recordings (market.md §4)"
+  situation: "Mobile MOBA; regional third-party tournaments run in custom lobbies that telemetry records as 'custom match'"
+  consequence: "Balance team sees hero X banned in 74% of 220 regional matches vs 9% in ranked, so it is a pro-only problem; they change a skill-ceiling mechanic instead of base stats"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Forge uses CV and deep learning on uploaded match recordings ... No plug-in or API needed (market.md §4)"
+  proposed: "Pick/ban/first-death table per hero, tournament vs ranked"
+  shallow: false
+  mechanism: "Draft-screen OCR for picks and bans; kill-feed OCR for first death; aggregated per hero per tournament"
+  example: "Season 7 start: report shows hero X 74% ban, 61% first-blood participation; patch targets its dash reset"
+  cost: M
+  depends_on: "VOD access; per-game draft and kill-feed parser"
+  buyer: "Balance designer at a competitive mobile or PC multiplayer studio"
+  input: "third-party tournament VODs + own ranked telemetry"
+  why_existing_tools_cannot: "Esports VOD tools (Mobalytics, ClutchLabs, Omnic) sell to players and teams, not studios (adjacent-usecases.md §8)"
+  willingness_to_pay: "2: buyers in this space pay $3-149/month (adjacent-usecases.md §8); a studio can label tournament lobbies itself"
+
+- id: design-30
+  title: "Graybox prototype score 'core mechanic used correctly by minute 5': first correct use detected from frames plus think-aloud, across 20 recruited testers per build"
+  level: L4
+  cell: {buyer-role: design-balance, video-source: recruited-playtesters, signal-extracted: speech-or-think-aloud, analysis-type: cohort-comparison, lifecycle-moment: prototype-and-greenlight, delivery-form: per-cohort-report, effort: XS-repackage-existing-user-test-product, pricing-model: per-session}
+  object: "PlaytestCloud / Nitro Games no-tutorial builds (methods-churn-funnel.md §2)"
+  situation: "Two graybox prototypes compete for greenlight; both have no tutorial"
+  consequence: "Designer sees prototype A: 14 of 20 used the merge mechanic correctly by minute 5; B: 6 of 20, of whom 5 said they understood it; the greenlight goes to A or B gets a mechanic rework"
+  p_typical: 0.10
+  grounded: inferred
+  evidence: "tested builds with no tutorial to see what players understand unaided, then designed the tutorial; tutorial completion rose to 90% (methods-churn-funnel.md §2)"
+  proposed: "Per-prototype tile: correct-use-by-minute-5 count, say-vs-do mismatch count, clips"
+  shallow: false
+  mechanism: "Frame detection of the mechanic's correct outcome plus transcript alignment marks testers who claim understanding but misuse it"
+  example: "Prototype B: 5 testers say 'got it' then merge wrong tiles 3+ times; designer adds a merge preview ghost"
+  cost: S
+  depends_on: "existing User Test ingestion and transcription; mechanic-outcome detector per prototype"
+  buyer: "Creative director or lead designer at prototype stage, any studio size"
+  input: "recruited tester recordings with think-aloud + optional game events"
+  why_existing_tools_cannot: "PlaytestCloud's AI reads transcripts and surveys, not pixels (market.md §1), so it misses testers who silently misuse the mechanic"
+  willingness_to_pay: "4: EUR 113-141 per session at PlaytestCloud and $15 per test at We Playtest Games (market.md §1)"
