@@ -20,3 +20,7 @@ yield_estimate: <your estimate of how many NEW leaves another generation loop wo
 ```
 
 If `yield_estimate` is below 0.10 say so plainly; the orchestrator stops looping on that.
+
+## Empty means empty (added after smoke test 2026-10-26)
+
+A cell is empty only if no leaf's `title` or `situation` describes it, whatever its `cell` label says. Before listing a cell under `empty_cells`, search the merged list for the situation in words. In the smoke test, a "baseline path is empty" brief produced 19 leaves of which 18 were duplicates, because the situations existed under other labels. Report label mismatches separately under `mislabelled_cells` instead of as gaps. Your `yield_estimate` must be discounted by the duplicate rate seen in G-counts.md.

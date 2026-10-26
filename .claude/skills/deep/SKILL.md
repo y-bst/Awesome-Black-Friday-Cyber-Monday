@@ -69,3 +69,7 @@ Then tell the user: the path of `leaves.md`, the leaf count, the leaf rate (shar
 - [misses.md](misses.md): the learning log. Append every real miss found in production, with the perspective × cell that should have caught it.
 - [research/](research/): why the engine is shaped this way, with sources.
 - [examples/](examples/): sample artifacts for smoke tests.
+
+## Tuning notes from runs
+
+- 2026-10-26, sample Runs-page PRD, quick mode, 7 of 28 perspectives: 184 raw leaves, 0 contract rejections, 74 duplicates, 110 surviving; both known misses caught (flat-frame-1, qa-lead-1). Audit estimated a 0.80 yield from the fill; actual was 0.31, because it counted empty cells by label. Fixed in G (cell normalisation) and H (empty means empty). Cross-perspective duplicate rate of about 35% is expected and useful: a leaf found by 3 or 4 isolated agents is a strong signal.
