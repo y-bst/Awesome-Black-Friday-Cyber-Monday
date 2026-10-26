@@ -1,0 +1,587 @@
+- id: qa-director-1
+  title: "Live-device rendering-artefact clusters: on-device detector flags magenta/black missing-shader, stretched-texture and flicker frames in consented Android sessions and groups them by GPU + driver + build into one Jira ticket per cluster"
+  level: L3
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, delivery-form: issue-tracker-ticket, capture-trigger-and-sampling: on-crash-or-anomaly, processing-location: on-device, companion-data: build-and-config-metadata, game-platform-and-genre: mobile-midcore-f2p}
+  object: "adjacent-usecases.md §6 'same build can run 60 fps on a flagship and 24 fps on a mid-tier phone'; market.md §3 Razer QA Companion-AI 'Not used on consumer devices or live-player footage'"
+  situation: "Weekly build 4.12 ships; 0.3% of sessions on Mali-G52 / Android 11 phones render level-4 terrain magenta; no crash and no ANR, so crash and vitals dashboards stay green"
+  consequence: "The bug surfaces only through 1-star reviews 3-5 days later; the QA lab has no Mali-G52 device, so one full weekly cycle is lost per device-specific rendering bug"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "'compatibility testing of a major mobile title can need 500 to 2,000+ device-OS combinations' (adjacent-usecases.md §6)"
+  proposed: "30 s on-device ring buffer plus a small frame classifier; upload clip + GPU/driver/build only when the glitch score exceeds threshold on 3+ consecutive frames"
+  shallow: false
+  mechanism: "On-device model scores 360p frames at 2 fps for solid-colour texture fills, black NaN regions and frame-to-frame flicker; the cloud clusters uploads by GPU family, driver version, build and screen state and opens one ticket per cluster with 3 sample clips and the affected device list"
+  example: "Match-3 RPG build 4.12: cluster '28 clips, Mali-G52 MC2, driver r32p1, battle screen, magenta terrain' opens QA-8812; the QA director pulls a Galaxy A12 from the drawer and reproduces in 10 minutes"
+  cost: M
+  depends_on: "consented capture SDK with ring buffer; per-game glitch classifier calibrated on 200-500 labelled frames"
+  buyer: "QA director, mid-size mobile F2P studio shipping weekly on Android"
+  input: "consented player SDK ring buffer (30 s, 360p, 2 fps) + device model, GPU, driver, OS version, build ID"
+  why_existing_tools_cannot: "Razer QA Companion-AI detects rendering bugs only in tester sessions on PC builds (market.md §3); GameBench and device clouds measure counters on lab devices, not visual defects on players' phones (adjacent-usecases.md §6)"
+  willingness_to_pay: "4 - a 500-2,000+ device-OS matrix is a stated cost driver and outsourced QA costs USD 15-50 per tester hour (adjacent-usecases.md §1, §6)"
+
+- id: qa-director-2
+  title: "Soft-lock detector: screen static or looping for 20+ s while touches keep arriving and nothing responds, uploaded with the last 60 s and the touch trace, posted as an hourly count per screen"
+  level: L4
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: input-timing-and-hesitation, analysis-type: anomaly-alert, lifecycle-moment: live-event-or-update, delivery-form: alert-or-slack, capture-trigger-and-sampling: always-on-ring-buffer, companion-data: touch-and-controller-input, value-lever-b2b: cut-time-to-insight}
+  object: "methods-churn-funnel.md §6 Sentry 'onErrorSampleRate ... keeping about the last minute before the error'; methods-churn-funnel.md §2 UXCam 'unresponsive gestures'"
+  situation: "Player taps 'Claim' on the event reward popup after a network reconnect; spinner never resolves; 14 taps in 30 s, then app kill; no exception thrown"
+  consequence: "Soft-locks never reach crash tooling; they show up only as an unexplained funnel drop and as support tickets without repro"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "'onErrorSampleRate (recommended 1.0) buffers and uploads only if an error occurs, keeping about the last minute before the error' (methods-churn-funnel.md §6)"
+  proposed: "Trigger rule: perceptual-hash change < 2% for 20 s AND 5+ taps, OR loading/spinner screen > 45 s, OR a 2-4 frame loop repeated 10+ times"
+  shallow: false
+  mechanism: "Perceptual hash over a 20 s window of frames joined to the touch stream; matched cases upload the 60 s buffer; a screen classifier names the stuck screen; Slack channel gets count per hour per screen per build"
+  example: "Thursday event: '#qa-live: 212 soft-locks/hour on Event Reward popup, build 4.13, 94% after network reconnect' -> server config hotfix the same afternoon"
+  cost: M
+  depends_on: "ring-buffer SDK with touch overlay (shared with qa-director-1)"
+  buyer: "QA director or live-ops QA lead, mobile F2P studio"
+  input: "SDK ring buffer + touch events + network state changes"
+  why_existing_tools_cannot: "Sentry-style replay uploads on errors and a soft-lock throws none (methods-churn-funnel.md §6); UXCam unresponsive-gesture logic reads native UI trees, and game canvases show as a black box or screenshots (market.md §2)"
+  willingness_to_pay: "4 - app teams already pay UXCam about USD 21k/year median for replay (market.md §2); studios ask players to self-record bugs today (adjacent-usecases.md §9)"
+
+- id: qa-director-3
+  title: "Weekly build-to-build UI diff: the same scripted path recorded on build N and N-1 on 12 farm devices, screens aligned by state, and only screens with moved, clipped, overlapping or missing widgets returned"
+  level: L3
+  cell: {buyer-role: qa, video-source: automated-bot-or-agent-playthrough, signal-extracted: ui-state-and-screen-flow, analysis-type: build-to-build-regression-diff, lifecycle-moment: new-version-release, delivery-form: in-tool-annotation, capture-trigger-and-sampling: scheduled-bot-playthrough, pricing-model: per-build-or-release}
+  object: "market.md §3 GameDriver 'scripted, object-level automation. No video and no player data'; methods-churn-funnel.md §4 VideoGameQA-Bench 'visual unit/regression tests'"
+  situation: "Build 4.14 moves the Shop button 40 px; on 20:9 phones it overlaps the energy counter; the object-level test still passes because the button is tappable"
+  consequence: "Automation reports green while players see overlapped HUD; the regression ships to 100% of users"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "'mAP 91.9%' for clickable mobile-game element detection on 298 UI screens from 6 games (methods-churn-funnel.md §4)"
+  proposed: "Diff report lists changed screens only, each with side-by-side frames and widget boxes; changes named in the changelog are auto-marked 'intended'"
+  shallow: false
+  mechanism: "Classify each frame of farm recordings to a screen ID, pair screens across builds, run a widget detector on both, diff boxes, text and overlaps, and annotate the pairs inside the review tool"
+  example: "Build 4.14 report: 'Shop screen: Shop button overlaps energy counter on Pixel 7 and Redmi Note 12; 3 other changed screens match changelog'"
+  cost: M
+  depends_on: "scripted or agent playthroughs already running on a device farm (GameDriver, AltTester, nunu.ai); per-game screen classifier"
+  buyer: "QA director"
+  input: "device-farm recordings of build N and N-1 runs + build metadata + changelog text"
+  why_existing_tools_cannot: "GameDriver/AltTester assert objects, not pixels (market.md §3); device clouds record video per run but nobody diffs it across builds (adjacent-usecases.md §6)"
+  willingness_to_pay: "3 - GameDriver from USD 150/month and per-device-hour farm billing set a low anchor (market.md §3, adjacent-usecases.md §6)"
+
+- id: qa-director-4
+  title: "Tester-ticket enrichment: from a tester's free-text Jira bug and their 2-hour rig recording, attach the exact timestamp, a 10 s clip and the build/device stamp"
+  level: L3
+  cell: {buyer-role: qa, video-source: internal-qa-builds, signal-extracted: visual-errors-and-glitches, analysis-type: bug-reproduction, lifecycle-moment: pre-launch-qa, delivery-form: issue-tracker-ticket, effort: XS-repackage-existing-user-test-product, value-lever-b2b: replace-labour-hours}
+  object: "adjacent-usecases.md §1 'text-to-frame retrieval from bug videos hit Success@1 0.89 on 247 industrial QA videos'"
+  situation: "Tester files 'hand clips through tavern door' at end of a 2 h session; developer asks 'when, which device?' in Slack and waits half a day"
+  consequence: "Each ticket costs 10-30 minutes of tester and developer back-and-forth; multiplied by 100+ tickets per weekly cycle"
+  p_typical: 0.22
+  grounded: quote
+  evidence: "'text-to-frame retrieval from bug videos hit Success@1 0.89 on 247 industrial QA videos; authors say it supports testers, does not replace them' (adjacent-usecases.md §1)"
+  proposed: "Jira webhook: on ticket create, query that tester's recording of the day, attach top-1 clip with confidence, offer top-3 if below 0.7"
+  shallow: false
+  mechanism: "Existing ingestion indexes rig recordings (keyframes + transcript); ticket text retrieves top-3 frames; the clip and build/device metadata are written back to the ticket"
+  example: "'character hand clips through door in tavern' -> clip 01:12:44-01:12:54, Galaxy S21, build 4.14-rc2, attached 40 s after filing"
+  cost: S
+  depends_on: "the existing User Test ingestion and transcription pipeline; Jira integration"
+  buyer: "QA lead or QA director, any studio with recorded tester rigs"
+  input: "tester rig screen recording + Jira ticket text + build ID"
+  why_existing_tools_cannot: "Razer captures only the 20 s before a hotkey press by the tester (market.md §3); Keywords' platform targets metadata, and its QA revenue is labour (market.md §3)"
+  willingness_to_pay: "3 - saves minutes per ticket against USD 15-50 per tester hour (adjacent-usecases.md §1); low ceiling, easy entry"
+
+- id: qa-director-5
+  title: "Repro-script synthesiser: a player's last 60 s of touches + reconstructed screen states turned into an adb/AltTester script, replayed 10x on the same device model in a farm, ticket stamped with repro rate"
+  level: L4
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: automated-test-generation, lifecycle-moment: new-version-release, delivery-form: issue-tracker-ticket, companion-data: touch-and-controller-input, automation-level: auto-created-ticket-or-asset}
+  object: "adjacent-usecases.md §1 Razer reports 'carry repro steps and attached video'; market.md §3 GameDriver 'scripted, object-level automation'"
+  situation: "Soft-lock cluster from qa-director-2 has 212 clips but nobody in QA has reproduced it on a lab device"
+  consequence: "Developers will not start a fix without a repro; clusters stay open for a week; reproduction cost is the QA director's largest unbilled time sink"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "'Reports include suggested repro steps and attached video' - from tester sessions only (market.md §3)"
+  proposed: "Ticket field 'auto-repro: 7/10 on Galaxy A13, script attached' set before a human looks"
+  shallow: false
+  mechanism: "Map each touch in the buffer to the widget under it (screen classifier + widget detector), emit a step script with waits taken from observed timing, run it 10x on matching farm devices, record pass/fail"
+  example: "Script 'open event -> claim -> airplane mode on/off -> claim' reproduces 7/10 on Galaxy A13; developer fixes the retry logic the same day"
+  cost: L
+  depends_on: "qa-director-2 ring buffer with touch input; device farm access; save-state or account seeding to reach the screen"
+  buyer: "QA director"
+  input: "consented ring buffer + touch trace + device model + build ID"
+  why_existing_tools_cannot: "Razer and NodeMori write repro steps only for sessions their own agents or testers drove (adjacent-usecases.md §1); no tool turns a live-player clip into an executable test, and GameDriver needs hand-written scripts (market.md §3)"
+  willingness_to_pay: "4 - reproduction is the named pain; nunu.ai's customer reports QA cost down 30-50% from automation (market.md §3)"
+
+- id: qa-director-6
+  title: "Lab-coverage gap report: share of live sessions and of visual glitches per device model/GPU against the devices in the QA lab, naming the 10 models to buy next quarter"
+  level: L3
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: cohort-comparison, lifecycle-moment: new-version-release, delivery-form: per-cohort-report, value-lever-b2b: increase-coverage-from-sample-to-all, buyer-org-type: mid-size-studio}
+  object: "adjacent-usecases.md §1 'a dedicated in-house test lab estimated at USD 40k to 100k'; adjacent-usecases.md §6 device clouds '3000+ devices'"
+  situation: "Lab holds 22 phones; live footage shows 38% of glitch clips come from 6 Mali GPU models the lab does not own"
+  consequence: "Lab spend goes to flagships while defects concentrate on budget GPUs; device purchases are guesses"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "'compatibility testing of a major mobile title can need 500 to 2,000+ device-OS combinations' (adjacent-usecases.md §6)"
+  proposed: "Quarterly table: device model, % sessions, % glitch clips, in lab Y/N, rank to buy"
+  shallow: false
+  mechanism: "Aggregate qa-director-1 clusters and session counts by device model and GPU, join to the lab inventory list, rank uncovered models by glitch share x session share"
+  example: "Q1 report: buy Galaxy A05s, Redmi 13C, Tecno Spark 20 (together 11% of sessions, 24% of glitch clips); retire 3 flagships"
+  cost: S
+  depends_on: "qa-director-1 running for 4+ weeks; lab inventory list"
+  buyer: "QA director, budget owner for the device lab"
+  input: "glitch clusters + device metadata from consented SDK + lab inventory spreadsheet"
+  why_existing_tools_cannot: "device clouds sell device-hours but say nothing about which models your players' visual defects occur on; GameBench measures counters, not visuals (adjacent-usecases.md §6)"
+  willingness_to_pay: "3 - lab budget USD 40k-100k (adjacent-usecases.md §1); a report, bundled rather than sold alone"
+
+- id: qa-director-7
+  title: "Cutout and aspect-ratio sweep: one bot pass rendered on 25 profiles (punch-hole, waterdrop notch, 21:9, foldable inner 6:5, gesture bar) with HUD widgets that intersect the cutout or gesture zone flagged per screen"
+  level: L4
+  cell: {buyer-role: qa, video-source: platform-or-emulator-capture, signal-extracted: ui-state-and-screen-flow, analysis-type: anomaly-alert, lifecycle-moment: pre-launch-qa, delivery-form: in-tool-annotation, game-platform-and-genre: mobile-casual-hypercasual, constraint-to-overcome: per-game-ui-generalisation}
+  object: "methods-churn-funnel.md §4 NetEase WDTEST 'widget-detection testing from screenshots only'; adjacent-usecases.md §6 device matrix"
+  situation: "New event banner sits top-left; on punch-hole phones the camera hole covers its close 'X'"
+  consequence: "Players on those phones cannot dismiss the banner; reviews say 'stuck'; no crash, no log"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "WDTEST gives 'about 3x the unique-UI coverage of Monkey' from screenshots (methods-churn-funnel.md §4)"
+  proposed: "Per-screen overlay image with cutout mask and red boxes on intersecting interactive widgets; pass/fail per profile"
+  shallow: false
+  mechanism: "Emulator or farm renders the bot path at each profile; widget detector boxes interactive elements; geometry check against the profile's cutout and gesture-bar mask"
+  example: "Build 2.3: 'Event banner close button 62% inside punch-hole on 7 of 25 profiles' -> UI moves to safe area before release"
+  cost: S
+  depends_on: "bot path or scripted run; emulator/farm with configurable display cutouts; widget detector"
+  buyer: "QA director, casual mobile studio"
+  input: "emulator or device-farm video per display profile + profile masks"
+  why_existing_tools_cannot: "screenshot widget detectors exist for coverage testing (methods-churn-funnel.md §4) but no vendor packages a cutout/safe-area check over recorded runs (adjacent-usecases.md §6)"
+  willingness_to_pay: "3 - recurring per-build check; anchor is per-device-hour farm billing (adjacent-usecases.md §6)"
+
+- id: qa-director-8
+  title: "REFUSE: video-only FPS and frame-pacing measurement sold as a replacement for GameBench/PerfDog counters"
+  level: L3
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: performance-fps-and-load, analysis-type: anomaly-alert, delivery-form: dashboard, companion-data: none-video-only, constraint-to-overcome: accuracy-and-trust}
+  object: "adjacent-usecases.md §6 'reliable fps/load measurement uses in-game profiling or GameBench rather than video alone'"
+  situation: "Vendor demo shows '47 fps average' derived from a 30 fps, 2 Mbps capture"
+  consequence: "QA director declines: capture rate caps what can be measured, a 33 ms hitch is invisible at 2 fps, and counters are already installed and exact"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "'reliable fps/load measurement uses in-game profiling or GameBench rather than video alone' (adjacent-usecases.md §6)"
+  proposed: "Do not build; read fps from device counters and use video only to show what was on screen during a counter-detected drop (see qa-director-21)"
+  shallow: false
+  mechanism: "Duplicate-frame counting on captured video to infer rendered frame rate"
+  example: "Director compares to PerfDog on the same Redmi Note 12 session: video says 47, PerfDog says 38 with 11 hitches > 100 ms; pilot ends"
+  cost: S
+  depends_on: "nothing"
+  buyer: "QA director"
+  input: "captured video only"
+  why_existing_tools_cannot: "existing tools already do this better: GameBench SDK and PerfDog read counters directly (adjacent-usecases.md §6, market.md §3)"
+  willingness_to_pay: "1 - PerfDog about USD 1,200 for 50 test hours already covers it (market.md §3)"
+
+- id: qa-director-9
+  title: "REFUSE: AI glitch detector as an unattended release gate that blocks the weekly Play Store rollout on its own verdict"
+  level: L3
+  cell: {buyer-role: qa, video-source: internal-qa-builds, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, delivery-form: alert-or-slack, value-lever-b2b: enable-automated-action, constraint-to-overcome: accuracy-and-trust}
+  object: "adjacent-usecases.md §1 'precision 0.50 / accuracy 0.72 on 100 industrial videos'; market.md §3 '16% fully trust AI QA outcomes, 10% not at all'"
+  situation: "Vendor proposes the detector as a CI step that fails the build when any frame scores above threshold"
+  consequence: "At precision 0.50 half of blocked releases are false alarms; at weekly cadence that is a missed release every few weeks; director buys only triage with human confirmation"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "'best off-the-shelf VLM zero-shot baseline reached precision 0.50 / accuracy 0.72 on 100 industrial videos' (adjacent-usecases.md §1)"
+  proposed: "Ship as 'recommend hold' with clip evidence and a one-click override; never as a hard gate"
+  shallow: false
+  mechanism: "CI step runs detector on release-candidate bot footage and returns non-zero exit on any flag"
+  example: "Release 4.15 blocked Friday 17:00 by a flag on the dev FPS overlay; rollout slips to Monday; director disables the step"
+  cost: S
+  depends_on: "qa-director-10 triage pipeline"
+  buyer: "QA director"
+  input: "release-candidate bot or tester footage"
+  why_existing_tools_cannot: "no tool's accuracy supports it: VLM precision 0.50 and many flags were on-screen log messages (adjacent-usecases.md §1); Naavik says 'proper case studies are still hard to find' (market.md §3)"
+  willingness_to_pay: "1 - only 16% of devs fully trust AI QA outcomes (market.md §3)"
+
+- id: qa-director-10
+  title: "Overnight bot-run triage billed per confirmed bug: 40 h of agent-playthrough footage cut to a ranked list of 30-80 candidate glitch clips each morning, deduped against open Jira bugs"
+  level: L4
+  cell: {buyer-role: qa, video-source: automated-bot-or-agent-playthrough, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, lifecycle-moment: pre-launch-qa, delivery-form: issue-tracker-ticket, pricing-model: outcome-based-per-bug-or-uplift, capture-trigger-and-sampling: scheduled-bot-playthrough}
+  object: "adjacent-usecases.md §1 'cutting millions of raw frames to a few thousand candidates'; market.md §3 Naavik 'proper case studies are still hard to find'"
+  situation: "Nightly agent runs produce 40 h of footage across 20 devices; nobody watches it; bots log only what their own checks assert"
+  consequence: "Visual bugs the bot walked past go unseen; footage is stored and deleted unwatched"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "'testers watch hours of footage and hunt frames; research frames AI as triage, cutting millions of raw frames to a few thousand candidates' (adjacent-usecases.md §1)"
+  proposed: "Morning queue at 09:00: max 80 clips, each with confidence, device, build, and 'duplicate of QA-xxxx' if matched; vendor bills only for clips a tester confirms as new bugs"
+  shallow: false
+  mechanism: "Keyframe extraction (median 1.9% of frames keeps the bug moment in 98.79% of cases) + VLM glitch scoring + embedding match against open-ticket clips; ranked queue in the review tool; confirm/reject recorded for billing"
+  example: "Tuesday: 64 candidates, 9 confirmed new (billed), 11 duplicates, 44 rejected; tester spends 50 minutes instead of zero coverage"
+  cost: M
+  depends_on: "bot or agent playthrough infrastructure (modl.ai, nunu.ai, in-house); Jira integration"
+  buyer: "QA director, mid-size or AAA studio running nightly bots"
+  input: "nightly bot/agent recordings + open Jira tickets with clips + build ID"
+  why_existing_tools_cannot: "modl.ai and nunu.ai agents report what their own control logic catches, not a cross-run visual triage of the footage (market.md §3); keyframe recall 98.79% exists only in research (market.md §3 arXiv 2508.04895)"
+  willingness_to_pay: "4 - per-confirmed-bug pricing removes the trust objection (16% full trust, market.md §3); anchor USD 15-50 per tester hour (adjacent-usecases.md §1)"
+
+- id: qa-director-11
+  title: "Per-game 'intended visuals' memory: each tester dismissal of a flagged clip (dev FPS overlay, stylised glitch VFX, scripted black fade) becomes a suppression rule, and the weekly false-positive rate is reported"
+  level: L4
+  cell: {buyer-role: qa, video-source: internal-qa-builds, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, delivery-form: in-tool-annotation, constraint-to-overcome: accuracy-and-trust, automation-level: recommendation}
+  object: "adjacent-usecases.md §1 'many flagged anomalies were on-screen log messages'"
+  situation: "Week 1 of a pilot: 62% of flags are the debug overlay text and the game's 'corrupted zone' shader"
+  consequence: "Testers stop opening the queue after 2 weeks of noise; pilot dies on trust, not on recall"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "'many flagged anomalies were on-screen log messages' (adjacent-usecases.md §1)"
+  proposed: "'Mark intended' button creates a region + appearance rule scoped to the game; weekly chart of false-positive rate per rule"
+  shallow: false
+  mechanism: "Dismissals store frame embedding, screen region and screen ID; future flags within distance threshold are auto-muted and listed in a 'muted' tab for audit"
+  example: "Week 3 false-positive rate down from 62% to 14%; QA director forwards the chart to the CTO as the reason to extend the pilot"
+  cost: S
+  depends_on: "qa-director-10 triage queue"
+  buyer: "QA director"
+  input: "tester confirm/reject actions on flagged clips + the clips"
+  why_existing_tools_cannot: "zero-shot VLM baselines flag log text as anomalies (adjacent-usecases.md §1) and no vendor publishes per-studio false-positive tracking; Naavik notes missing case studies (market.md §3)"
+  willingness_to_pay: "3 - not sold alone; the feature that decides whether qa-director-10 renews"
+
+- id: qa-director-12
+  title: "Staged-rollout visual canary: glitch and soft-lock rate per 10k sessions on the 1% and 5% Play rollout cohorts against the previous build, per GPU family, with a 'halt rollout' Slack recommendation at 2x baseline"
+  level: L4
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: build-to-build-regression-diff, lifecycle-moment: new-version-release, delivery-form: alert-or-slack, automation-level: recommendation, capture-trigger-and-sampling: targeted-cohort, game-platform-and-genre: mobile-midcore-f2p}
+  object: "market.md §9 'No vendor found that applies computer vision to production player gameplay video from consumer devices'"
+  situation: "Build 4.16 at 5% rollout: magenta-texture rate on Adreno 610 is 4.1 per 10k sessions vs 0.2 on 4.15"
+  consequence: "Without a visual signal the rollout proceeds to 100% because crash-free rate is unchanged"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "'No vendor found that applies computer vision to production player gameplay video from consumer devices' (market.md §9)"
+  proposed: "Slack: 'HOLD suggested: build 4.16, Adreno 610, glitch rate 20x baseline, 14 clips' with one-click link to the cluster"
+  shallow: false
+  mechanism: "qa-director-1 and qa-director-2 detections tagged with build and rollout cohort; rate per 10k sessions compared to the previous build per GPU family with a Poisson test; human decides hold"
+  example: "Director halts 4.16 at 5%, ships 4.16.1 two days later; the 95% who never got 4.16 never see the bug"
+  cost: S
+  depends_on: "qa-director-1, qa-director-2; consented sampling covering the rollout cohort"
+  buyer: "QA director with release manager"
+  input: "detections + build ID + rollout cohort + session counts"
+  why_existing_tools_cannot: "crash and vitals tools gate rollouts on crashes only and no vendor reads production gameplay pixels (market.md §9; methods-churn-funnel.md §6)"
+  willingness_to_pay: "4 - the most direct use of qa-director-1 for a weekly-shipping studio; QA under-investment admitted by 77% of devs (market.md §3)"
+
+- id: qa-director-13
+  title: "Player-attached bug videos auto-matched to Jira: build, device, screen and bug cluster read from the clip, duplicate count and new device models appended to the existing ticket"
+  level: L3
+  cell: {buyer-role: qa, video-source: support-ticket-attachment, signal-extracted: on-screen-text-ocr, analysis-type: bug-reproduction, lifecycle-moment: live-event-or-update, delivery-form: issue-tracker-ticket, companion-data: support-ticket-text, value-lever-b2b: reduce-cost-per-incident}
+  object: "adjacent-usecases.md §9 Resolution Games and Arrowhead support pages request recordings ('especially videos')"
+  situation: "After an update, support receives 140 player videos in 48 h; agents forward 30 to QA by hand; 110 are never watched"
+  consequence: "Duplicates inflate QA intake; device spread of a bug is unknown; real new bugs hide among duplicates"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "'players self-record and attach; agents watch' (adjacent-usecases.md §9)"
+  proposed: "Ticket comment: '+17 player videos, new devices: Moto G54, Galaxy A15; earliest 2026-10-24 09:12'"
+  shallow: false
+  mechanism: "OCR reads build string and HUD text, screen classifier names the screen, VLM describes the defect, embedding match assigns to an open cluster or opens a new ticket for QA review"
+  example: "Arrowhead-style support desk: 140 clips -> 6 clusters, 1 new; QA reproduces the new one the same day"
+  cost: S
+  depends_on: "support desk integration (Zendesk/Helpshift attachments); Jira integration"
+  buyer: "QA director, with head of player support"
+  input: "player-uploaded video + ticket text + any device info in the ticket"
+  why_existing_tools_cannot: "Helpshift captures device and version but no video or replay (adjacent-usecases.md §9); no vendor of clip analysis for game tickets found (adjacent-usecases.md §9)"
+  willingness_to_pay: "3 - Helpshift per-issue pricing shows support tooling budgets exist (adjacent-usecases.md §9); QA would co-fund"
+
+- id: qa-director-14
+  title: "Post-patch UGC glitch sweep: TikTok, YouTube Shorts and Twitch clips tagged with the game in the 72 h after release scanned for visible bugs and exploits, grouped and linked to tickets with view counts"
+  level: L3
+  cell: {buyer-role: qa, video-source: public-streams-and-ugc, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, delivery-form: weekly-digest-email, constraint-to-overcome: joining-video-to-events, pricing-model: per-month-seat}
+  object: "competitor-and-ua.md §5 'Nothing found reads clip content (a bug visible, a competitor feature praised...)'"
+  situation: "A wall-clip exploit in the new map gets a 1.2M-view TikTok on day 2; QA learns of it from the community manager on day 4"
+  consequence: "Exploit spreads before a fix; no build or device ID in public clips so the match to a ticket is manual"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "'Monitoring today is by viewership counts, tracked links and keys, not by what is shown in the clip. Nothing found reads clip content (a bug visible...)' (competitor-and-ua.md §5)"
+  proposed: "Daily digest for 72 h after each patch: clip link, views, defect description, matching ticket if any"
+  shallow: false
+  mechanism: "Pull clips by game tag and title, VLM glitch/exploit scoring, cluster by screen and defect, rank by views"
+  example: "Day 1 digest: 'fall-through-floor at Harbor spawn, 9 clips, 1.2M views, no ticket' -> ticket opened, fixed in 4.16.1"
+  cost: M
+  depends_on: "platform API or scraping access to TikTok/YouTube/Twitch; per-game screen classifier"
+  buyer: "QA director of a PC/console or competitive title (weak on mobile)"
+  input: "public UGC and stream clips + patch dates"
+  why_existing_tools_cannot: "Hatchet and Streams Charts measure viewership metadata, not gameplay pixels (market.md §5); no tool reads clip content (competitor-and-ua.md §5)"
+  willingness_to_pay: "2 - stream analytics budgets (Hatchet USD 249-1,249/month) sit with marketing, not QA (market.md §5); mobile UGC coverage thin (competitor-and-ua.md §5)"
+
+- id: qa-director-15
+  title: "Per-language overflow sweep: one bot pass per locale (12 languages) OCRs every screen and flags truncated strings, text past its widget box, raw keys like 'STR_SHOP_TITLE' and tofu glyphs, one ticket per string ID"
+  level: L4
+  cell: {buyer-role: qa, video-source: automated-bot-or-agent-playthrough, signal-extracted: text-overflow-and-untranslated, analysis-type: anomaly-alert, lifecycle-moment: new-market-or-language-launch, delivery-form: issue-tracker-ticket, pricing-model: per-build-or-release, value-lever-b2b: replace-labour-hours}
+  object: "adjacent-usecases.md §5 Nimdzi 'wished-for features include language-aware visual anomaly detection (truncation, RTL rendering)'"
+  situation: "German and Russian builds of the battle pass screen push 'Belohnungen abholen' past the button edge; LQA catches it 2 weeks later in a manual playthrough"
+  consequence: "Manual LQA per language per build; with weekly shipping new strings go live unchecked in 11 locales"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "'clients take screenshots of every screen in the localised build and translators judge from them' (adjacent-usecases.md §5)"
+  proposed: "Ticket per string key: locale, screen clip, measured overflow in px, suggested max characters"
+  shallow: false
+  mechanism: "Bot path replayed per locale; OCR + widget detector compare text bounding box with container; dictionary check for unlocalised keys and missing-glyph boxes; string key looked up from the loc table by text match"
+  example: "Build 4.17: 23 issues in de, ru, pt-BR; 3 untranslated keys in ja; tickets filed before LQA starts"
+  cost: M
+  depends_on: "bot path that can switch locale; loc string table export"
+  buyer: "QA director (shared with localisation lead)"
+  input: "bot playthrough video per locale + localisation string table"
+  why_existing_tools_cannot: "Gridly and Alconost work from screenshots humans take; Nimdzi says generic screenshot tools fall short and no vendor offers recording-based overflow detection (adjacent-usecases.md §5)"
+  willingness_to_pay: "3 - no prices found (adjacent-usecases.md §5); replaces part of a manual LQA pass per language per build"
+
+- id: qa-director-16
+  title: "Outsourced-QA hours audit: tester rig footage scored for screens visited, idle minutes and test-case steps visibly executed, reconciled against the vendor invoice and TestRail 'pass' marks"
+  level: L3
+  cell: {buyer-role: qa, video-source: outsourced-tester-rigs, signal-extracted: ui-state-and-screen-flow, analysis-type: compliance-audit, lifecycle-moment: pre-launch-qa, delivery-form: per-cohort-report, buyer-org-type: mid-size-studio, value-lever-b2b: reduce-cost-per-incident}
+  object: "adjacent-usecases.md §1 'outsourced game QA USD 15 to 50 per tester hour; a small mobile-game test cycle USD 1,000 to 5,000'"
+  situation: "Vendor bills 320 tester hours for a regression cycle; 41 test cases are marked pass"
+  consequence: "Director has no way to know whether the store-purchase test was run on the Android 10 device or ticked; finds out when the bug ships"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "'Its QA revenue is labour-based outsourcing' (market.md §3, Keywords)"
+  proposed: "Per-cycle report: billed hours vs active hours, test cases marked pass whose target screen never appears on the rig footage"
+  shallow: false
+  mechanism: "Screen classifier timelines each rig recording; idle = no screen change and no input for 3+ minutes; test case maps to expected screen sequence; mismatch list"
+  example: "Cycle 31: 18% of billed hours idle, 4 'pass' cases with no matching footage; vendor re-runs them at no cost"
+  cost: M
+  depends_on: "vendor agreement to record rigs (often already done); test plan mapped to screen IDs"
+  buyer: "QA director buying outsourced QA"
+  input: "outsourced tester rig recordings + TestRail results + invoice hours"
+  why_existing_tools_cannot: "outsourced QA is sold as labour (market.md §3); no tool audits tester footage against the test plan (adjacent-usecases.md §1)"
+  willingness_to_pay: "3 - spend at USD 15-50 per hour gives leverage (adjacent-usecases.md §1); the outsourced vendor will resist recording access"
+
+- id: qa-director-17
+  title: "Player-path test generator: the 20 most frequent screen sequences reconstructed from live consented footage each week, emitted as bot test cases so regression covers what players do"
+  level: L3
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: automated-test-generation, lifecycle-moment: live-event-or-update, delivery-form: api-or-sdk, automation-level: auto-created-ticket-or-asset, constraint-to-overcome: sampling-bias}
+  object: "adjacent-usecases.md §1 Razer 'generates test cases from prompts or design docs'; methods-churn-funnel.md §1 funnels limited to instrumented steps"
+  situation: "Players reach the event shop via the inbox notification, a path the test plan never lists; it breaks in 4.18"
+  consequence: "Test plans follow the design doc; real player paths go untested until they break"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "'a step that was never instrumented ... does not exist in the data' (methods-churn-funnel.md §1)"
+  proposed: "Weekly PR to the test repo with new path scripts, each annotated with % of sessions taking that path"
+  shallow: false
+  mechanism: "Screen classifier converts sampled sessions into screen sequences; frequent-sequence mining; each new top-20 path not covered by an existing test becomes a GameDriver/AltTester script stub"
+  example: "Week 42: 'Inbox -> Event Shop -> Buy pack' (8% of sessions) added as test TC-981; it fails on 4.18 before release"
+  cost: M
+  depends_on: "consented sampling across new and veteran players; screen classifier; scripted test framework"
+  buyer: "QA director"
+  input: "sampled consented sessions + touch input + existing test list"
+  why_existing_tools_cannot: "Razer builds tests from prompts or design docs, not player behaviour (adjacent-usecases.md §1); event funnels hold only instrumented steps (methods-churn-funnel.md §1)"
+  willingness_to_pay: "3 - GameDriver starter USD 150/month shows test-authoring budgets are small (market.md §3)"
+
+- id: qa-director-18
+  title: "Customer-cloud deployment: glitch detector and clip index run inside the studio's own AWS/GCP account on pre-release builds, zero vendor access to footage, per-tester leak watermark"
+  level: L3
+  cell: {buyer-role: qa, video-source: internal-qa-builds, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, lifecycle-moment: pre-launch-qa, processing-location: customer-cloud-byoc, constraint-to-overcome: studio-ip-and-prerelease-leak, pricing-model: annual-enterprise-licence}
+  object: "market.md §1 Antidote 'Anti-leak SDK watermarks a player ID on screen'; market.md §3 Razer 'GA on AWS Marketplace'"
+  situation: "Security review vetoes uploading unannounced-season footage to a vendor cloud"
+  consequence: "Without BYOC the QA tooling is limited to shipped builds, which removes the pre-launch value"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "'Anti-leak SDK watermarks a player ID on screen' (market.md §1)"
+  proposed: "Terraform module + container images; licence key only phones home; watermark per tester ID on rig capture"
+  shallow: false
+  mechanism: "Same pipeline packaged as containers deployed in the customer's account; models pulled once; footage and index never leave the account; vendor support via screen-share only"
+  example: "AAA studio's CISO signs off because footage stays in their S3 bucket; QA runs triage on the unannounced season 6 map 8 weeks before reveal"
+  cost: M
+  depends_on: "qa-director-10 pipeline containerised; SOC 2 report"
+  buyer: "QA director, with CISO sign-off, AAA or mid-size studio"
+  input: "internal build recordings in customer cloud storage"
+  why_existing_tools_cannot: "playtest platforms upload to their cloud (market.md §1); Razer's AWS Marketplace listing (market.md §3) is the nearest pattern, and no vendor documents customer-cloud deployment of footage analysis"
+  willingness_to_pay: "3 - entry requirement that unlocks pre-launch use rather than a priced add-on (market.md §1, §3)"
+
+- id: qa-director-19
+  title: "REFUSE: always-on full-session 720p capture SDK in the production APK for QA purposes"
+  level: L3
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, capture-trigger-and-sampling: random-sample, processing-location: vendor-cloud, constraint-to-overcome: device-performance, pricing-model: per-mau}
+  object: "methods-churn-funnel.md §7 'a 30-minute first session at 2 Mbps is about 450 MB of upload from the player's device'"
+  situation: "Vendor pitch: record every session at 720p, analyse everything in the cloud"
+  consequence: "Director refuses: upload size, battery and frame-time cost, Apple-style consent indicator, review backlash; accepts only a 30 s ring buffer on 1-5% opted-in users uploaded on trigger"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "'a studio at 100k new installs/day recording only the first 10 minutes at 1 Mbps would ingest about 7.5 TB/day' (methods-churn-funnel.md §7)"
+  proposed: "Do not build full capture; use trigger-based buffers (qa-director-1, qa-director-2)"
+  shallow: false
+  mechanism: "Continuous encoder in the game process uploading over Wi-Fi"
+  example: "CTO measures 2.1 ms/frame encoder cost on a Galaxy A13 during the pilot and pulls the SDK"
+  cost: M
+  depends_on: "nothing"
+  buyer: "QA director (veto shared with CTO)"
+  input: "full-session 720p video"
+  why_existing_tools_cannot: "not a gap: Sentry and UXCam already avoid full capture with error-triggered buffers and low-fps screenshots (methods-churn-funnel.md §6)"
+  willingness_to_pay: "1 - Apple requires consent and a visible recording indicator (methods-churn-funnel.md §7)"
+
+- id: qa-director-20
+  title: "REFUSE: autonomous AI agent playthrough sold as a replacement for the manual weekly regression pass and its outsourced testers"
+  level: L3
+  cell: {buyer-role: qa, video-source: automated-bot-or-agent-playthrough, signal-extracted: player-skill-and-mechanics, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, value-lever-b2b: replace-labour-hours, constraint-to-overcome: accuracy-and-trust, go-to-market-channel: direct-sales}
+  object: "adjacent-usecases.md §10 'AI playtesting complements humans, cannot replace them'; methods-churn-funnel.md §4 'VLMs may still struggle with unpredictable player behavior'"
+  situation: "Vendor pitch: cancel the 6-tester outsourced contract and run agents only"
+  consequence: "Director refuses; agents miss feel, timing and unexpected-player bugs; would pilot agents on 30% of scripted cases only"
+  p_typical: 0.11
+  grounded: quote
+  evidence: "'board-game study concludes AI playtesting complements humans, cannot replace them' (adjacent-usecases.md §10)"
+  proposed: "Sell as coverage on top of testers (qa-director-10), not replacement"
+  shallow: false
+  mechanism: "Vision-based agent plays full regression and replaces the human pass"
+  example: "Pilot week: agent completes 70% of the regression path but misses a mistimed parry window that 3 of 6 humans flagged"
+  cost: L
+  depends_on: "nothing"
+  buyer: "QA director"
+  input: "agent playthrough video and logs"
+  why_existing_tools_cannot: "nunu.ai claims 30-50% cost reduction, not replacement (market.md §3); Naavik: no AI-QA startup at Series B and few case studies (market.md §3)"
+  willingness_to_pay: "2 - would fund augmentation at the 30-50% saving nunu.ai cites, not replacement (market.md §3)"
+
+- id: qa-director-21
+  title: "First-launch hitch map: frozen frames of 200 ms+ in the first 3 minutes of session 1, clustered by GPU family and tutorial step, separating shader-compile stutter that disappears on second launch"
+  level: L4
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: performance-fps-and-load, analysis-type: anomaly-alert, lifecycle-moment: ftue-first-session, delivery-form: per-cohort-report, companion-data: device-perf-counters, capture-trigger-and-sampling: event-triggered-clip}
+  object: "market.md §3 HeadSpin CEO 'over 30 per cent of people left their game due to a bad experience'; methods-churn-funnel.md §1 Tilting Point 'highest churn rate occurs within the first 30 minutes'"
+  situation: "Tutorial step 3 (first combat) freezes 600-900 ms on Mali-G57 on first launch only; lab devices have warm shader caches"
+  consequence: "New players see a stall at the first fight; D1 drops on that GPU; lab never reproduces because devices are reused"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "'highest churn rate occurs within the first 30 minutes of play' (methods-churn-funnel.md §1)"
+  proposed: "Frame-time counter triggers a clip when frame time > 200 ms in session 1; report groups by GPU and tutorial screen"
+  shallow: false
+  mechanism: "Counter-triggered 10 s clip; screen classifier names the tutorial step; compare same-device session 1 vs session 2 rates to label shader-cache stalls"
+  example: "Report: 'Mali-G57: 71% of session-1 players freeze at first combat, 3% in session 2' -> team ships pre-warmed shader collection"
+  cost: M
+  depends_on: "frame-time counter in SDK; consented sampling of new installs; screen classifier"
+  buyer: "QA director, with engine lead"
+  input: "event-triggered clips + frame-time counters + device GPU + session index"
+  why_existing_tools_cannot: "GameBench/PerfDog measure fps on lab devices the team picks (adjacent-usecases.md §6); they do not show which screen the stall hit for real first-session players"
+  willingness_to_pay: "3 - studios and OEMs already pay GameBench enterprise pricing for performance (adjacent-usecases.md §6)"
+
+- id: qa-director-22
+  title: "Ad-integration breakage watch: rewarded and interstitial ad frames checked for black creative, no close button after 30 s, game audio under the ad, and missing reward popup after completion"
+  level: L4
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: ad-render-and-viewability, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, delivery-form: alert-or-slack, companion-data: purchase-and-ad-revenue-events, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "market.md §9 'No vendor found that applies computer vision to production player gameplay video ... and links it to retention, churn or monetisation telemetry'"
+  situation: "Mediation SDK update in build 4.19; on Android 14 rewarded ads finish but the reward popup never shows in 6% of views"
+  consequence: "Players watch ads and get nothing; 1-star reviews mention 'scam'; ad revenue and trust drop; no crash recorded"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "'No vendor found that applies computer vision to production player gameplay video from consumer devices and links it to retention, churn or monetisation telemetry' (market.md §9)"
+  proposed: "Rule set per ad event: ad_started -> non-black frames within 3 s; close control visible by 30 s; ad_completed -> reward popup within 2 s"
+  shallow: false
+  mechanism: "Ad SDK callbacks trigger a 45 s clip; frame checks for black frames, close-control detection, reward popup detection; audio channel checked for game music under ad"
+  example: "Alert: 'build 4.19, Android 14, rewarded: reward popup missing in 6.2% of completions, 31 clips' -> mediation adapter rolled back"
+  cost: M
+  depends_on: "ring-buffer SDK; ad SDK event hooks"
+  buyer: "QA director of an ad-monetised casual studio"
+  input: "event-triggered clip around ad events + ad SDK callbacks + reward grant events"
+  why_existing_tools_cannot: "no vendor reads production player pixels for monetisation flows (market.md §9); crash tools see no failure because nothing crashes (methods-churn-funnel.md §6)"
+  willingness_to_pay: "3 - ties directly to ad revenue; no price signal in the notes (market.md §9)"
+
+- id: qa-director-23
+  title: "Interrupt-resume check: each app switch, incoming call or notification shade in the ring buffer compared before vs after resume, flagging lost progress, frozen frame, missing audio or reset to title screen"
+  level: L4
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: anomaly-alert, lifecycle-moment: d1-to-d7, delivery-form: issue-tracker-ticket, capture-trigger-and-sampling: event-triggered-clip, game-platform-and-genre: mobile-midcore-f2p}
+  object: "methods-churn-funnel.md §2 'the exact screen state at the moment of app kill (rage quit vs. interruption)'; methods-churn-funnel.md §7 'notifications overlaying the screen'"
+  situation: "Player mid-battle takes a WhatsApp call; on return the battle restarts and energy is consumed"
+  consequence: "Progress loss bugs depend on OEM background-kill policies (Xiaomi, Samsung) that labs rarely test; players churn and blame the game"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "'the exact screen state at the moment of app kill (rage quit vs. interruption)' listed as visible in video, absent in events (methods-churn-funnel.md §2)"
+  proposed: "Clip pair (5 s before background, 10 s after foreground) with screen-state comparison; ticket when the state regresses"
+  shallow: false
+  mechanism: "Lifecycle events trigger capture; screen classifier and HUD OCR compare pre/post state (level, currency, timer); mismatch clustered by OEM and OS version"
+  example: "Cluster: 'Xiaomi HyperOS 1.0: battle restart after 30 s+ background, energy -5, 1.8% of interruptions' -> state-save fix"
+  cost: M
+  depends_on: "ring-buffer SDK with app lifecycle hooks; HUD OCR per game"
+  buyer: "QA director"
+  input: "event-triggered clips around background/foreground + lifecycle events + OEM/OS"
+  why_existing_tools_cannot: "event funnels record the kill but not the screen state at it (methods-churn-funnel.md §2); device farms rarely script OEM background kills (adjacent-usecases.md §6)"
+  willingness_to_pay: "3 - part of the device-fragmentation budget (adjacent-usecases.md §6)"
+
+- id: qa-director-24
+  title: "Ask-the-archive over QA footage: 'show every time the inventory panel overlapped chat on Android 12 since build 4.08' answered across 6 months of rig and bot recordings with clips"
+  level: L3
+  cell: {buyer-role: qa, video-source: internal-qa-builds, signal-extracted: ui-state-and-screen-flow, analysis-type: ask-a-question-over-footage, lifecycle-moment: new-version-release, delivery-form: ask-question-agent-chat, effort: XS-repackage-existing-user-test-product, pricing-model: per-hour-of-video}
+  object: "market.md §3 arXiv 2508.04895 'A VLM picks the frame matching a bug report: top-1 F1 0.79'"
+  situation: "A bug reopens in 4.20; developer asks whether it was ever seen before and on which builds"
+  consequence: "Today someone scrubs old recordings by hand or nobody checks; regressions are mis-dated"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "'top-1 F1 0.79 and accuracy 0.89, weakest on Animation & VFX (0.51)' (market.md §3)"
+  proposed: "Chat answer lists builds, dates, devices and clips, earliest first"
+  shallow: false
+  mechanism: "Existing ask-question agent pointed at an index of all rig and bot recordings with build/device metadata"
+  example: "Answer: 'seen in 4.08, 4.09 on Galaxy A52 (Android 12), fixed 4.10, back in 4.20' with 5 clips; dev finds the reverted commit"
+  cost: S
+  depends_on: "existing ask-question agent; recordings retained with build metadata"
+  buyer: "QA director"
+  input: "6 months of rig/bot recordings + build and device metadata"
+  why_existing_tools_cannot: "Razer and Keywords attach clips per ticket; nothing searches across builds (market.md §3); research retrieval is per bug report only (adjacent-usecases.md §1)"
+  willingness_to_pay: "3 - quick to sell as an add-on; storage at about USD 0.04 per player-hour-month is cheap (methods-churn-funnel.md §7)"
+
+- id: qa-director-25
+  title: "REFUSE for now: automated detection of geometry clipping and animation/VFX bugs from footage"
+  level: L3
+  cell: {buyer-role: qa, video-source: internal-qa-builds, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, lifecycle-moment: pre-launch-qa, delivery-form: in-tool-annotation, constraint-to-overcome: accuracy-and-trust, game-platform-and-genre: single-player-narrative}
+  object: "adjacent-usecases.md §1 'VLMs still struggle with certain bug classes (geometry clipping)'; market.md §3 'weakest on Animation & VFX (0.51)'"
+  situation: "Vendor demo claims to find clipping and animation pops in a narrative action game"
+  consequence: "Director declines this bug class: temporal, multi-frame glitches are where VLMs fail; would revisit when a benchmark on their own footage passes 0.8 precision"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "'Temporal glitches (multi-frame) are substantially harder for VLMs than spatial ones' (methods-churn-funnel.md §4)"
+  proposed: "Restrict v1 to spatial, single-frame classes (missing texture, black frames, UI overlap)"
+  shallow: false
+  mechanism: "VLM over short clip windows scoring body-geometry intersections and animation discontinuities"
+  example: "Pilot on 10 h of cutscene footage: 3 of 21 known clipping bugs found, 40 false flags; director scopes them out"
+  cost: L
+  depends_on: "nothing"
+  buyer: "QA director, console/PC narrative studio"
+  input: "internal build footage"
+  why_existing_tools_cannot: "research says current VLMs fail this class (adjacent-usecases.md §1; methods-churn-funnel.md §4)"
+  willingness_to_pay: "1 - accuracy evidence too weak to pay for this class today (market.md §3)"
+
+- id: qa-director-26
+  title: "Pre-release GPU-family render diff: one scripted path recorded on Adreno 610, Mali-G52, Mali-G57, PowerVR GE8320 and a reference flagship, state-aligned frames compared, diverging regions (missing fog, wrong tint, flicker) flagged"
+  level: L4
+  cell: {buyer-role: qa, video-source: automated-bot-or-agent-playthrough, signal-extracted: visual-errors-and-glitches, analysis-type: cohort-comparison, lifecycle-moment: pre-launch-qa, delivery-form: issue-tracker-ticket, pricing-model: per-build-or-release, constraint-to-overcome: per-game-ui-generalisation}
+  object: "adjacent-usecases.md §6 'same build can run 60 fps on a flagship and 24 fps on a mid-tier phone'"
+  situation: "New water shader in 4.21 renders without reflection on PowerVR; nobody on the team owns a PowerVR phone"
+  consequence: "Visual parity bugs reach players on budget GPUs; found only via live footage (qa-director-1) a week later"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "'INFERRED: video-only analysis ... its edge is rendering/visual defects per device model' (adjacent-usecases.md §6)"
+  proposed: "Per-build matrix: screen x GPU family, cell red when SSIM vs reference < threshold outside known-variable regions"
+  shallow: false
+  mechanism: "Deterministic bot path with fixed seed; frames aligned by screen state and timestamp; perceptual diff vs reference device with masks for dynamic HUD and particles"
+  example: "Build 4.21 matrix: 'Harbor level, PowerVR GE8320: water reflection missing (SSIM 0.61)' -> fallback shader fixed before submit"
+  cost: M
+  depends_on: "device farm with chosen GPU families; deterministic bot path"
+  buyer: "QA director"
+  input: "farm recordings per GPU family + reference recording + build ID"
+  why_existing_tools_cannot: "device clouds record runs but compare nothing visually; reliable perf tools read counters not pixels (adjacent-usecases.md §6)"
+  willingness_to_pay: "4 - device fragmentation is the stated cost driver (adjacent-usecases.md §6)"
+
+- id: qa-director-27
+  title: "Flaky CI test explainer: each intermittent automated-test failure's device video classified by what was on screen at the failing step (unexpected popup, ad interstitial, network spinner, keyboard overlay, real bug) and counted per cause"
+  level: L4
+  cell: {buyer-role: qa, video-source: automated-bot-or-agent-playthrough, signal-extracted: ui-state-and-screen-flow, analysis-type: root-cause-of-a-metric-change, lifecycle-moment: new-version-release, delivery-form: weekly-digest-email, companion-data: build-and-config-metadata, value-lever-b2b: replace-labour-hours}
+  object: "market.md §3 '94% use non-AI automation'; Roboto Games 'runs 400+ automated tests a month'"
+  situation: "Test TC-512 fails 1 in 7 runs; engineers rerun until green"
+  consequence: "Real bugs hide among flaky failures; hours per week spent rerunning and watching failure videos"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "'94% use non-AI automation' (market.md §3)"
+  proposed: "Weekly digest: top flaky tests with cause breakdown and 1 clip per cause"
+  shallow: false
+  mechanism: "On each failed run, take the 10 s before failure from farm video; screen and overlay classifier labels the blocking element; aggregate per test"
+  example: "TC-512: 6 of 7 failures = daily-login popup covering the button (test fix), 1 = real crash -> ticket"
+  cost: S
+  depends_on: "CI test runs recorded on device farm (already common)"
+  buyer: "QA director or QA automation lead"
+  input: "CI failure videos + test logs + build/config"
+  why_existing_tools_cannot: "GameDriver and AltTester report object-level failures without reading the screen (market.md §3); farm video is captured but unread (adjacent-usecases.md §6)"
+  willingness_to_pay: "4 - sits inside an existing automation budget used by 94% of devs (market.md §3)"
+
+- id: qa-director-28
+  title: "Clip-to-editor jump: clicking a glitch timestamp opens the Unity or Unreal editor at the reconstructed level, checkpoint and camera pose from telemetry joined to the frame"
+  level: L3
+  cell: {buyer-role: qa, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: bug-reproduction, lifecycle-moment: new-version-release, delivery-form: engine-editor-plugin, companion-data: telemetry-events, constraint-to-overcome: integration-effort-per-engine}
+  object: "methods-churn-funnel.md §4 Q3Vision 'reconstructs Quake III game state from screen video only'"
+  situation: "Developer gets a glitch clip from level 7 but spends 20 minutes reaching the same spot and angle"
+  consequence: "Repro time per bug is spent navigating the game, not fixing"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "'YOLO for enemies/items plus OCR for health, armour, ammo and weapon; OCR limited by low-resolution, stylised HUD fonts' (methods-churn-funnel.md §4)"
+  proposed: "Editor plugin button 'Open at clip' loads the scene and places the camera from telemetry at the clip timestamp"
+  shallow: false
+  mechanism: "Join clip timestamp to telemetry (level ID, checkpoint, player position) via session ID; plugin loads scene and sets camera; pixels used only to confirm the match"
+  example: "Unity plugin opens Level_07 at checkpoint C, camera at the bridge; developer sees the z-fighting in 30 s"
+  cost: L
+  depends_on: "telemetry with position events; session-ID join between SDK video and analytics; plugins per engine"
+  buyer: "QA director, with engine team"
+  input: "consented clip + telemetry events (level, position, camera)"
+  why_existing_tools_cannot: "Razer gives suggested repro steps, not editor state (market.md §3); game-state reconstruction from pixels is research only (methods-churn-funnel.md §4)"
+  willingness_to_pay: "2 - convenience for developers, not a budget line; per-engine work (market.md §3)"
