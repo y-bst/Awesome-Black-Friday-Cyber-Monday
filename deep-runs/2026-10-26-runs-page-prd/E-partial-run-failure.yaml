@@ -1,0 +1,408 @@
+- id: partial-failure-1
+  title: "Output video encoded but suggestion generation failed: none of Queued/Processing/Done/Failed describes the run"
+  level: L3
+  cell: {status-mix: some-done-some-failed, failure-point: suggestion-generation-only, surface: run-detail}
+  object: "Statuses: Queued, Processing, Done, Failed. / Run detail page: output video player + list of suggestions"
+  situation: "Encode step writes a playable output; the suggestion step then throws (model timeout, 5xx from the model service). The run has a usable output and 0 suggestions."
+  consequence: "Marking it Failed hides a usable output video behind an error; marking it Done shows an empty suggestions list with no explanation. Either way the creator cannot tell what they got."
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "Queued -> Processing -> Done / Queued -> Processing -> Failed"
+  proposed: "Add a per-step status (output_status, suggestions_status) and a table label 'Done - suggestions unavailable' with a 'Retry suggestions' action on the detail page."
+  shallow: false
+- id: partial-failure-2
+  title: "Done with 0 suggestions is indistinguishable from a suggestion step that crashed and wrote an empty list"
+  level: L4
+  cell: {status-mix: done-with-zero-suggestions, suggestion-state: 0-suggestions, surface: run-detail}
+  object: "Run detail page: 'a list of suggestions (text, each with Accept / Dismiss)'"
+  situation: "Suggestion worker catches an exception, logs it, and persists suggestions=[]; run transitions to Done."
+  consequence: "Detail page renders an empty list for a crash; support cannot tell a genuine 'nothing to suggest' video from a silent failure; the crash rate is invisible in metrics."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  proposed: "Persist suggestions_status in {generated, generated_empty, failed}; detail page copy 'No suggestions for this video' only for generated_empty; alert when generated_empty share exceeds 5% of runs per hour."
+  shallow: false
+- id: partial-failure-3
+  title: "Failed has one label for 6 failure stages that need 6 different user remedies"
+  level: L3
+  cell: {failure-point: processing-crash, status-mix: all-failed, surface: runs-table}
+  object: "Status 'Failed' in the Runs table and 'A Failed run shows an error message from the processing service in the detail page.'"
+  situation: "Runs fail at: upload transfer, queue timeout, probe/unsupported codec, encode crash, suggestion generation, output storage. Remedies differ: re-upload, wait and retry, re-export the file, retry, retry suggestions only, contact support."
+  consequence: "Table shows the same red 'Failed' for all 6; the user must open each run to learn whether re-trying can help or the file itself is the problem."
+  p_typical: 0.07
+  grounded: quote
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  proposed: "Define a failure_stage enum (6 values) and a failure_code; map each to user copy and a remedy action; show a short reason under 'Failed' in the status column."
+  shallow: false
+- id: partial-failure-4
+  title: "'Error message from the processing service' may be raw ffmpeg stderr or a stack trace with internal hostnames and storage keys"
+  level: L4
+  cell: {failure-point: output-encoding, surface: run-detail, actor: creator-owner}
+  object: "PRD sentence: 'A Failed run shows an error message from the processing service in the detail page.'"
+  situation: "Encode worker fails; the service's error field holds e.g. 'Error while decoding stream #0:1 ... s3://prod-media-internal/ws_123/...' or a Python traceback."
+  consequence: "Creators see unreadable text; internal bucket names, worker hostnames and other workspace ids leak to customers."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  proposed: "Detail page shows mapped user copy keyed by failure_code; raw service error stored server-side only, viewable by support staff, plus a run id for tickets."
+  shallow: false
+- id: partial-failure-5
+  title: "Raw service error text has no length cap; ffmpeg stderr for a 3-hour file can exceed 50 KB"
+  level: L4
+  cell: {media-content: 3-hour-video, failure-point: output-encoding, surface: run-detail}
+  object: "Run detail page error message area (implied by 'shows an error message from the processing service')"
+  situation: "A long or damaged input makes ffmpeg emit thousands of warning lines before failing; the whole buffer is passed through as the message."
+  consequence: "Detail page renders a multi-screen wall of text above the (empty) player; DB row for the run grows by tens of KB."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  proposed: "Cap stored user-facing message at 500 characters; keep full log in object storage for 30 days referenced by run id."
+  shallow: false
+- id: partial-failure-6
+  title: "Failures not produced by the processing service (upload abort, queue timeout, reaper) have no error message to show"
+  level: L3
+  cell: {failure-point: queue-timeout-never-picked-up, status-mix: stuck-queued-over-1h, surface: run-detail}
+  object: "PRD sentence: 'A Failed run shows an error message from the processing service'"
+  situation: "A run never reaches a worker (queue backlog, upload never completed) and a timeout job flips it to Failed; the processing service never saw it."
+  consequence: "Detail page shows 'Failed' with a blank error area, or 'null'; the user has nothing to act on."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  proposed: "Every Failed transition must carry a failure_code from a single enum regardless of which component wrote it; blank message is a test failure."
+  shallow: false
+- id: partial-failure-7
+  title: "No retry action: recovering any Failed run means re-uploading up to 2 GB through the Submit dialog"
+  level: L3
+  cell: {action: retry-not-in-prd, status-mix: all-failed, surface: runs-table}
+  object: "Runs table 'Actions: Open, Delete.'"
+  situation: "A run fails at encode due to a transient worker crash; the source file is already in storage."
+  consequence: "User deletes and re-submits, paying a 2 GB upload again; a new row with a new submitted-at replaces the history of the failure."
+  p_typical: 0.25
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  proposed: "Add 'Retry' on Failed rows that re-enqueues from the stored source when failure_stage is retryable; hide it for failure_code=unsupported_codec."
+  shallow: false
+- id: partial-failure-8
+  title: "Source file retention after Failed is unspecified, so a Retry button cannot know whether the input still exists"
+  level: L3
+  cell: {action: retry-not-in-prd, status-mix: failed-after-retry, time-and-connection: page-open-for-hours-stale}
+  object: "Submit dialog 'max 2 GB each' uploads; Failed status"
+  situation: "Storage lifecycle deletes source uploads after N days to save cost; user clicks a Failed run 10 days later to retry."
+  consequence: "Retry fails a second time with a missing-input error, or the team keeps 2 GB per failed run forever."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "The user picks 1 to 5 video files (mp4, mov; max 2 GB each)"
+  proposed: "State source retention (e.g. 7 days after terminal status); show 'Source expired, re-upload to retry' after that."
+  shallow: false
+- id: partial-failure-9
+  title: "Automatic retries of transient failures need a state the PRD's linear transitions do not allow (Processing -> Queued)"
+  level: L3
+  cell: {status-mix: failed-after-retry, failure-point: processing-crash, surface: runs-table}
+  object: "Status transitions: 'Queued -> Processing -> Done / Queued -> Processing -> Failed'"
+  situation: "Worker is OOM-killed on a 4K HDR file; the queue redelivers the job and it goes back to waiting."
+  consequence: "Either the table shows Processing during a 20-minute wait for a free worker (wrong) or flips back to Queued (a transition the PRD forbids); users see a run 'go backwards'."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Queued -> Processing -> Done / Queued -> Processing -> Failed"
+  proposed: "Specify max automatic attempts (e.g. 3), whether Processing -> Queued is allowed, and show 'Retrying (2/3)' in the status column."
+  shallow: false
+- id: partial-failure-10
+  title: "After 3 automatic attempts, detail page shows only one error message; earlier attempts' different errors are lost"
+  level: L4
+  cell: {status-mix: failed-after-retry, surface: run-detail, actor: support-staff-impersonating}
+  object: "Run detail page error message; run's metadata"
+  situation: "Attempt 1 fails on worker OOM, attempt 2 on storage timeout, attempt 3 on encode error; only the last is stored."
+  consequence: "Support diagnoses the wrong root cause; metadata has no attempt count to show the run was retried at all."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Shows ... the run's metadata."
+  proposed: "Store an attempts list (started_at, ended_at, failure_code) per run; metadata shows 'Attempts: 3'."
+  shallow: false
+- id: partial-failure-11
+  title: "Double-click on Submit with 5 files creates 10 runs; no idempotency key per submit"
+  level: L4
+  cell: {action: double-click-submit, batch-size: exactly-5-files, surface: submit-dialog}
+  object: "Submit dialog: 'One run is created per file. The dialog closes and the new rows appear at the top of the table'"
+  situation: "User double-clicks Submit, or the create request times out at 30 s and the client retries."
+  consequence: "10 rows appear, 10 jobs consume processing capacity, user deletes 5 by hand (no bulk delete)."
+  p_typical: 0.12
+  grounded: quote
+  evidence: "One run is created per file."
+  proposed: "Client sends an idempotency key per (submit, file index); server returns the existing run for a repeated key within 24 h; Submit disabled after first click."
+  shallow: false
+- id: partial-failure-12
+  title: "At-least-once job delivery fires the Done in-app notification twice for one run"
+  level: L4
+  cell: {notification-state: burst-of-5-in-one-minute, actor: background-processing-service, status-mix: all-done}
+  object: "Notifications: 'When a run reaches Done, the user receives an in-app notification.'"
+  situation: "Worker writes Done, then its ack to the queue times out; the job is redelivered, finishes again and emits a second Done event."
+  consequence: "User gets duplicate notifications; a 5-file submit can produce 10; suggestions may be written twice (duplicate rows in the list)."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  proposed: "Notification keyed on (run_id, terminal_status) with unique constraint; status write is compare-and-set from Processing; suggestions replaced, not appended, per attempt."
+  shallow: false
+- id: partial-failure-13
+  title: "Late or out-of-order status events can regress a Done row back to Processing"
+  level: L4
+  cell: {status-mix: all-processing, actor: background-processing-service, time-and-connection: during-service-incident}
+  object: "Runs table status column; 'Status badge in the header mirrors the table.'"
+  situation: "A delayed 'Processing' heartbeat from the encode step is applied after the 'Done' event from the suggestion step."
+  consequence: "Row flips Done -> Processing; Open shows a run with output but a Processing badge; notification already fired."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Queued -> Processing -> Done"
+  proposed: "Terminal statuses are final; status updates carry a monotonic sequence number and older updates are dropped."
+  shallow: false
+- id: partial-failure-14
+  title: "Worker dies without writing Failed: run stays Processing forever, no timeout is defined"
+  level: L4
+  cell: {status-mix: stuck-processing-over-1h, failure-point: processing-crash, surface: runs-table}
+  object: "Status 'Processing' in the Runs table"
+  situation: "Node is preempted mid-encode; no terminal event is emitted."
+  consequence: "Row shows Processing for days; user cannot Retry and may not Delete (unspecified for Processing); no Failed message exists."
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "Queued -> Processing -> Failed"
+  proposed: "Worker heartbeat every 30 s; reaper marks Failed with failure_code=worker_lost after 5 min without heartbeat or after 3x expected duration for the video length."
+  shallow: false
+- id: partial-failure-15
+  title: "Upload failure after the dialog closes leaves a Queued row with no source file behind it"
+  level: L3
+  cell: {failure-point: upload-transfer, status-mix: uploading-pre-queued, time-and-connection: offline-mid-upload}
+  object: "Submit dialog: 'The dialog closes and the new rows appear at the top of the table with status Queued.'"
+  situation: "Dialog closes on Submit while the 2 GB file is still uploading; the laptop loses Wi-Fi at 60%."
+  consequence: "Row reads Queued though nothing can ever be processed; it later times out as Failed with no processing-service message; multipart upload parts remain billed in storage."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "The dialog closes and the new rows appear at the top of the table with status Queued."
+  proposed: "Add an 'Uploading (60%)' state before Queued; the run is enqueued only after upload completes; abort incomplete multipart uploads after 24 h."
+  shallow: false
+- id: partial-failure-16
+  title: "Delete on a Processing run: worker keeps encoding and later writes output and suggestions for a deleted run"
+  level: L3
+  cell: {status-mix: deleted-while-processing, action: delete, actor: background-processing-service}
+  object: "Runs table action 'Delete'"
+  situation: "User deletes a run 10 minutes into a 3-hour encode."
+  consequence: "Compute keeps running for the remaining time; on finish the worker writes a Done event and the user gets a notification for a run that no longer exists; the output blob is orphaned."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  proposed: "Delete sets a cancel flag the worker checks between steps (and every 60 s during encode); status writes against a deleted run are rejected; no notification for deleted runs."
+  shallow: false
+- id: partial-failure-17
+  title: "Delete removes the row but storage deletion of source and output fails, leaving up to 2 GB of the user's video in storage"
+  level: L3
+  cell: {failure-point: delete-failed, action: confirm-delete-dialog, owner-lifecycle: owner-active}
+  object: "Runs table action 'Delete'"
+  situation: "Row delete commits; the async blob delete for source + output returns 503 and is not retried."
+  consequence: "User believes the video is gone; it is not; storage cost accrues; a privacy request later finds the file."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Actions: Open, Delete."
+  proposed: "Soft-delete the row, enqueue blob deletion with retries until success, alert on deletions pending over 24 h."
+  shallow: false
+- id: partial-failure-18
+  title: "Backend emits a status outside the four (e.g. 'Encoding', 'Cancelled', 'Retrying'); table has no rendering rule"
+  level: L4
+  cell: {status-mix: unknown-status-string-from-backend, time-and-connection: during-deploy-version-skew, surface: runs-table}
+  object: "Runs table 'Statuses: Queued, Processing, Done, Failed.'"
+  situation: "Pipeline deploys a new step status before the frontend that renders it."
+  consequence: "Status cell is blank or shows a raw enum; the detail page badge 'mirrors the table' so it is blank too."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Statuses: Queued, Processing, Done, Failed."
+  proposed: "API maps internal step states to the 4 public statuses (plus any added in v0.4); unknown values render as 'Processing' and log a client error."
+  shallow: false
+- id: partial-failure-19
+  title: "When does Done fire: after encode, or after suggestions? Notification may send before suggestions exist"
+  level: L3
+  cell: {notification-state: arrives-while-viewing-that-run, failure-point: suggestion-generation-only, surface: in-app-notification}
+  object: "'When a run reaches Done, the user receives an in-app notification.' / Run detail page suggestions list"
+  situation: "Encode finishes at minute 12; suggestion step runs until minute 15."
+  consequence: "If Done means output ready, the notification click opens a page with an empty suggestions list for 3 minutes; if Done waits for suggestions, a suggestion outage blocks delivery of a finished video."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  proposed: "Define Done = output stored AND suggestions_status terminal; or show 'Generating suggestions' in the list while output is already playable."
+  shallow: false
+- id: partial-failure-20
+  title: "Failed runs and partial completions send no notification; only Done does"
+  level: L3
+  cell: {status-mix: some-done-some-failed, batch-size: 2-5-files-one-submit, surface: in-app-notification}
+  object: "Notifications: 'When a run reaches Done, the user receives an in-app notification.'"
+  situation: "Of 5 files submitted together, 3 reach Done and 2 reach Failed."
+  consequence: "User gets 3 notifications and reads the batch as complete; the 2 failures are found only by scanning the table."
+  p_typical: 0.18
+  grounded: quote
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  proposed: "Notify on Failed with failure reason; or one notification per submit when all its runs are terminal: '3 done, 2 failed'."
+  shallow: false
+- id: partial-failure-21
+  title: "No batch entity: 5 files from one Submit cannot be grouped, so 'retry the 2 that failed from this upload' is impossible"
+  level: L3
+  cell: {batch-size: 5-files-same-submitted-at-second, status-mix: some-processing-some-failed, surface: runs-table}
+  object: "Submit dialog 'One run is created per file.'; Runs table sorted by submitted at descending"
+  situation: "5 runs share the same submitted-at second; one fails while 4 still process; later runs from a second submit interleave."
+  consequence: "Table offers no submit-level status or grouping; tie order among identical submitted-at values is undefined and can shuffle on refresh."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Rows are sorted by submitted-at descending."
+  proposed: "Store a submit_id on each run; secondary sort by file index; optional group header 'Upload of 5 files: 4 Processing, 1 Failed'."
+  shallow: false
+- id: partial-failure-22
+  title: "Valid .mp4/.mov with an unsupported codec passes the Submit dialog and fails at probe; the user's remedy is to re-export, not retry"
+  level: L3
+  cell: {media-content: unsupported-codec-in-valid-container, failure-point: processing-crash, action: retry-not-in-prd}
+  object: "Submit dialog 'mp4, mov; max 2 GB each'"
+  situation: "User uploads a ProRes 4444 .mov or an AV1 .mp4; extension check passes; the probe step rejects the stream after the full 2 GB upload."
+  consequence: "User waits for upload and queueing to learn the file was never processable; a generic Failed message leads them to resubmit the same file."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "mp4, mov; max 2 GB each"
+  proposed: "List supported codecs in the dialog; probe the first 10 MB server-side right after upload start; failure_code=unsupported_codec with copy naming the detected codec."
+  shallow: false
+- id: partial-failure-23
+  title: "Run reaches Done but output is unplayable in the browser player (HEVC output, moov atom at end, missing blob)"
+  level: L4
+  cell: {failure-point: output-stored-but-unplayable, status-mix: done-but-output-missing, surface: run-detail}
+  object: "Run detail page 'output video player'; status Done"
+  situation: "Encode wrote a file that Firefox cannot decode, or the output blob was removed by a lifecycle rule after Done."
+  consequence: "Badge says Done, player shows a black box or a 404; there is no state to move the run to, since Done -> Failed is not a transition."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Shows the output video player ... Status badge in the header mirrors the table."
+  proposed: "Post-encode validation step (decode first and last 2 s, check faststart) before Done; detail page shows 'Output unavailable' copy when the blob fetch returns 404."
+  shallow: false
+- id: partial-failure-24
+  title: "Thumbnail (first frame + play icon) is a separate extraction step whose failure the table has no state for"
+  level: L4
+  cell: {failure-point: upload-transfer, media-content: corrupt-but-valid-extension, surface: runs-table}
+  object: "Runs table 'The thumbnail shows the first frame of the uploaded video with a white play icon centred on it.'"
+  situation: "Frame extraction fails on a corrupt file, or runs before upload completes, while the run itself is Queued."
+  consequence: "Broken-image icon with a white play icon floating over it; clicking it opens a run that may have no output."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "The thumbnail shows the first frame of the uploaded video with a white play icon centred on it."
+  proposed: "Specify a placeholder thumbnail for runs without an extracted frame and for Failed runs; omit the play icon when no output exists."
+  shallow: false
+- id: partial-failure-25
+  title: "'duration' column is undefined for Failed runs: input length, processing time, or blank?"
+  level: L4
+  cell: {status-mix: all-failed, failure-point: client-validation, surface: runs-table}
+  object: "Runs table column 'duration'"
+  situation: "Run failed at probe before the input length was read, or failed after 40 minutes of encoding."
+  consequence: "Column shows 0:00, a partial elapsed time, or blank inconsistently across Failed rows; users read 0:00 as 'the video is empty'."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Columns: thumbnail, title, status, submitted at, duration, actions."
+  proposed: "Define duration = source video length; show '-' when unknown; store started_at and finished_at separately for processing time."
+  shallow: false
+- id: partial-failure-26
+  title: "Server does not re-check the 2 GB / 1-5 file / mp4-mov limits, so an API caller bypasses the client-side validation"
+  level: L4
+  cell: {actor: api-or-automation-caller, failure-point: client-validation, batch-size: 6+-files-attempted}
+  object: "Submit dialog limits '1 to 5 video files (mp4, mov; max 2 GB each)'"
+  situation: "A script posts 12 files, one of 6 GB, to the run-create endpoint."
+  consequence: "12 runs are created and the 6 GB file fails deep in encode (or exhausts worker disk), instead of being rejected at create with a 4xx."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "The user picks 1 to 5 video files (mp4, mov; max 2 GB each)"
+  proposed: "Create endpoint returns 413 for >2 GB, 400 for >5 files or other extensions; acceptance test with a 2,147,483,649-byte file."
+  shallow: false
+- id: partial-failure-27
+  title: "Retrying suggestions regenerates the list and orphans the user's prior Accept / Dismiss decisions"
+  level: L3
+  cell: {suggestion-state: mixed, action: retry-not-in-prd, surface: run-detail}
+  object: "Run detail page suggestions 'each with Accept / Dismiss'"
+  situation: "Run had 50 suggestions, user accepted 12 and dismissed 8; a later retry (or redelivered job) re-runs the suggestion step."
+  consequence: "New suggestion ids replace the old ones; 20 decisions vanish or point to rows that no longer exist."
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "a list of suggestions (text, each with Accept / Dismiss)"
+  proposed: "Suggestion retry allowed only when suggestions_status=failed; once any Accept/Dismiss exists, the list is immutable."
+  shallow: false
+- id: partial-failure-28
+  title: "Suggestion step crashes after persisting 150 of 400 suggestions; run shows Done with a truncated list"
+  level: L4
+  cell: {suggestion-state: 400-plus, failure-point: suggestion-generation-only, status-mix: done-with-zero-suggestions}
+  object: "Run detail page list of suggestions"
+  situation: "Suggestions are written in batches of 50; worker dies after the third batch; a reaper or retry marks the run Done."
+  consequence: "User acts on 150 suggestions believing the list is complete; a retry may append 400 more, giving 550 with duplicates."
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "a list of suggestions (text, each with Accept / Dismiss)"
+  proposed: "Write suggestions in one transaction or behind a 'committed' flag; list is visible only when suggestions_status=generated."
+  shallow: false
+- id: partial-failure-29
+  title: "Service incident fails 200 runs at once; each row shows Failed with no banner, and users' manual resubmits double the backlog"
+  level: L3
+  cell: {time-and-connection: during-service-incident, status-mix: all-failed, surface: error-toast-or-banner}
+  object: "Runs table status 'Failed'; Submit dialog"
+  situation: "Encode cluster is down for 45 minutes; every run in flight fails with the same error."
+  consequence: "Users see their own runs fail with no sign it is system-wide; resubmitting 2 GB files during the incident adds load and storage."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Queued -> Processing -> Failed"
+  proposed: "Mark incident failures failure_code=service_unavailable, auto-requeue them when the service recovers, and show a page banner while an incident flag is set."
+  shallow: false
+- id: partial-failure-30
+  title: "Deploy kills in-flight workers: runs fail with 'SIGTERM' or stay Processing instead of resuming"
+  level: L3
+  cell: {time-and-connection: during-deploy-version-skew, failure-point: processing-crash, actor: background-processing-service}
+  object: "Status 'Processing' and the detail page error message"
+  situation: "A rolling deploy terminates encode workers with a 30 s grace period while 3-hour videos are mid-encode."
+  consequence: "Every deploy fails or strands the longest runs; detail page shows 'terminated by signal 15'."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Queued -> Processing -> Failed"
+  proposed: "Workers stop taking new jobs on SIGTERM and requeue the current job without counting an attempt; deploy-caused failures are not user-visible."
+  shallow: false
+- id: partial-failure-31
+  title: "Detail page metadata has no run id or job id, so support cannot correlate a user's Failed run with pipeline logs"
+  level: L4
+  cell: {actor: support-staff-impersonating, surface: run-detail, status-mix: all-failed}
+  object: "Run detail page 'the run's metadata'"
+  situation: "Creator reports 'my run failed'; support has a title and submitted-at only."
+  consequence: "Support searches logs by timestamp across all workspaces; titles are not unique (same file uploaded twice)."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Shows ... the run's metadata."
+  proposed: "Metadata lists run id (copyable), failure_code, failure_stage, attempts, started_at, finished_at."
+  shallow: false
+- id: partial-failure-32
+  title: "Same file twice in one submit, or a file identical to an existing run, is processed again at full cost"
+  level: L3
+  cell: {batch-size: same-file-twice-in-one-submit, media-content: file-identical-to-existing-run, action: submit}
+  object: "Submit dialog 'One run is created per file.'"
+  situation: "User picks the same 1.8 GB file twice, or re-submits a file after an earlier run was Done."
+  consequence: "Two identical encodes and suggestion runs; possibly different suggestion lists for the same video, confusing the user."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "One run is created per file."
+  proposed: "Hash content on upload; warn in the dialog 'This file is already in run X' and allow continue; dedupe duplicates within one submit."
+  shallow: false
+- id: partial-failure-33
+  title: "No stage progress inside Processing: a 3-hour video sits in Processing for 90 minutes with no sign of which step is running"
+  level: L4
+  cell: {media-content: 3-hour-video, status-mix: all-processing, surface: run-detail}
+  object: "Status 'Processing'; 'Status badge in the header mirrors the table.'"
+  situation: "Encode takes 70 minutes, suggestions 20 minutes."
+  consequence: "User cannot tell a slow run from a stuck one, and cannot tell whether a later failure was in encode or suggestions."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "Status badge in the header mirrors the table."
+  proposed: "Expose current step and percentage: 'Processing - encoding 45%' / 'Processing - generating suggestions'."
+  shallow: false
+- id: partial-failure-34
+  title: "Mid-batch quota exhaustion: runs 1-3 of a 5-file submit are created, runs 4-5 rejected after the dialog has already closed"
+  level: L3
+  cell: {time-and-connection: quota-exhausted-mid-batch, batch-size: exactly-5-files, owner-lifecycle: workspace-plan-downgraded-or-over-quota}
+  object: "Submit dialog: 'One run is created per file. The dialog closes and the new rows appear at the top of the table with status Queued.'"
+  situation: "Workspace has 3 runs of processing quota left; user submits 5 files."
+  consequence: "Only 3 rows appear and the user is not told 2 files were dropped, or 5 rows appear and 2 fail later with a quota message from a non-processing component."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "One run is created per file."
+  proposed: "Create is all-or-nothing per submit with a quota check before the dialog closes; dialog shows 'Quota allows 3 of 5 files'."
+  shallow: false
