@@ -1,0 +1,533 @@
+- id: modality-1
+  title: '''Where did they click first?'' on a narrated screen recording: a transcript-only agent answers from what the participant said (''I''ll try Sign up'') and cites the utterance, not the click'
+  evidence: 'users upload videos; uploaded videos get ingested. (inference: what ingestion extracts is not stated, so a transcript-only index is possible)'
+  grounded: inferred
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'The spec says only that ''uploaded videos get ingested'' and never says what ingestion extracts, yet Ask question mode invites any ''question about the selected videos, typed by the user'', and
+    ''where did they click first?'' is the most basic user-test question there is. If the build team picks the cheap path (transcript only), the agent will answer behavioural questions from narration: the
+    participant says ''let me try sign up'' at 00:41 after silently clicking Pricing at 00:38, and the answer comes back ''They clicked Sign up first (00:41)'' with a timestamp citation that makes it look
+    verified. Unlike a vague or empty answer, this is a wrong fact with a citation, and it is the worst kind to detect (detectability 5): the researcher has no reason to scrub the video and pastes it into
+    the readout, where it drives design decisions. This cannot be fixed cheaply later because the ingestion modality determines the index, the cost model and every downstream prompt; changing it after launch
+    means re-ingesting every video. The fix needed now is a single spec line naming the modalities ingestion produces (speech, on-screen events, frames) plus an acceptance criterion that, when only speech
+    is indexed, action questions are answered as ''inferred from speech, clicks not observed''. Without that line, engineering decides the product''s truthfulness by default, and nobody on the PM side will
+    find out until a researcher''s finding is contradicted by the video.'
+  case_b: 'This is a model-and-ingestion quality problem, not a gap in the agent page spec. The evidence is an inference from "uploaded videos get ingested" (grounded: inferred, p_typical 0.12), and what
+    ingestion extracts belongs to the Videos page and ingestion pipeline, not to the Report and Ask question forms the PM is finalising. The proposed fix, an answer that says "inferred from speech, clicks
+    not observed", is a system-prompt and answer-template change: it needs no new surface, field, state or redirect, so it can ship in a point release once evals show how often action questions come up.
+    In a think-aloud study the participant''s speech is usually the evidence researchers want anyway, and the timestamped citation the answer already gives lets them check the clip in seconds, which limits
+    the "wrong fact in the readout" outcome. At most the spec needs one line saying "answers are grounded in the transcript". A full modality contract for ingestion is a separate document, owned by another
+    team, and should not hold up this build.'
+- id: backend-1
+  title: Report over 20 x 3-hour videos (~60 h of transcript, roughly 0.8-1.0M tokens) exceeds one model context; spec states neither a cap nor a chunk-and-merge strategy
+  evidence: '"A Report produces one output covering all selected videos, not one per video." / "Minimum and maximum number of videos per run; video length and size limits."'
+  grounded: quote
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 4.0
+  case_a: 'The owner''s clarification is unambiguous that ''A Report produces one output covering all selected videos, not one per video'', and the spec''s own ''Still unspecified'' list admits there is
+    no minimum or maximum video count and no length or size limit. Twenty moderated sessions of up to three hours is a normal study, not an edge case (p_typical 0.25), and at roughly 60 hours of transcript
+    that is near a million tokens, beyond a single model context. With no cap and no chunk-and-merge strategy, one of two things happens: the job fails after spending the tokens, which with no loading page
+    means the user discovers it only by revisiting History, or, worse, the backend silently truncates and the report covers the first six videos while its header claims all twenty. The silent-truncation
+    path is undetectable by the user (detectability 5) and produces confident conclusions missing most of the study''s evidence. This has to be decided before build because it shapes the Add video pop-up
+    (does it show a running total and block Submit?), the Submit validation copy, and the backend architecture (single pass versus per-video summaries merged in a final pass); retrofitting a cap after users
+    have run large reports also breaks their expectations. The PM can write it tomorrow: a per-run transcript budget enforced at Submit with copy naming the overage, and a stated merge strategy for runs
+    above one context.'
+  case_b: 'The scenario is the outer edge of the input space. Twenty 3-hour sessions in one report is not a typical user-test run: moderated sessions usually last 30-60 minutes, and studies commonly use
+    about 5-8 participants. So p_typical 0.25 for this cell is generous. How to split work across contexts (cap, map-reduce, per-video summaries then a merge) is an engineering design choice. Any competent
+    backend team building multi-video summarisation will use chunk-and-merge by default, and a PM-written token budget would be a guess that engineering then has to override. The owner has already listed
+    "minimum and maximum number of videos per run; video length and size limits" as an open item, so nobody is unaware of the gap. It will be closed as a config constant, which is cheap to tune after launch
+    from real usage data. Overflow that fails loudly is covered by the assumed Failed status. The one part I cannot fully dismiss is silent truncation that still claims to cover all 20 videos. But that
+    is a correctness bug that any reasonable implementation and QA pass would reject, not something the PM must write before build.'
+- id: firsttime-30
+  title: 'First video is a screen recording with no audio: Ask question answers from no transcript with no warning'
+  evidence: none
+  grounded: speculative
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'User-test sessions are often captured as screen recordings with the microphone off or muted (unmoderated tests, accessibility sessions, recordings where the participant was told to stay silent),
+    and the spec gives no rule for a video that ingests successfully but yields no speech. Because the spec only distinguishes ''ingested'' from not, such a video sits in the Add video pop-up looking identical
+    to any other, and the first-time user who asks ''What did the participant struggle with?'' gets either a generic answer or one invented from the model''s priors, with nothing telling them the evidence
+    was empty. That is a trust-destroying first experience: the user cannot tell the answer is unsupported (detectability 5), and if they do discover it later they will distrust every subsequent answer.
+    The cost to address is low (cost 2): a ''No speech detected'' flag on the pop-up row and in the answer header, and an acceptance criterion that answers on such videos cite timestamps only or decline.
+    The evidence here is speculative rather than quoted, but the spec''s own open item, ''whether a video that is still ingesting, or failed ingestion, can be selected'', shows the PM has not yet defined
+    video readiness states, so this is the moment to add ''ingested with no transcript'' as one of them rather than leave it to whatever the pipeline happens to return.'
+  case_b: 'Defer and merge. This leaf is speculative (evidence: none, p_typical 0.04, the lowest in the batch), and it is essentially the same gap as output-10 (silent video, empty transcript) seen from
+    Ask question mode instead of Report mode. Ranking it separately double-counts one root cause. User-test recordings are almost always made with a microphone on, because think-aloud is the method, so
+    a screen-only first video is a rare setup mistake, not a first-run path. The reasonable default costs nothing to add later (cost_to_address 2): ingestion marks "transcript empty", and the answer prompt
+    says "no speech found in <video>" instead of guessing. That is one template line plus a flag the ingestion pipeline almost certainly produces already, and it can go in after launch without UI rework.
+    If the PM wants it covered now, one shared spec line under output-10 covers both leaves.'
+- id: output-10
+  title: Silent video selected still produces a confident report
+  evidence: none
+  grounded: speculative
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: This is the Report-mode twin of the silent-video gap, and it is worse in Report mode because a report reads as an authoritative deliverable. The spec defines selectability only by 'ingested',
+    so a video whose transcript has zero words passes every check, can be selected alone, and the agent is asked to write a report from nothing; with an empty prompt (which the spec explicitly allows, 'Prompt
+    / instructions (optional)') the model will fill the template with plausible findings and even invented quotes, or return an empty document with no explanation. Either outcome lands on the History entry
+    with no warning, and the user cannot tell from the report that its source was empty (detectability 5). In a multi-video report the same video silently contributes nothing while the header implies it
+    was covered, which skews findings toward the narrated sessions. The spec already lists 'whether a video that is still ingesting, or failed ingestion, can be selected' as unresolved, so the PM is about
+    to define video states anyway; adding 'ingested, no speech' and the rule for it (not selectable, or selectable with the report stating 'no speech found' for that video) is a two-line addition at cost
+    2 that, if skipped, gets decided implicitly by the prompt engineer.
+  case_b: 'Of the two silent-video leaves this is the stronger, but it is still speculative (evidence: none, p_typical 0.1) and has a cheap, obvious default. The spec already lists "whether a video that
+    is still ingesting, or failed ingestion, can be selected" as open. Deciding that ingestion with a zero-word transcript counts as a failed or flagged state folds this case into an item the owner is already
+    tracking, so it needs no separate add-to-spec decision. For a researcher, a report on a silent video coming back empty is visible straight away and costs one re-run, not a hidden wrong conclusion. Invented
+    quotes are a general hallucination-guard requirement (quotes must match transcript text) that applies to every report, not something specific to this cell. The fix is also cheap after launch (cost_to_address
+    2): a pop-up badge and one report-template line. Accept as covered by the existing ingestion-state unknown, or defer.'
+- id: speaker-2
+  title: Moderator's leading question ('So you found checkout confusing, right?') answered 'yeah' is reported as a participant finding 'checkout was confusing'
+  evidence: 'A Report produces one output covering all selected videos, not one per video. (inference: moderated user-test sessions contain moderator speech that the single output can draw on)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'The product is named ''User Test'', so its input is moderated research sessions where a moderator and a participant both speak, yet the spec says nothing about speaker roles and states that ''A
+    Report produces one output covering all selected videos''. A leading moderator question (''So you found checkout confusing, right?'') followed by a participant''s ''yeah, I guess'' is a textbook research
+    bias, and a transcript-based summariser with no speaker attribution will reliably turn it into the key finding ''Participant found checkout confusing''. Across 6 to 20 sessions with an empty prompt,
+    these planted findings get aggregated and ranked alongside genuine unprompted observations, and the reader of the report cannot distinguish them without rewatching each session (detectability 5). The
+    consequence is concrete: the design team prioritises fixing a problem the participant never raised, and the tool''s core promise, saving the researcher from watching the videos, is what makes the error
+    go unnoticed. Deciding this before build matters because it requires diarisation and role labelling at ingestion and a report contract that marks findings ''prompted'' with the moderator question quoted;
+    adding speaker roles after launch means re-ingesting the library. The PM can write the acceptance criterion directly from this item.'
+  case_b: 'This is a research-methodology and output-quality concern, not a spec gap that a PM can close with a testable line. Telling a leading-question assent apart from a real participant finding takes
+    judgement that expert researchers argue about. An acceptance criterion like "mark findings supported only by assent as prompted" cannot be checked reliably, so it belongs in model evaluation, not in
+    the build spec. The leaf has p_typical 0.05 and no direct evidence. Its inference ("moderated sessions contain moderator speech") is true, but it says nothing about how often leading questions drive
+    findings. The spec already gives the user a lever: the optional "Prompt / instructions" field in Report mode. A researcher who worries about this can write "separate prompted from unprompted findings".
+    The researcher who ran the session is also the one best placed to spot their own leading question when reading a timestamped finding. Defer to post-launch output-quality evals, where speaker attribution
+    can be improved without changing any surface the PM is finalising now.'
+- id: range-18
+  title: A 3-hour video that exceeds context is truncated silently, yet a range is the obvious remedy and nothing prompts the user to use one
+  evidence: 'Minimum and maximum number of videos per run; video length and size limits. (inference: undefined length limits allow a long video to exceed what the agent reads in one pass)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'The spec lists "Minimum and maximum number of videos per run; video length and size limits" under "Still unspecified", so nothing stops a user from adding a 3-hour session plus five others to
+    one Report, and the clarification that "A Report produces one output covering all selected videos" means all of that must fit into a single agent pass. When it does not, the build team will have to
+    pick a behaviour on the spot, and the cheapest one (keep the first N tokens and drop the rest) is invisible to the user: the Report looks complete, but the last two hours of the long session never informed
+    it. Because there is no loading page and the user is redirected straight to History, there is no moment before the run at which a warning would naturally appear unless the spec puts one in the Add video
+    pop-up or the Submit step. The researcher who trusts that Report will present findings that silently omit the part of the session where the key task happened, and the detectability score of 5 reflects
+    that no one can tell from the output alone. The fix is one spec line (a per-row "Too long; choose a range" state plus a Submit message naming the rows over the limit), and it has to be decided now because
+    it determines whether the pop-up and selected-videos list carry a range control at all, which is far more expensive to retrofit than to design in.'
+  case_b: 'Defer. The root problem here, a run whose transcript exceeds one model context, is backend-1 (position 2 in this top 25), and its proposed fix (a total transcript budget enforced at Submit, plus
+    chunk-and-merge for runs above one context) removes the silent truncation this leaf depends on. Once that is in the spec, the remaining ask is a time-range selector inside the Add video pop-up or selected-videos
+    list. That is a new feature, not a missing behaviour line: the spec describes no per-video range control anywhere, and adding one widens the pop-up design, the selection model and the backend contract
+    before launch. The leaf''s own p_typical is 0.05 and its grounding is inferred, with no evidence that users want partial-video analysis. A range control is cheap to add later as a pure addition, once
+    real usage shows how often single long videos hit the budget. The right pre-build line is "over-budget runs are blocked at Submit with copy naming the overage" (backend-1), and range selection waits
+    for data.'
+- id: contract-15
+  title: Text inside quotation marks may be a cleaned or paraphrased transcript line, with no marker separating verbatim quotes from paraphrase
+  evidence: 'A Report produces one output covering all selected videos, not one per video. (inference: a report on user-test videos can contain quoted participant text)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'The clarification "A Report produces one output covering all selected videos" makes the Report the deliverable stakeholders will lift from, and in user-test reporting the most-lifted element
+    is the participant quote. The spec says nothing about what the output may put inside quotation marks, so the default model behaviour applies: it removes fillers, repairs grammar and stitches sentences
+    said 30 seconds apart into one tidy "quote". A PM pastes that line onto a slide as the participant''s words; when someone plays the cited timestamp the words differ, and the credibility of every Report
+    from this feature takes the hit, not just that one quote. Nothing in the History entry or the output marks the difference, which is why the leaf scores detectability 5: the error is only found by someone
+    who goes back to the video, which is exactly what the feature exists to save people from doing. The rule is cheap to state today (quotation marks only around exact, contiguous transcript text; paraphrase
+    unquoted and labelled "Paraphrase:"), and it shapes the prompt, the output contract and QA acceptance (spot-check 10 quotes per report), none of which can be written correctly without it. Leaving it
+    for later means the first reports ship with fabricated-looking quotes and the trust problem precedes the fix.'
+  case_b: Accept the default and tune after launch. Whether quoted text is verbatim is a property of the agent's output instructions, not of the page, the form, the redirect or the History tab that this
+    spec describes; it is set in the system prompt and can change on any day without a UI or schema change, so the cost of fixing it later is near zero. Any competent build of a research-report agent will
+    already tell the model to quote exactly and cite a timestamp, and the leaf itself notes that quotes come with a cited timestamp, which is what lets a reader check the words against playback. The scenario
+    is inferred, not quoted (the spec never mentions quotes), and p_typical is 0.06. The proposed "QA spot-checks 10 quotes per report" is a test-plan item for the eval team, not a spec line the PM and
+    designer must settle before build. Write it into the agent prompt and the eval set, not the product spec.
+- id: modality-3
+  title: '''What error appeared?'': participant says ''huh, that''s weird'' at 03:12; with no OCR the agent paraphrases a plausible error message instead of saying the on-screen text was not read'
+  evidence: 'A question about the selected videos, typed by the user (inference: a question about on-screen text can be typed, and whether the agent reads screen content is unstated)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'The Ask question mode invites "A question about the selected videos, typed by the user", and for usability-test videos the most natural questions are about what was on screen: "What error appeared?",
+    "Which button did they click?". The spec says only that "uploaded videos get ingested" and never says whether ingestion reads the screen, so if it is transcript-only the agent will receive a question
+    whose answer it cannot see and, with no rule telling it otherwise, will produce a plausible answer such as "Invalid card number" when the toast actually said "Card declined (code 402)". The user cannot
+    detect this from the answer (detectability 5); they will file a bug against the wrong error or tell engineering the wrong copy needs fixing. The expected behaviour is concrete and writable from the
+    leaf: when a question asks for on-screen text the agent states "On-screen text is not available to the agent" and points to the nearest speech timestamp (here 03:12, "huh, that''s weird"). It must be
+    specified now because it is both an ingestion scope decision (OCR or not) and a response-copy decision, and the suggested questions list, also unspecified, will otherwise happily suggest screen questions
+    the agent cannot answer. An agent that invents evidence in its very first release teaches users to distrust every answer, including the correct ones.'
+  case_b: 'Reject as a separate item and fold into modality-1. This is the same root gap as modality-1 (position 1): the spec does not say what ingestion extracts. Once the PM writes the one line modality-1
+    proposes, "ingestion produces <modalities>; when a question needs a modality that is not indexed, the answer says so", the OCR case is covered as one instance of that rule. A separate refusal copy for
+    on-screen text adds nothing a single general rule does not already give. Beyond that, "do not invent facts the evidence does not contain" is the baseline grounding instruction for any question-answering
+    agent, not a page-spec decision. The copy is cheap to iterate post-launch, and p_typical is 0.07 with inferred grounding. Keeping it as its own leaf double-counts one decision.'
+- id: speaker-1
+  title: Spec does not say whether ingestion labels speakers at all, so the Report on the history entry detail cannot tell moderator lines from participant lines
+  evidence: 'users upload videos; uploaded videos get ingested. (inference: what ingestion produces is not described, so the transcript may carry no speaker labels)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 4.0
+  case_a: 'The spec''s entire description of ingestion is "users upload videos; uploaded videos get ingested", which leaves open whether the transcript the agent reads distinguishes the moderator from the
+    participant. In a moderated 45-minute session the moderator often speaks a third or more of the words, including leading prompts like "so that was pretty confusing, right?", and an unlabelled transcript
+    lets the Report attribute those words to the participant. The PM reading the Report on the History entry then sees findings such as "participant found checkout confusing" that are actually the moderator''s
+    framing, and has no way to tell from the output; this leaf has the highest occurrence score in the batch (5, p_typical 0.12) because moderated sessions are the common case, not an edge. This cannot
+    be fixed later in the agent page alone: it is a contract on what "ingested" means, owned by the Videos page and the ingestion pipeline, and every Report and answer produced before it is fixed is silently
+    contaminated. The spec line is ready to adopt: ingestion output carries per-segment speaker labels with a role of moderator / participant / unknown, and "ingested" means labels exist or are explicitly
+    marked absent so the agent can caveat its findings. Deciding now costs a sentence; deciding after launch means re-ingesting every video already uploaded.'
+  case_b: Weaker case than the others, but still defer. Speaker labelling is a property of the ingestion pipeline on the Videos page, which the spec treats as a separate, existing feature ("uploaded videos
+    get ingested"). It is not something the agent page can specify or own. Mainstream speech-to-text services return speaker diarization by default, so "Speaker 1 / Speaker 2" labels are the likely default
+    without any spec line. Mapping those to moderator and participant roles is a model-side inference the report prompt can attempt and improve after launch without UI changes. Unmoderated sessions, common
+    in user testing, have one speaker and are not affected at all. Honestly, if ingestion really does produce an unlabelled transcript, moderated-session reports will be misleading, so the PM should confirm
+    in one sentence with the ingestion owner what is produced today. That is a question to ask, not a spec section to write before build.
+- id: participant-37
+  title: Spec is silent on whether participant video, transcript and prompts sent to the model vendor are retained or used for training
+  evidence: none
+  grounded: speculative
+  scores:
+    severity: 5.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The spec says Submit sends the selected videos to "the agent" and that History is per user, but it never says where the participant''s video, transcript and the user''s prompt go when the agent
+    runs, and in practice that is an external model API. User-test videos contain participants'' faces, voices and often personal details spoken aloud, and those participants consented to a research session,
+    not to an unnamed third party retaining their data or training on it. If the vendor keeps 30-day logs or has training enabled, a participant''s erasure request handled in this product does not reach
+    those copies, and the team cannot truthfully say where the data went, which is a compliance failure (severity 5), not a UX glitch, and one no user of the page will ever notice (detectability 5). The
+    leaf is admittedly speculative in grounding (no spec sentence names a vendor), but that silence is the gap: the decision has to be made before the first Submit sends real participant data, because data
+    already sent cannot be recalled. The fix is a short spec statement of vendor retention (e.g. 0-day or 30-day), no-training terms, and the vendor deletion steps in the erasure procedure, all of which
+    are procurement and configuration choices that are cheap before launch and impossible to apply retroactively.'
+  case_b: 'Not this feature''s job. Vendor data retention and no-training terms are set once, company-wide, in the data processing agreement and the model-API account settings (for example, zero-retention
+    options). They are owned by legal, security and procurement, not by the PM and designer finalising an agent page. Nothing in the page, form, redirect or History tab changes based on the answer, so it
+    does not block build. The leaf is graded speculative with "evidence: none", and the Videos page already ingests (and likely transcribes) participant video, so the same vendor question exists upstream
+    regardless of this feature. Fixing it costs a contract or account setting rather than code, and that can happen at any time before or after launch. Route it to the DPA owner as a launch-checklist item,
+    not a spec gap for this page.'
+- id: participant-1
+  title: Source video deleted after run, but the Report entry on History keeps verbatim quotes attributed to the participant by name
+  evidence: none
+  grounded: speculative
+  scores:
+    severity: 5.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'The spec gives video data two lifecycles and never connects them. The Videos page lets users upload videos, and the History tab "Lists past and current submissions" with no expiry. A Report is
+    "one output covering all selected videos", so it is a distilled derivative of every participant in the run: verbatim quotes, timestamps and often names. When a participant withdraws consent and the
+    researcher deletes the video, the most portable and most forwarded copy of that person''s data stays in the runner''s History indefinitely. The researcher believes they have honoured an erasure request
+    when they have not, and nothing on either surface tells them otherwise. This is a compliance failure (GDPR Art. 17 and standard research-consent terms) and the company''s legal exposure, not the researcher''s.
+    It has to be specified before build because it decides the data model: entries must store which video IDs they came from, and that link is cheap to add now and painful to backfill across every existing
+    entry later. The evidence is speculative (p=0.12, scored 75 on severity 5 / detectability 5), but the fix is one spec line: deleting a video redacts or deletes every derived entry and shows "Source
+    removed: content redacted on <date>".'
+  case_b: 'This leaf is graded "grounded: speculative" with "evidence: none", and the spec never mentions consent, withdrawal, erasure or retention, so it rests on a chain of assumptions: the participant
+    withdraws consent, the researcher handles that by deleting on the Videos page alone, and the Report names the participant. The feature under spec is the agent page (Report, Ask question, History). Data-subject
+    erasure is a company-wide privacy and retention policy that covers transcripts, ingestion indexes, backups and exports along with History entries. It belongs to the privacy/data-retention owner and
+    the Videos page''s deletion design, not to a line in this PRD. Writing "redact every derived entry" here, without the wider retention model, would add a cross-system cascade (which derivative, partial
+    redaction of a multi-video report, follow-up threads) to a first build that has not yet defined entry statuses. Users cannot change derived entries before the cascade exists, because the spec gives
+    History no edit and no share, so it can be added later without migrating anything users rely on. In the meantime History is per user and private, so the exposure is held in one researcher''s account.
+    Defer to the privacy/retention workstream with a tracking note, and do not specify it in this feature.'
+- id: participant-31
+  title: Agent uses the participant's real first name from their spoken self-introduction although the study promised pseudonyms
+  evidence: 'Prompt / instructions (optional) (inference: a Report can be run with an empty prompt, so the agent decides what to include; the spec sets no pseudonymisation rule)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 1.0
+  case_a: '"Prompt / instructions (optional)" means the default Report, written with an empty prompt, is the most common output, and the spec gives the agent no rule about how to refer to people. Real names
+    reach the transcript in the first minute of most moderated sessions ("Thanks for joining, Dana"). The obvious agent behaviour is to use them, giving lines like "Dana struggled with the coupon field".
+    Those lines then go into decks and stakeholder emails, which breaks the pseudonymity many studies promise participants. Detection is poor (scored 4): the researcher reading the report sees a natural
+    sentence, not a privacy breach, and the harm surfaces only after the report has travelled. The cost to address is the lowest in the batch (1): one default of "Participant 1..N in selection order, real
+    names only if a workspace setting allows". That default also makes cross-video references unambiguous. Leaving it unspecified lets the prompt engineer decide a consent question by accident, so the PM
+    should own it now.'
+  case_b: 'The proposed default ("Participant 1..N in selection order") is a one-line output-formatting rule. It costs 1 to address, and it is a prompt-template change the agent team can ship or alter at
+    any time without UI or data-model work. That makes it cheap to fix later, and it does not need to be a PM decision before build. Whether sessions are pseudonymised is a study-level promise made in consent
+    forms the product never sees. Many internal UX teams name participants by first name on purpose, so a forced "Participant N" default would be wrong for them. The leaf''s own occurrence is low (p_typical
+    0.06). The harm also needs an export or share path, and its cell names "share-or-export-not-in-spec": the spec has no sharing, and History is per user, so a named report stays with the researcher who
+    already watched the video and knows the name. Accept the model''s behaviour as-is for v1. Let the researcher write "use pseudonyms" in the optional prompt field the spec already provides. Revisit when
+    sharing or a workspace privacy setting is specified.'
+- id: contract-5
+  title: Unquantified words ('most users', 'many participants', 'a few') are allowed in the default Report, so a stakeholder cannot tell 3 of 12 from 10 of 12
+  evidence: 'Prompt / instructions (optional) (inference: with an empty prompt, how frequencies are worded is left to the agent)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 1.0
+  case_a: 'The spec defines the Report only as "one output covering all selected videos" and makes instructions optional, so with an empty prompt the agent''s default narrative style sets how frequency
+    is worded. LLM summaries default to "most users", "many participants" and "a few". Over a 6-20 video selection, those words hide exactly the number a stakeholder needs: "most participants struggled
+    with filters" reads the same whether it was 4 or 10 of 12. The person harmed is downstream. An exec acts on an overstated finding and the researcher''s credibility takes the hit when someone checks
+    the videos. Detectability is low because nothing in the text looks wrong. Unlike open-ended "quality" concerns, this one can be written as a single testable acceptance criterion: every frequency claim
+    carries an explicit "N of M videos", and the vague quantifiers never appear without a count on the same line. QA can check it automatically, and it costs almost nothing to add to the prompt contract
+    now (cost 1). Fixing it after launch means changing the voice of reports users have already learned to trust.'
+  case_b: 'This is a matter of report-writing quality, not a gap in the feature''s behaviour, and the spec already provides the lever: "Prompt / instructions (optional)". A researcher who wants "N of M"
+    can ask for it. The leaf''s evidence is an inference about what the agent might write with an empty prompt. Its p_typical is 0.06, and the mitigation (a content rule in the system prompt) costs 1, can
+    be tuned after launch from real outputs, and touches no UI, state or data. Hard-coding a ban on "most, many, several, few" in the PRD before anyone has seen a real report fixes one style issue and leaves
+    the larger accuracy question open (contract-12, modality-1). The rule also cannot be met when the agent cannot count reliably (missed or merged participants), so an "N of M" can look more precise than
+    it is. Defer to the agent-prompt and evaluation work, where output style is tested against real study videos. Do not add it to this spec.'
+- id: lowvision-25
+  title: History row status badges (assumed Queued / Running / Done / Failed) distinguished by hue only, e.g. green Done vs red Failed
+  evidence: '"Statuses an entry can have on the History tab" -- statuses exist; their visual treatment is not in the spec'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 1.0
+  case_a: 'The spec admits that entries have statuses ("Statuses an entry can have on the History tab" is listed as unspecified). Because there is no loading page, the History row badge is the only signal
+    of whether a run succeeded: "On submit the user is redirected to the History tab". The default rendering a designer or component library will produce is a coloured dot or pill, green for Done and red
+    for Failed, with the same shape. About 8% of men have red-green colour-vision deficiency. For them, scanning a 100-entry history, Failed and Done look identical, so they open or share a failed or empty
+    report as if it were finished. It also fails WCAG 1.4.1 (Use of Color), which is a procurement blocker for many enterprise buyers. The fix costs almost nothing if specified with the status set (cost
+    1): each badge carries a text word plus a distinct icon shape (clock, spinner, check, exclamation) at 4.5:1 contrast. Since the PM must define the statuses before build anyway, the badge treatment should
+    go in the same spec line rather than become an accessibility bug ticket after launch.'
+  case_b: 'I cannot make a strong case. The skeptic''s best points: the spec defines no badge design, and the statuses themselves are still listed as unspecified. Never relying on colour alone (WCAG 1.4.1)
+    is a baseline standard that a competent design system already applies to every status chip, so it is covered by a reasonable default and does not need a feature-specific line. It is also cheap to fix
+    after build (cost 1, CSS and icon only). Still, the fix costs almost nothing to write down, and p_typical 0.22 is the highest in this batch. Defer only if the team''s design system is known to enforce
+    text plus shape on status badges. Otherwise this is a fair one-line acceptance criterion.'
+- id: contract-12
+  title: 'Minimum evidence for a finding is undefined: a behaviour seen in 1 of 12 videos can be stated as a finding with the same weight as one seen in 9 of 12'
+  evidence: 'A Report produces one output covering all selected videos, not one per video. (inference: one output covering all videos can promote a single-video remark to a finding)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  case_a: '"A Report produces one output covering all selected videos, not one per video" asks the agent to aggregate, and the spec sets no threshold for what counts as a finding. With an empty optional
+    prompt, a single participant''s remark about pricing can come out as the headline "Users find pricing unclear". It carries the same weight and format as a pattern seen in 9 of 12 videos, and the stakeholder
+    acts on one comment. This is the main way a synthesis tool loses trust: the error is invisible in the output and only shows up when someone rewatches the footage, which few do. Specifying it now is
+    cheap (cost 2) and gives the Report structure a firm shape. A finding needs at least one verbatim quote with a timestamp plus an "N of M" count, and items seen in exactly one video go under "Single
+    observations". That contract also shapes the History entry detail layout and the evaluation set the backend team needs before tuning prompts, so leaving it until after build means redoing both.'
+  case_b: '"A Report produces one output covering all selected videos" defines the output''s scope, not its analytical method. How much evidence a theme needs to count as a finding is a research-method
+    choice that differs by team and study: in a 5-participant usability test, one participant failing checkout is often a valid headline finding. A fixed "single-video items go under ''Single observations''"
+    rule would demote real severe issues and would override the researcher''s judgment, which the spec already supports through the optional prompt. The leaf''s occurrence is 0.05, and the consequence ("stakeholder
+    acts on a single remark") needs the researcher to forward an unread AI report without checking it against the videos they selected. That is a review-practice problem, not missing feature behaviour.
+    The cheaper fix, after real outputs exist, is a default "seen in N of M videos" annotation (overlapping contract-5) that the agent team can tune in the system prompt. Defer to the output-quality and
+    evaluation work, and keep it out of the build spec.'
+- id: backend-3
+  title: 'One video in a 20-video report has no transcript (silent audio): spec does not say whether the whole report fails or completes without it'
+  evidence: none
+  grounded: speculative
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  case_a: 'The owner''s own clarification says "A Report produces one output covering all selected videos", and spec line 35 admits that entry statuses and "what opening an entry shows ... when failed"
+    are still unspecified. Together those two lines guarantee the build team must invent partial-failure semantics on its own, because a silent or transcript-empty video can pass ingestion ("uploaded videos
+    get ingested" is the only ingestion rule) and still contribute nothing. Left open, an engineer picks one of two defaults, and both hurt the researcher: fail-whole throws away 19 good videos and a long
+    wait after a redirect with "no loading page", while succeed-silently returns a report that implicitly claims to cover 20 sessions when it covers 19, which is exactly the kind of overclaim that ends
+    up in a stakeholder readout. This is not an edge case of exotic content; screen recordings with muted mics or think-aloud sessions where the participant stayed quiet are routine in user testing (p_typical
+    0.15). The fix is one rule and one status (Done-with-warnings, skipped videos listed by name with reason), cost_to_address is the lowest in this batch at 2, and it also forces the status list the spec
+    already flags as missing. Deciding after build means changing the status model, the History entry UI and the backend error contract at once, so it is far cheaper to write the line now.'
+  case_b: 'Defer this as a sub-case of a gap the spec already lists. "Statuses an entry can have on the History tab, and what opening an entry shows ... when failed" is in the spec''s own Still unspecified
+    list, so the PM already has to write the status model. A partial-success rule falls out of that work without a separate leaf. The leaf itself is graded speculative with no evidence, and its trigger
+    is unlikely in practice. User tests are usually think-aloud recordings, so a fully silent or near-empty transcript in a 20-video batch is an edge case, and p_typical 0.15 is an unsupported guess. There
+    is also a sensible engineering default that needs no PM decision: a video with an empty transcript gives the model nothing to cite, so the report completes from the other 19 and never fails. Adding
+    a "skipped: no speech" note to the entry detail later is a small, local change that does not affect the schema or UX of the run. The real risk is an over-claiming "covers all 20" headline. That belongs
+    under the report-contract leaves (sources and coverage lines), not in a separate failure-policy decision before build.'
+- id: cost-1
+  title: Report run over 50 videos of 2 hours each starts with no cost or time preview at Submit
+  evidence: '"There is no loading page, to save the user''s time." / "On submit the user is redirected to the **History** tab, where a new entry appears with whatever was submitted."'
+  grounded: quote
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 3.0
+  case_a: 'The spec makes a deliberate design choice, "There is no loading page, to save the user''s time. On submit the user is redirected to the History tab", and simultaneously leaves "Minimum and maximum
+    number of videos per run; video length and size limits" unspecified (line 34). The combination means the single most expensive operation the product can perform, a Report over dozens of multi-hour videos,
+    is one click away with no cap, no estimate and no confirmation, and the redirect removes even the moment where a user might notice the scale. The evidence here is a direct quote, not an inference, and
+    the occurrence estimate (p_typical 0.3) is the highest in this batch: selecting "all videos with tag X" in the pop-up is the natural way to scope a study. Who gets hurt is concrete: Finance and the
+    PM cannot state a worst-case cost per run, the user cannot predict whether results arrive in two minutes or two hours, and an accidental 100-video-hour run burns budget that cannot be recovered. A threshold-based
+    confirm (for example above 10 video-hours) and a duration/cost band beside Submit are small UI additions, but the threshold itself is a product and pricing decision only the PM can make, so it must
+    be decided before build rather than discovered on the first invoice.'
+  case_b: 'Reject the proposed fix and fold the risk into the video-count and length limits the spec already lists as unspecified ("Minimum and maximum number of videos per run; video length and size limits").
+    Once a maximum exists, the "most expensive possible run" is bounded server-side, and that, not a pre-submit UI, is what answers Finance''s worst-case question. A price or cost-band preview assumes per-run,
+    usage-based billing, and nothing in the spec says users pay per run. On a seat or subscription plan, a cost estimate shown to the user is meaningless, and computing an accurate one is extra work. A
+    confirm step above 10 video-hours also goes against the owner''s stated intent ("no loading page, to save the user''s time"). The occurrence estimate looks inflated too: p_typical 0.3 for a 50 x 2-hour
+    selection is not plausible for typical user-test sessions of 20-60 minutes. If heavy runs appear after launch, a duration hint beside Submit is cheap to add. Before build, the PM only needs the cap.'
+- id: review-19
+  title: No pre-launch eval set of user-test videos with expected answers for Report and Ask question
+  evidence: none
+  grounded: speculative
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 4.0
+  case_a: 'The spec defines inputs and navigation for both modes but contains no quality section at all: nothing says what a correct report or answer is, and the ingestion output itself is undefined ("uploaded
+    videos get ingested"). For a feature whose entire value is an AI summary of user-research evidence, that means there is no acceptance criterion the team can test against before launch, and the first
+    quality signal will be a customer discovering an invented quote in a readout they already shared. Without a baseline eval set, every later model or prompt change is shipped blind, so a regression that
+    doubles fabricated quotes is undetectable until users report it, and by then trust in the feature is spent. The proposed set (about 30 sessions spanning 1, 5 and 20 videos, silent, non-English and 3-hour
+    cases, plus 50 reference questions) also doubles as the test fixture for the other open gaps in this run, such as partial-failure handling and limits. This must be specified now because an eval set
+    has to exist before the first version ships to have any value as a baseline; building it after launch only measures drift from an unmeasured starting point. Even if occurrence is rated low, the severity
+    is high and detectability is poor without it, which is exactly the profile that justifies a pre-build requirement.'
+  case_b: 'This is real engineering hygiene, but it is not a gap in this spec and should be deferred to the agent or ML team''s launch checklist. The frame defines a gap as a missing "behaviour, state,
+    copy, limit or owner" of the agent page, Report form, Ask question form or History tab. An offline eval set is none of these. Users never see it, and the designer cannot act on it. The leaf is speculative
+    with no evidence and p_typical 0.06. It also scores cost_to_address 4: 30 human-annotated sessions plus 50 reference questions is research-ops work, not a spec line, and requiring it before build would
+    block UI work that does not depend on it. Its stated harm is regressions between agent versions, which only becomes possible after a second version exists. So the eval set can be built after launch
+    and before the first model or prompt change at no loss. At most, the PM should name an owner for output quality and leave the eval design to that owner.'
+- id: popup-5
+  title: Selected videos hidden by the current tag filter or search are invisible but still submitted
+  evidence: 'The pop-up supports filtering by the tags the user has applied to videos, and searching by name. (inference: filters and selection coexist in one pop-up; how hidden selected videos are handled
+    is not stated)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  case_a: 'The spec puts selection, tag filtering and name search in one surface: "The pop-up supports filtering by the tags the user has applied to videos, and searching by name." It says nothing about
+    what happens to already-ticked videos that the current filter hides, and six independent reviewers (QA, tag librarian, low-vision and accessibility perspectives) raised the same gap, which is strong
+    signal that it will be hit. The failure is silent and in the worst direction: a user who ticks 8 videos, filters to ''onboarding'' and sees 3 ticks will believe the report covers 3 sessions while it
+    actually covers 8, so off-topic sessions contaminate a Report that the spec says is "one output covering all selected videos", and nothing on the History entry reveals it. For screen-reader users the
+    mismatch is worse because the hidden selections are not announced at all. The fix is trivially cheap (cost_to_address 1): a counter that reads "8 selected (3 shown)" and a "Show selected only" toggle,
+    with an acceptance criterion that the count is independent of the filter. Because the Add video pop-up is shared by both modes, specifying this once now prevents two inconsistent implementations and
+    a confusing behaviour that is hard to change once users have learned it.'
+  case_b: 'The skeptic case here is weak. The best version: this is a standard multi-select-with-filter interaction that any competent designer handles by default, with selection kept across filters and
+    the counter showing the total. That makes it design-review and QA detail, not a product decision the PM must settle before build. The leaf''s own scores support this framing: cost_to_address 1 and p_typical
+    0.04. Getting it wrong is also caught cheaply, because the History entry shows "whatever was submitted", so the user can see that 8 videos went in. Against that, five separate perspectives raised it
+    independently, and the failure is a silent wrong-scope report. Honestly, accepting a one-line acceptance criterion ("selected count is independent of filter and search") costs almost nothing, so I cannot
+    make a strong case to defer or reject it.'
+- id: modality-14
+  title: Sparse frame sampling misses a 1-second error toast, and the answer states 'no error appeared' as a negative fact instead of 'none seen in sampled frames'
+  evidence: none
+  grounded: speculative
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The spec never says what ingestion extracts or at what fidelity ("uploaded videos get ingested" is the only line), yet Ask question mode invites exactly the questions user researchers ask most,
+    such as "did any error appear during checkout?". If frames are sampled every few seconds, a one-second error toast is simply never seen, and an agent with no instruction to qualify negatives will answer
+    "no error appeared" as a fact. That is the most dangerous output shape this feature can produce: a confident negative is not checkable from the answer, the researcher passes "no errors in checkout"
+    to the product team, and a real bug goes unfiled, which is the opposite of what a user-testing tool is for. Detectability is rated 5, the worst possible, because nothing in the History entry tells the
+    reader the evidence was sampled. The fix is two spec lines at low cost: state the sampling rate in a Sources line on the answer, and require negative answers to read "not observed at this sampling rate".
+    This must be fixed before build because the answer format and the ingestion contract are set in the first implementation, and retrofitting evidence-qualification language later means re-auditing every
+    answer users have already relied on.'
+  case_b: 'Reject as a speculative implementation detail, or defer it to prompt tuning. The leaf assumes a pipeline (frames sampled every 5 s or on scene change) that the spec never describes and that may
+    not exist. A native video model or a dense OCR pass would not have this failure. It has no evidence, p_typical 0.03, and depends on a stack of coincidences: a toast shorter than the sampling interval,
+    a participant who says nothing, a question that asks for a negative, and a researcher who files no ticket without checking the timestamp. The proposed fix is to expose the sampling rate in product copy.
+    That is an implementation detail leaking into the UI, and it would go stale whenever the pipeline changes. The real need, that absence claims are hedged ("not observed" rather than "did not happen"),
+    is a single system-prompt instruction the agent team can add or change at any time without a spec change. If the PM wants anything now, it belongs inside a broader "answers cite sources and state their
+    coverage" contract leaf, not sampling-rate copy.'
+- id: privacy-19
+  title: Transcription at ingestion may use a different vendor and region from the agent provider, and the spec names neither
+  evidence: 'users upload videos; uploaded videos get ingested (inference: ingestion processes the audio, so some transcription service is involved; the spec names none)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The spec''s only sentence about what happens to a video after upload is "users upload videos; uploaded videos get ingested", and ingesting spoken user-test audio almost certainly means a speech-to-text
+    service runs on it, possibly at a different vendor and in a different region from the agent model. That transfer happens the moment a participant''s recording is uploaded, before anyone opens the Agent
+    page or presses Submit, so any data-residency or consent answer written for the agent provider does not cover it. User-test videos contain participants'' faces, voices and often names, so they are personal
+    data, and non-English audio is the case most likely to go to a specialist transcription vendor. Without a spec line, engineering will pick whichever STT API is convenient, and the first time a customer''s
+    DPO asks "where does participant audio go and how long is it kept?", the honest answer will be "we don''t know", with a library of 50 videos already transferred. This is cheap to settle now (cost_to_address
+    2) and expensive after the fact: a vendor or region change after launch means re-ingesting every video and re-papering every customer DPA. Because detectability is 5, nothing in the UI will ever reveal
+    the gap; only an audit or a breach will. The PM should add one line naming the ingestion vendor, region and raw-audio retention before build, alongside the agent provider''s data-flow statement.'
+  case_b: 'This is not this feature''s job. The frame scopes the work to the agent page (Report, Ask question, History), and the spec treats the Videos page and ingestion as an existing, separate system
+    ("Videos come from a separate Videos page where users upload and videos get ingested"). Ingestion already runs today, before any agent run exists, so whatever transcription vendor and region it uses
+    is a fact of the shipped product, not something this agent page introduces or can change; adding the agent page creates no new transfer at upload time. The evidence is purely inferred: nothing in the
+    spec says transcription happens at ingestion, that a separate vendor is involved, or that non-English audio is routed differently, and the leaf''s own p_typical is 0.04. The real data-flow question
+    for this feature (what the agent vendor receives, retains or trains on) is already captured by participant-37 in this same top 25, so this leaf mostly duplicates it from the wrong surface. The right
+    home is the company''s DPA / subprocessor list or a Videos-page ticket, which can be answered by legal at any time without touching the agent page build. Defer to the ingestion owner.'
+- id: contract-4
+  title: 'Denominator after an unusable video: a finding reads ''5 of 12'' when 1 silent video contributed nothing, instead of ''5 of 11 usable'''
+  evidence: 'A Report produces one output covering all selected videos, not one per video. (inference: a selected video can contribute nothing, e.g. no audio, while the single output still completes)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The clarification "A Report produces one output covering all selected videos, not one per video" means every count in the report is computed over the whole selection, and nothing in the spec
+    says what happens when a selected video contributes nothing, such as a recording with no audio track. With 12 selected and 1 silent, a finding that is really a majority (6 of 11) is printed as a minority
+    (6 of 12), and the run still shows as done, so the researcher has no reason to doubt it. Proportions are exactly what stakeholders lift from a usability report into slides ("half of users failed checkout"),
+    so the wrong denominator moves product decisions, not just wording. Detectability is 5: the reader cannot reconstruct the denominator from the report, and the spec gives them no per-video coverage to
+    check against. The fix is one acceptance criterion: denominators count usable videos and a Coverage line names any excluded video and why. If the report contract ships without it, the model will choose
+    a denominator per run, and the same 12 videos may produce "of 12" in one report and "of 11" in the next, which no one can test or explain afterwards.'
+  case_b: 'Defer: this is a report-quality tuning detail that sits downstream of a decision the PM must make anyway in backend-3 (does a report with one transcript-less video fail or complete without it)
+    and popup-25 / firsttime-30 (is a silent video flagged at all). Once the spec says "a video with no transcript is excluded and listed as excluded", the correct denominator follows as a reasonable default
+    and a prompt-level instruction; it does not need its own acceptance criterion. The scenario is narrow (p_typical 0.04: a silent video inside a 6-20 video report whose output happens to state a count-style
+    proportion), and the harm is an off-by-one that the reader can see if the report lists its source videos. It is also cheap to fix after launch: denominator wording lives in the agent''s output template
+    / system prompt and can be changed without UI, schema or migration work. Specifying count-denominator rules now is over-specifying model output before anyone has seen a real report; fold it into the
+    backend-3 decision rather than keeping it as a separate spec line.'
+- id: popup-25
+  title: Videos with silent audio or no transcript are selectable and unmarked in the pop-up
+  evidence: none
+  grounded: speculative
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The spec says the Add video pop-up lists the user''s "ingested videos" and leaves open "whether a video that is still ingesting, or failed ingestion, can be selected"; it says nothing about a
+    video that ingested successfully but has no speech, which is common for unmoderated screen recordings where the participant never talks. Such a video passes every check the spec implies (it is ingested),
+    so the pop-up will show it as an ordinary row, the user selects it for Ask question, and the answer is either empty or invented from nothing, with no signal anywhere that the input was hollow. Because
+    there is no loading page and the user is redirected straight to History, the first and only place they could have been warned is the pop-up row. The evidence is speculative, but the consequence is a
+    confident wrong answer the user cannot trace back to its cause, which is the worst failure for a research tool. The proposed fix is small and a designer can draw it today: a "No speech detected" badge
+    on the row, still selectable, plus a warning under the selected list. Deciding it now also forces ingestion to output a "has speech" flag, which is far cheaper to add before the ingestion pipeline is
+    built than to backfill across every existing library later.'
+  case_b: 'Largely a duplicate and partly improbable. firsttime-30, output-10 and backend-3 in this same top 25 already cover the silent-video case (no warning, confident output, report-level failure handling);
+    this leaf only moves the warning to the pop-up row, which is a design choice inside the fix, not a separate gap. Its own grounding is "speculative" with evidence "none": the spec says only ingested
+    videos are selectable, and a pipeline that knows it produced an empty transcript can just as reasonably mark that ingestion as failed, which the spec already lists as an open question ("whether a video
+    that... failed ingestion can be selected") that the PM will answer anyway. User-test recordings are overwhelmingly think-aloud sessions with speech, so a silent 4-minute screen recording being chosen
+    for Ask question is rare (p_typical 0.05). A badge is a cheap, additive UI change that can ship in a later iteration once ingestion exposes a "no speech" flag. Accept the ingested/failed decision as
+    the cover and defer the badge.'
+- id: backend-16
+  title: 'Follow-up context source unspecified: re-read the transcripts, or answer only from the prior answer text'
+  evidence: Follow-up questions are supported after the first answer.
+  grounded: quote
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The spec says only "Follow-up questions are supported after the first answer", which leaves the most important engineering choice open: does a follow-up re-read the selected videos'' transcripts,
+    or does it see only the conversation so far? The cheap implementation, a chat thread that carries the prior answer text, will be the default unless the spec says otherwise, and it fails exactly on the
+    follow-ups researchers ask most: after a summary, "What exactly did the user say at the checkout step?" cannot be answered from the summary, so the model fabricates a plausible quote. A fabricated verbatim
+    quote is worse than a vague answer, because quotes are what go into readouts as evidence and nothing on the follow-up thread distinguishes a real quote from an invented one (detectability 5). This is
+    also a cost and architecture decision (also flagged as cost-4): re-reading transcripts on every follow-up multiplies token spend, so backend and finance need the answer before they size the system,
+    not after users complain. One spec line, "every follow-up has access to the same video set''s transcripts as the first question", settles the design, the cost model and the test case at once.'
+  case_b: Covered by a reasonable default. "Follow-up questions are supported after the first answer" already implies a conversation about "the selected videos"; every chat-over-documents implementation
+    an engineer would build keeps the original context (the same transcripts) in the thread, and answering a follow-up only from the prior answer text would be a bug, not a plausible reading of the spec.
+    The PM does not need to specify that the second question can see the same videos as the first any more than they need to specify that it can see the question. Where real choices exist (context window
+    budget, whether to re-retrieve or cache) they are engineering implementation details that the backend owner decides and can change later without user-visible spec impact, and the context-size question
+    is already raised by backend-1. If anything is worth a line, it is a one-sentence clarification in the engineering ticket, not a product decision gating build. Accept as implied; at most add a single
+    acceptance test.
+- id: contract-17
+  title: 'No explicit ''Not answerable from the selected videos'' outcome: a default section (e.g. task success rate) is filled with invented numbers when the 12 videos are interviews with no tasks'
+  evidence: 'Prompt / instructions (optional) (inference: an empty prompt leaves the default sections to the agent, whatever kind of videos are selected)'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 3.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The Report form makes "Prompt / instructions" optional, so with an empty prompt the agent decides what the report contains, and the spec gives no rule for a section the selected videos cannot
+    support. If the default report shape includes something like task success rate and the 12 selected videos are open-ended interviews with no tasks, the model''s pressure to fill every section produces
+    "Task completion: 75%", a number derived from nothing that looks exactly like a real metric on the History entry detail. A stakeholder reading that entry has no way to tell it was invented (detectability
+    5), and a single fabricated headline metric discredits the whole tool once someone checks it. The empty-prompt path is the one first-time users and busy researchers will take most, so this is the default
+    experience, not an edge case. The fix is one content rule with literal copy: an unsupported section renders "Not answerable from the selected videos: <reason>". It must be in the report contract before
+    prompts and evaluation sets are written, because it defines what a correct output is; added later, every existing report in History stays uncorrected.'
+  case_b: 'The scenario rests on an assumption the spec does not make: that Report mode has fixed "default sections" such as task success rate. The spec defines no output template at all, so the "invented
+    75% task completion" failure only exists if the team later chooses a rigid template, and whoever writes that template decides its empty-section behaviour at the same time. The users here are UX researchers
+    who know whether their 12 videos are interviews or task tests and, when they leave the prompt empty, get whatever generic summary the agent produces; a well-written system prompt ("only report what
+    the videos support") is the standard default and handles this without a literal spec string. The broader "don''t fabricate" concern is already carried by several items in the top 25 (output-10, modality-3,
+    contract-12), so this adds a specific copy line rather than a new gap. p_typical is 0.05 and the evidence is inferred. Defer until the report template exists; then the not-answerable wording is a one-line
+    copy decision that is cheap to add.'
