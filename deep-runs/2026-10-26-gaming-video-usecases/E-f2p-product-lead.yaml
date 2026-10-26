@@ -1,0 +1,566 @@
+- id: f2p-1
+  title: "Per-step FTUE drop-reason report: for every Progression funnel step losing >5% of starters, classify 50 abandoner clips into 6 reason codes and show 3 clips per code"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, lifecycle-moment: ftue-first-session, delivery-form: per-cohort-report, companion-data: telemetry-events, game-platform-and-genre: mobile-midcore-f2p}
+  object: "GameAnalytics Progression funnel 'Total Churn' per tutorial step (methods-churn-funnel.md §1)"
+  situation: "Tutorial step 3 ('first upgrade') loses 12% of starters on build 1.40; the funnel shows the step and the count, never the cause"
+  consequence: "Today the product lead guesses, or orders a PlaytestCloud test that returns in 48 h from 10 recruited testers who are not the live cohort that dropped; the fix ships a release later or targets the wrong cause"
+  p_typical: 0.60
+  grounded: quote
+  evidence: "Unity's own tutorial lists only candidate causes ('a bug that crashes the game, or the level is too hard') ... unexpected drop-offs 'indicate good places to investigate' (methods-churn-funnel.md §1)"
+  proposed: "Ship first as a repackage of the User Test report on recruited footage, then switch the input to SDK clips of real abandoners"
+  shallow: false
+  mechanism: "Per-title screen classifier (tutorial card visible, CTA highlighted, popup open, fail screen, level-complete, store) plus touch overlay labels each abandon clip with one reason code: card dismissed in <1 s, tap on non-interactive art, highlighted CTA not tapped within 15 s, 3+ fails, app backgrounded on fail screen, OS interruption; the report gives share per code per step and per build"
+  example: "Merge game, step 'merge two swords' loses 12%: 41% of abandoner clips show 3+ drags onto the wrong tile; designer doubles the drop-target size and checks the step in the next build's report"
+  cost: M
+  depends_on: "f2p-2 trigger ring buffer; event-to-frame timestamp join; per-title screen labels (a few hundred frames, methods-churn-funnel.md §4 INFERRED)"
+  buyer: "Product lead / head of product owning D1 and FTUE at a mid-size mobile F2P studio"
+  input: "SDK ring-buffer clips (480p, 5 fps) with touch overlay + GameAnalytics or Amplitude progression events keyed by user_id"
+  why_existing_tools_cannot: "Funnels give 'where' only and PlaytestCloud's AI reads transcripts and surveys of recruited testers, not the pixels of live players (methods-churn-funnel.md §1, market.md §1 'Does NOT do')"
+  willingness_to_pay: "4 - studios pay PlaytestCloud €13.6k-33.9k/yr for 120-240 analysed sessions, about €113-141 each (market.md 'Signals of willingness to pay')"
+
+- id: f2p-2
+  title: "Churn-trigger ring buffer: keep the last 60 s on device at 480p/5 fps and upload over Wi-Fi only when one of 5 FTUE triggers fires"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, capture-trigger-and-sampling: event-triggered-clip, constraint-to-overcome: bandwidth-and-storage, processing-location: on-device, delivery-form: api-or-sdk, lifecycle-moment: ftue-first-session}
+  object: "Sentry onErrorSampleRate ring-buffer pattern and the 450 MB-per-first-session upload estimate (methods-churn-funnel.md §6, §7)"
+  situation: "Triggers: tutorial step started and not completed within 120 s; app backgrounded on a fail screen; 3 consecutive level fails; rage taps (3+ taps within 300 ms) on a non-interactive area; first session ending under 5 min"
+  consequence: "Without trigger-keyed capture the studio either records everything (about 7.5 TB/day at 100k installs/day) or records random sessions that rarely contain the drop moment"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "'onErrorSampleRate (recommended 1.0) buffers and uploads only if an error occurs, keeping about the last minute before the error' ... 'the same pattern keyed on churn-relevant triggers ... is the obvious adaptation' (methods-churn-funnel.md §6)"
+  proposed: "Unity and Unreal plugin with a remote-config trigger list and a 1-5% install sample rate"
+  shallow: false
+  mechanism: "On-device encoder writes a 60 s circular buffer; trigger rules evaluated against the game's own events; clip plus 10 s after the trigger is queued and uploaded on Wi-Fi, otherwise discarded after 24 h"
+  example: "Puzzle game, level 3: player fails 3 times and backgrounds the app on the fail screen; a 70 s clip arrives the next morning tagged 'fail-screen exit, level 3'"
+  cost: M
+  depends_on: "iOS consent prompt with visible recording indicator (Apple 2019 rule); engine render-surface capture for Unity and Unreal"
+  buyer: "Product lead, with sign-off from the client engineering lead, at a mobile F2P studio"
+  input: "Game render surface + touch events + game progression events"
+  why_existing_tools_cannot: "Sentry ring-buffers only on errors; PostHog Unity is screenshot-based and 'alpha'; IV Metrics caps at 50-100 videos/month with no churn triggers (methods-churn-funnel.md §6, market.md §2)"
+  willingness_to_pay: "3 - indies pay IV Metrics $49-99/month for capped gameplay video (market.md §2); as plumbing alone it is a feature, value comes from f2p-1"
+
+- id: f2p-3
+  title: "Build diff alert: when tutorial-card dwell, step duration or reason-code mix shifts >30% between two builds, post the 3 most changed clip pairs to Slack within 24 h of rollout"
+  level: L4
+  cell: {buyer-role: product-retention, analysis-type: build-to-build-regression-diff, lifecycle-moment: new-version-release, delivery-form: alert-or-slack, signal-extracted: input-timing-and-hesitation, companion-data: build-and-config-metadata, value-lever-b2b: cut-time-to-insight, pricing-model: per-build-or-release}
+  object: "Unity funnel rule 'editing a funnel ... would invalidate any existing data' and the un-instrumented-step note (methods-churn-funnel.md §1)"
+  situation: "D1 drops 2 pp after build 1.43, which changed only the art of the reward popup; the event funnel is identical across builds because the popup has no event"
+  consequence: "The team rolls back blind or waits a week of D1 data; at 100k installs/day each day of a 2 pp drop is about 2,000 lost day-1 players"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "'a step that was never instrumented (e.g. player looked at the shop button for 6 s and did not tap) does not exist in the data' (methods-churn-funnel.md §1 INFERRED)"
+  proposed: "Compare per-screen dwell and reason-code distributions between build N and N-1 on the first 500 triggered clips of the new build"
+  shallow: false
+  mechanism: "Per screen class, compute median dwell, tap-to-CTA latency and reason-code shares per build version; flag shifts above 30% with a two-sample test and pick clip pairs closest to each build's median"
+  example: "Build 1.43: median dwell on reward popup falls from 3.8 s to 0.9 s and 'tap outside CTA' doubles; Slack alert shows the new popup hides the Continue button behind the coin burst"
+  cost: S
+  depends_on: "f2p-1 classifier; build version in clip metadata"
+  buyer: "Product lead and release owner at a mobile F2P studio shipping weekly"
+  input: "Triggered clips from two builds + build and config metadata + D1 by build"
+  why_existing_tools_cannot: "Funnels compare instrumented event counts only, and Unity funnels cannot be edited without invalidating data (methods-churn-funnel.md §1)"
+  willingness_to_pay: "4 - analytics vendors sell FTUE outcomes with headline numbers (FunCraft +40% D1, EA 30% faster onboarding; methods-churn-funnel.md 'Signals of willingness to pay')"
+
+- id: f2p-4
+  title: "Instrumentation gap finder: cluster every distinct FTUE screen seen in footage, diff against the event taxonomy, and open a ticket per un-evented screen with a ready-to-paste design-event spec"
+  level: L3
+  cell: {buyer-role: product-retention, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, lifecycle-moment: soft-launch, delivery-form: issue-tracker-ticket, automation-level: auto-created-ticket-or-asset, value-lever-b2b: create-data-that-did-not-exist}
+  object: "GameAnalytics FTUE advice to 'split the tutorial into more milestones to figure out what causes the drop-off' (methods-churn-funnel.md §1)"
+  situation: "Soft launch: footage shows an 'additional content 85 MB' download screen between tutorial steps 2 and 3 that has no event, and 9% of abandon clips end on it"
+  consequence: "The funnel attributes those losses to step 3; the team redesigns the wrong screen"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "'Most of these can in principle be instrumented as events, but only if anticipated; video captures them retroactively for any screen' (methods-churn-funnel.md §2 INFERRED)"
+  proposed: "Weekly job listing screen clusters with frequency, position in session and abandon share, each with a proposed event name"
+  shallow: false
+  mechanism: "Unsupervised clustering of keyframes by layout embedding, matched against screens that already fire events; unmatched clusters with >1% of session time become Jira tickets with a sample frame and a suggested GameAnalytics design-event string"
+  example: "Ticket 'FTUE: unevented screen #14 (asset download), seen in 31% of first sessions, 9% of abandons end here; add design event ftue:download:start/complete'"
+  cost: S
+  depends_on: "f2p-2 clips; read access to the event taxonomy"
+  buyer: "Product lead plus game analyst at a mobile F2P studio in soft launch"
+  input: "Random-sample FTUE clips + event schema export"
+  why_existing_tools_cannot: "Funnels only contain anticipated steps; generic replay tools see an engine canvas as one black box with no screen identity (methods-churn-funnel.md §1, market.md §2 'Does NOT do')"
+  willingness_to_pay: "3 - saves an analytics sprint; nearest spend anchor is UXCam median about $21k/yr for replay (market.md §2)"
+
+- id: f2p-5
+  title: "Quit-type classifier on the last 10 s before app background: rage quit on fail screen vs mid-action interruption vs idle, so D1 churn per step splits into product-caused and not"
+  level: L3
+  cell: {buyer-role: product-retention, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: churn-prediction-features, lifecycle-moment: d1-to-d7, companion-data: telemetry-events, delivery-form: warehouse-table-export, constraint-to-overcome: privacy-and-consent}
+  object: "'the exact screen state at the moment of app kill (rage quit vs. interruption)' (methods-churn-funnel.md §2 INFERRED)"
+  situation: "Step 5 shows 15% churn; some of those players were interrupted mid-level by a call and never came back, others quit on the third fail screen"
+  consequence: "Both groups count as step-5 churn, so the team cannot size the fixable share and over-invests in the level"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Sony patents define rage quitting ... disconnects scored 2 points vs menu exits 1 point (methods-churn-funnel.md §2)"
+  proposed: "Column quit_type in the clip table, with three values and a confidence score"
+  shallow: false
+  mechanism: "Classifier over last frame state (fail screen, active play, menu, idle), seconds since last touch, touch burst pattern and the OS lifecycle reason the game receives; in-app capture never records other apps, so notification content is never stored"
+  example: "Runner game: 38% of step-5 quits happen mid-run with a touch 0.3 s earlier and an OS pause (interruption); 47% follow the third fail screen; team adds a resume-run on return and fixes difficulty for the 47%"
+  cost: S
+  depends_on: "f2p-2 clips; OS lifecycle events in telemetry"
+  buyer: "Product lead and data scientist at a mobile F2P studio"
+  input: "Final 10 s of triggered clips + touch events + app lifecycle events"
+  why_existing_tools_cannot: "Telemetry logs a session end, not what was on screen or whether play was mid-action; only patents and research describe rage-quit typing (methods-churn-funnel.md §2)"
+  willingness_to_pay: "3 - no direct price; it sharpens the f2p-1 report rather than standing alone"
+
+- id: f2p-6
+  title: "First-launch wait audit: seconds on splash, asset-download and loading screens per device model from footage, plus the share of first sessions that end on a wait screen, by Android GPU tier"
+  level: L4
+  cell: {buyer-role: product-retention, signal-extracted: load-and-wait-screens, companion-data: device-perf-counters, game-platform-and-genre: mobile-midcore-f2p, lifecycle-moment: ftue-first-session, analysis-type: cohort-comparison, delivery-form: dashboard}
+  object: "'same build can run 60 fps on a flagship and 24 fps on a mid-tier phone' (adjacent-usecases.md §6)"
+  situation: "Low-tier Android installs show D1 8 pp below flagships; the funnel has a 'loading_complete' event but nothing about the 40 s spent on the download bar before it"
+  consequence: "Product lead treats the gap as audience quality and buys fewer low-tier users instead of shrinking the first download"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "HeadSpin CEO quote: 'over 30 per cent of people left their game due to a bad experience' (market.md §3)"
+  proposed: "Dashboard row per GPU tier: median wait seconds per wait screen, % of first sessions ending on a wait screen, D1"
+  shallow: false
+  mechanism: "Wait-screen detector (progress bar, spinner, splash) timestamps entry and exit on each clip and joins device model and perf counters from the session"
+  example: "Mali-G52 phones spend median 47 s on asset download vs 9 s on flagships; 11% of their first sessions end there; team moves 60 MB of assets to after tutorial step 4"
+  cost: S
+  depends_on: "f2p-2 clips; device model in session metadata"
+  buyer: "Product lead at a mobile midcore F2P studio with a large Android share"
+  input: "First-session clips + device model + device perf counters"
+  why_existing_tools_cannot: "GameBench and HeadSpin measure lab devices, not real first sessions, and fps/load counters need in-game profiling (adjacent-usecases.md §6, market.md §3)"
+  willingness_to_pay: "3 - studios and OEMs pay GameBench enterprise pricing; outsourced QA $15-50/tester hour (adjacent-usecases.md 'Signals of willingness to pay')"
+
+- id: f2p-7
+  title: "Warehouse feature table: 14 per-user first-session video features (card dwell ms, CTA hesitation ms, mis-tap count, fail-screen dwell, quit type) keyed by user_id and session_id"
+  level: L3
+  cell: {buyer-role: product-retention, analysis-type: churn-prediction-features, delivery-form: warehouse-table-export, constraint-to-overcome: joining-video-to-events, value-lever-b2b: create-data-that-did-not-exist, companion-data: telemetry-events, processing-location: customer-cloud-byoc}
+  object: "'No paper was found that predicts churn or engagement directly from human gameplay video frames' (methods-churn-funnel.md §3)"
+  situation: "The studio's XGBoost D7 churn model plateaus; deep models on the same logs add nothing"
+  consequence: "Without new feature content the model cannot get better, and the product lead cannot target interventions"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "'the predictive ceiling is set by feature content, not model class. Video is an untested source of new features, which is a research gap rather than a proven lift' (methods-churn-funnel.md §3 INFERRED)"
+  proposed: "Daily partitioned table in Snowflake or BigQuery written inside the customer's cloud; schema published before any model is promised"
+  shallow: false
+  mechanism: "Per-clip extractors emit numeric features; a join key maps clip frame timestamps to event IDs; table written to the customer's warehouse with no footage leaving their bucket"
+  example: "Data scientist adds 'median tutorial-card dwell' and 'mis-taps in first 3 min' to the D7 model; the product lead reads feature importance to pick the next FTUE fix"
+  cost: M
+  depends_on: "f2p-2 clips; event-ID join; sampled users only (1-5%) so the model trains on the sampled cohort"
+  buyer: "Product lead sponsoring, studio data scientist consuming, at a mid-size F2P studio"
+  input: "Triggered and random-sample clips + telemetry events + D1/D7 labels"
+  why_existing_tools_cannot: "Churn literature and tools are log-only; Firebase predictions use events only (methods-churn-funnel.md §1, §3)"
+  willingness_to_pay: "3 - lift is unproven (research gap, methods-churn-funnel.md §3); paid as a pilot, not a contract"
+
+- id: f2p-8
+  title: "A/B 'why B won' pack: for an FTUE test (short vs long tutorial), compare clip-derived step durations and reason codes between arms and attach 5 contrasting clip pairs to the experiment page"
+  level: L3
+  cell: {buyer-role: product-retention, analysis-type: ab-test-variant-explanation, lifecycle-moment: ab-test-running, companion-data: build-and-config-metadata, delivery-form: in-tool-annotation, capture-trigger-and-sampling: targeted-cohort, signal-extracted: input-timing-and-hesitation}
+  object: "Deconstructor of Fun 2025 FTUE case: 'ask if the player knows the game, then branch to a detailed tutorial' (competitor-and-ua.md §1)"
+  situation: "Variant B (skippable tutorial) wins D1 by 1.5 pp but loses D7 by 0.4 pp; nobody knows which behaviour drives each"
+  consequence: "The team ships B on D1 alone, or argues for two weeks; the next test repeats the same blind spot"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "FunCraft: 'funnel analysis showed new players wanted easier puzzles rather than tutorials; FTUE rebuilt; D1 retention +40%' (methods-churn-funnel.md §1)"
+  proposed: "Annotation block on the experiment in the A/B tool: per-arm reason-code shares plus clip pairs"
+  shallow: false
+  mechanism: "Capture sample split by Remote Config variant; same extractors as f2p-1; differences above 20% per screen surfaced with paired clips nearest each arm's median"
+  example: "Arm B players who skip reach the first boss without having used the dodge; 62% of B's level-6 fails show no dodge input; team keeps the skip but adds a dodge prompt at level 5"
+  cost: S
+  depends_on: "f2p-1; variant ID in clip metadata"
+  buyer: "Product lead running FTUE experiments at a mobile F2P studio"
+  input: "Clips from both arms + variant assignment + D1/D7 per arm"
+  why_existing_tools_cannot: "A/B tools report metric deltas per arm, and the only replay-plus-funnel case found (EA, Amplitude) was a manual review (methods-churn-funnel.md §1)"
+  willingness_to_pay: "3 - bundled with f2p-1; no separate price anchor in the notes"
+
+- id: f2p-9
+  title: "Soft-launch comprehension read by market: compare FTUE reason-code mix for 300 consented first sessions each in Philippines, Canada and Brazil to tell 'FTUE problem' from 'wrong market' before go/kill"
+  level: L3
+  cell: {buyer-role: product-retention, lifecycle-moment: soft-launch, value-lever-b2b: de-risk-a-go-kill-decision, analysis-type: cohort-comparison, delivery-form: per-cohort-report, pricing-model: per-game, capture-trigger-and-sampling: targeted-cohort}
+  object: "GameAnalytics 2026 benchmarks: median D1 about 22%, P75 just above 30% (methods-churn-funnel.md §1)"
+  situation: "Soft-launch D1 is 24% in the Philippines and 31% in Canada; the go/kill meeting is in 3 weeks"
+  consequence: "Without a read on why, the team either kills a game whose FTUE fails in one language or scales one that only works for genre veterans"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "'many top-performing studios store data in-house and never appear in public benchmarks' (methods-churn-funnel.md §1)"
+  proposed: "One report per market with reason-code shares, step timings and 10 clips, delivered within 10 days of soft launch"
+  shallow: false
+  mechanism: "Targeted capture of the first 300 consented installs per market; f2p-1 classifier; market differences reported per step with confidence intervals"
+  example: "Philippines players fail the level-2 timing mechanic 2.3x as often as Canada; same comprehension, different device latency; team ships a timing-window change, not a kill"
+  cost: S
+  depends_on: "f2p-1; f2p-20 consent-bias calibration"
+  buyer: "Product lead and studio head at a mobile F2P studio in soft launch"
+  input: "Consented first-session clips per market + D1 per market + device model"
+  why_existing_tools_cannot: "Playtest panels recruit testers rather than the soft-launch audience, and funnels give per-market drop counts only (market.md §1, methods-churn-funnel.md §1)"
+  willingness_to_pay: "4 - a go/kill decision; studios pay €113-141 per analysed playtest session (market.md §1) and $45-51k/yr for competitor intelligence (competitor-and-ua.md §1 prices)"
+
+- id: f2p-10
+  title: "Competitor FTUE teardown from public 'first 30 minutes' videos: step count, seconds to first reward, first forced-tutorial exit and first IAP offer timestamp for 20 rival titles, refreshed per major update"
+  level: L3
+  cell: {buyer-role: product-retention, video-source: public-streams-and-ugc, signal-extracted: on-screen-text-ocr, analysis-type: benchmark-vs-competitor, lifecycle-moment: ftue-first-session, delivery-form: dashboard, constraint-to-overcome: commoditisation-by-general-video-llms}
+  object: "GameRefinery 'about 260 features are tracked manually' and Gamedexy '186 chronological flows, 1,887 screens, 25 mobile games' (competitor-and-ua.md §1)"
+  situation: "Product lead plans an FTUE rework and wants to know how long rivals' tutorials run and when they show the first offer"
+  consequence: "Today a designer plays 5 rivals by hand or buys a human-built flow library covering 25 games"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "'No source shows a vendor extracting FTUE steps, shop layouts or event cadence from gameplay video automatically' (competitor-and-ua.md §1 INFERRED)"
+  proposed: "Table per rival with timestamps and keyframes, linked to the source video at each step"
+  shallow: false
+  mechanism: "VLM segments a long-play video into FTUE steps, OCRs reward and price text, and timestamps first-offer popups; human spot-check per title"
+  example: "Rival A shows its starter pack at 4:10 after the first win; rival B at 11:30 after the first loss; product lead moves the team's own pack test to post-first-win"
+  cost: S
+  depends_on: "nothing (public video); legal review of video-platform terms"
+  buyer: "Product lead or designer at a mobile F2P studio planning an FTUE rework"
+  input: "Public YouTube/TikTok first-play videos of rival games"
+  why_existing_tools_cannot: "Teardowns are human-played (GameRefinery, Playliner) and flow libraries are human-captured; Gemini can watch 6 h of video but nobody packages FTUE extraction (competitor-and-ua.md §1)"
+  willingness_to_pay: "3 - Gamedexy Pro is $99/yr, GameRefinery about $45-51k/yr (competitor-and-ua.md §1); a team could also point Gemini at the videos itself"
+
+- id: f2p-11
+  title: "On-device stuck detector: when one tutorial screen persists >20 s with 3+ taps outside the highlighted CTA, fire a pulsing-arrow hint and log it for holdout comparison"
+  level: L4
+  cell: {buyer-role: product-retention, analysis-type: real-time-in-session-intervention, processing-location: on-device, automation-level: closed-loop-in-game-action, constraint-to-overcome: device-performance, signal-extracted: input-timing-and-hesitation, lifecycle-moment: ftue-first-session}
+  object: "ICCS 2020 HUD detection 'fast enough for real-time use during play' (methods-churn-funnel.md §4) and Affectiva's Unity plug-in used for runtime adaptation in Nevermind (market.md §7)"
+  situation: "A player sits on the 'equip item' card for 25 s tapping the character art"
+  consequence: "The game knows its own screen state, so the engine team can build this with touch events alone; video inference adds 1-2 ms per frame and battery drain for no extra signal. Product lead would buy the logic, not the vision model"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Commercial idle/hesitation detector for Unreal ('Universal Boredom Detector') tracks idle time (methods-churn-funnel.md §2)"
+  proposed: "Offer as a rule pack learned from f2p-1 reason codes, executed on engine events, no on-device video"
+  shallow: false
+  mechanism: "Thresholds learned offline from clips (dwell and off-target taps that preceded abandonment) shipped as Remote Config rules evaluated on touch events and screen IDs"
+  example: "Rule 'equip card >20 s and 3 off-target taps' triggers the arrow; holdout shows step completion 81% vs 74%"
+  cost: M
+  depends_on: "f2p-1 reason codes; Remote Config; holdout framework"
+  buyer: "Product lead at a mobile F2P studio"
+  input: "Offline: clips + touches; online: touch events + screen IDs only"
+  why_existing_tools_cannot: "Existing detectors use idle time only with no learned thresholds per screen (methods-churn-funnel.md §2)"
+  willingness_to_pay: "2 - as on-device video inference it is refused (frame budget); the learned rule pack alone is a feature of f2p-1"
+
+- id: f2p-12
+  title: "Ask-the-footage chat scoped to one funnel step: 'show players who skipped the shop tutorial and still bought in D1' returns a clip list filtered by joined purchase events"
+  level: L3
+  cell: {buyer-role: product-retention, analysis-type: ask-a-question-over-footage, delivery-form: ask-question-agent-chat, effort: XS-repackage-existing-user-test-product, companion-data: purchase-and-ad-revenue-events, video-source: own-players-consented-sdk, lifecycle-moment: d1-to-d7}
+  object: "PlaytestCloud 'First Findings ... links each friction point to its clip' (market.md §1)"
+  situation: "Product lead has a hypothesis the night before a roadmap review and no analyst free"
+  consequence: "Without a question interface the clips sit unwatched; with only a transcript-based agent, live-player clips with no think-aloud are unsearchable"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "PlaytestCloud's AI 'uses the OpenAI API on video transcripts and survey responses' (market.md §1)"
+  proposed: "Reuse the User Test ask-a-question agent, add a filter layer over joined events"
+  shallow: false
+  mechanism: "Agent translates the question into a filter over clip labels (screens, reason codes) and joined events (purchase within 24 h), then summarises the returned clips"
+  example: "Query returns 37 clips; 29 show players closing the shop tutorial and later opening the shop from the lobby; product lead cuts the forced shop step"
+  cost: S
+  depends_on: "existing User Test agent; f2p-1 labels; purchase events join"
+  buyer: "Product lead at a mobile F2P studio"
+  input: "Labelled clips + purchase and progression events"
+  why_existing_tools_cannot: "Playtest AI searches transcripts of recruited testers; live players do not think aloud, so search must run on visual labels plus events (market.md §1, methods-churn-funnel.md §2 INFERRED)"
+  willingness_to_pay: "3 - buyers value less manual video watching ('The AI analysis has been a real time-saver', market.md §1); expected as part of the platform"
+
+- id: f2p-13
+  title: "Monday FTUE digest email: top 3 new friction moments from last week's installs with D1 delta per step, one 15 s clip each, and week-over-week reason-code shift"
+  level: L4
+  cell: {buyer-role: product-retention, delivery-form: weekly-digest-email, lifecycle-moment: d1-to-d7, analysis-type: root-cause-of-a-metric-change, pricing-model: per-month-seat, value-lever-b2b: cut-time-to-insight}
+  object: "Playio: 'per-step drop-off beats overall completion ... 12% leave at step three' (methods-churn-funnel.md §1)"
+  situation: "Product lead reviews retention every Monday; the dashboard is opened twice a month"
+  consequence: "Insight dies in an unopened dashboard; the digest is the delivery the lead actually reads"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "'Time-to-insight sells: a 48-hour turnaround (PlaytestCloud)' (market.md 'Signals of willingness to pay')"
+  proposed: "Email with 3 cards, each linking to the f2p-1 step page"
+  shallow: false
+  mechanism: "Rank steps by change in reason-code share times step volume; pick the clip nearest the cohort median for each"
+  example: "Digest: 'Step 4 (first PvP): app-kill on defeat screen up from 18% to 29% after Thursday's matchmaking change' with clip"
+  cost: S
+  depends_on: "f2p-1"
+  buyer: "Product lead at a mobile F2P studio"
+  input: "Weekly aggregates from f2p-1 + D1 by step"
+  why_existing_tools_cannot: "Funnel tools email metric deltas without the cause or the clip (methods-churn-funnel.md §1)"
+  willingness_to_pay: "3 - a delivery form of f2p-1, not a separate purchase"
+
+- id: f2p-14
+  title: "Ad-promise mismatch detector: for installs from a pull-the-pin or fail-state hook creative, flag first sessions where the player hunts for the advertised mechanic in the first 90 s and quits before step 2"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, companion-data: attribution-campaign-and-creative-id, analysis-type: cohort-comparison, lifecycle-moment: ua-campaign-launch, signal-extracted: input-timing-and-hesitation, delivery-form: per-cohort-report}
+  object: "'None links an ad element to what the acquired player did on device in the first session' (competitor-and-ua.md §3 INFERRED)"
+  situation: "UA launches a fail-state hook creative; IPM is high, D1 for that creative is 9 pp below the account average, and product gets blamed for the FTUE"
+  consequence: "Product lead rewrites the FTUE for a problem the creative caused; UA keeps buying the creative because its CPI is low"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "GeekLab: 'hard to see which creative acquired players who later retain and pay, especially on iOS'; FoxData 'fail-state hooks lead in 10,000+ ads analysed' (competitor-and-ua.md §3)"
+  proposed: "Per-creative cohort report: share of first sessions with mechanic-hunting behaviour, step-2 reach, D1"
+  shallow: false
+  mechanism: "Capture targeted to installs carrying a creative ID from the MMP; classifier flags taps on scenery, menu opening and swipe patterns matching the ad's mechanic in the first 90 s"
+  example: "Creative 'pull the pin' cohort: 44% of first sessions show swipes on the map in the first minute and 31% quit before step 2 vs 12% for gameplay-true creatives; UA pauses the creative"
+  cost: M
+  depends_on: "f2p-2; MMP creative ID available on device (Android; iOS limited by attribution rules)"
+  buyer: "Product lead, with UA manager as co-owner, at a mobile casual or midcore F2P studio"
+  input: "First-session clips + attribution campaign and creative ID + D1"
+  why_existing_tools_cannot: "Segwise, Replai and Alison tag the ad and network metrics, never the acquired player's on-device behaviour (competitor-and-ua.md §3)"
+  willingness_to_pay: "4 - UA teams pay Segwise $499-1,699/month and Sett raised $57M on UA creative demand (competitor-and-ua.md §3, market.md §6)"
+
+- id: f2p-15
+  title: "Per-churner last-session reason code (stuck on level 7 after 4 fails, quit on 85 MB download, interrupted) written to the CRM so the day-3 winback push names the obstacle"
+  level: L3
+  cell: {buyer-role: product-retention, lifecycle-moment: post-churn-winback, automation-level: auto-created-ticket-or-asset, delivery-form: api-or-sdk, analysis-type: funnel-drop-off-why, value-lever-b2b: enable-automated-action, companion-data: telemetry-events}
+  object: "Halfbrick 'gifted predicted churners in-game, +5 percentage points 7-day retention' (methods-churn-funnel.md §1)"
+  situation: "A sampled player stops after failing level 7 four times; generic winback push says 'We miss you'"
+  consequence: "Reach is limited to the 1-5% of users with clips, so the lift is small in absolute terms; useful mainly to learn which obstacle-specific messages work, then apply them by event rule to everyone"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Rovio/Aalto: real pass rate vs 'churn without completing the level': r = -0.586 (methods-churn-funnel.md §3)"
+  proposed: "API field last_obstacle_code per user_id, pushed to Braze or the in-house CRM"
+  shallow: false
+  mechanism: "f2p-1 reason code from the user's last clip becomes a CRM attribute; push template keyed by code"
+  example: "Push 'Level 7 boss: try the shield booster, one free' to players coded 'stuck level 7'; return rate compared against generic push"
+  cost: S
+  depends_on: "f2p-1; CRM integration"
+  buyer: "Product lead / CRM-retention owner at a mobile F2P studio"
+  input: "Last clip per churned sampled user + progression events"
+  why_existing_tools_cannot: "Churn prediction outputs a probability, not an obstacle; Firebase predictions caught 275 of 145k churns for one customer (methods-churn-funnel.md §1)"
+  willingness_to_pay: "2 - small reach on sampled users; value is as a message-learning experiment"
+
+- id: f2p-16
+  title: "Tutorial CTA occlusion check: detect when the highlighted tutorial button sits under the notch, punch-hole or gesture bar on 20:9 and foldable screens, by device model"
+  level: L4
+  cell: {buyer-role: product-retention, signal-extracted: visual-errors-and-glitches, game-platform-and-genre: mobile-casual-hypercasual, companion-data: build-and-config-metadata, analysis-type: anomaly-alert, delivery-form: issue-tracker-ticket, lifecycle-moment: ftue-first-session}
+  object: "'a visible CTA never tapped (UI not noticed)' (methods-churn-funnel.md §2 INFERRED)"
+  situation: "On a 21:9 phone the 'Tap to continue' button of tutorial step 2 overlaps the gesture bar; swipes go home instead"
+  consequence: "Step 2 drop is 3x higher on 4 device models; the funnel blends it into the global average and nobody looks"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "'compatibility testing of a major mobile title can need 500 to 2,000+ device-OS combinations' (adjacent-usecases.md §6)"
+  proposed: "Ticket per device model with the frame, the CTA bounding box and the step-drop delta"
+  shallow: false
+  mechanism: "Button detector (mAP about 90% on mobile game UI, methods-churn-funnel.md §4) locates the highlighted CTA; overlap with screen-cutout masks per device model; alert when step drop on affected models exceeds the rest by 2x"
+  example: "Ticket: 'Step 2 CTA overlaps gesture bar on 4 models (1.8% of installs), step-2 drop 27% vs 9%'"
+  cost: S
+  depends_on: "f2p-2 clips; device cutout database"
+  buyer: "Product lead at a mobile casual F2P studio"
+  input: "FTUE clips + device model + screen aspect ratio"
+  why_existing_tools_cannot: "Device labs test a matrix before release; nothing watches real first sessions across the long tail of models (adjacent-usecases.md §6)"
+  willingness_to_pay: "3 - outsourced QA $15-50/tester hour is the anchor (adjacent-usecases.md §1)"
+
+- id: f2p-17
+  title: "Tutorial text overflow per language: OCR FTUE cards in German, Brazilian Portuguese and Turkish footage, flag truncated or untranslated strings, and correlate with that language's step drop"
+  level: L3
+  cell: {buyer-role: product-retention, signal-extracted: text-overflow-and-untranslated, lifecycle-moment: new-market-or-language-launch, analysis-type: cohort-comparison, companion-data: telemetry-events, delivery-form: issue-tracker-ticket}
+  object: "Nimdzi: wished-for 'language-aware visual anomaly detection (truncation, RTL rendering)' (adjacent-usecases.md §5)"
+  situation: "Brazil launch: step 3 drop is 2x English; the Portuguese tutorial card cuts off the second sentence that names the button to press"
+  consequence: "Team blames the market; LQA screenshots were taken on one device size and missed it"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "'clients take screenshots of every screen in the localised build and translators judge from them' (adjacent-usecases.md §5)"
+  proposed: "Ticket per string with frame, language, device and step-drop delta"
+  shallow: false
+  mechanism: "OCR on tutorial-card regions; compare against the string table; flag ellipsis, clipped glyphs, source-language strings; join to step drop by device language"
+  example: "pt-BR card 3 truncated on 5.5-inch screens; step-3 drop 22% vs 11% English; loc team shortens the string"
+  cost: S
+  depends_on: "f2p-2 clips; string table export"
+  buyer: "Product lead with localisation lead at a mobile F2P studio entering new markets"
+  input: "FTUE clips by device language + string table + step events"
+  why_existing_tools_cannot: "No vendor offers a recording-based overflow check; LQA is manual screenshot review (adjacent-usecases.md §5)"
+  willingness_to_pay: "3 - no price found for LQA tooling (adjacent-usecases.md §5)"
+
+- id: f2p-18
+  title: "Pre-release FTUE agent run: a vision agent plays each nightly build's tutorial without scripted knowledge; screens where it stalls >10 s or taps the wrong element 3 times are flagged as likely comprehension blockers"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: automated-bot-or-agent-playthrough, capture-trigger-and-sampling: scheduled-bot-playthrough, lifecycle-moment: pre-launch-qa, analysis-type: build-to-build-regression-diff, delivery-form: alert-or-slack, constraint-to-overcome: accuracy-and-trust}
+  object: "Roohi et al. (Rovio): DRL agents on 168 levels predict per-level churn (methods-churn-funnel.md §3)"
+  situation: "A redesigned tutorial goes to production on Thursday with no player having seen it"
+  consequence: "An agent stall is not human confusion; false alarms on 3 of 5 flags would teach the team to ignore it. Product lead would use it as a smoke test, not a comprehension verdict"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "'16% fully trust AI outcomes, 10% not at all' (market.md §3); nunu.ai agent is 'fully vision-based, taking a live stream from the device' (market.md §3)"
+  proposed: "Nightly Slack post with flagged screens and the agent's clip, compared to the previous build"
+  shallow: false
+  mechanism: "General vision agent given only the goal 'complete the tutorial'; stall and wrong-tap counters per screen; diff against last build's run"
+  example: "Build 1.44: agent stalls 40 s on the new crafting card that 1.43 did not have; designer checks and adds a highlight before release"
+  cost: M
+  depends_on: "nightly build pipeline on device farm; agent vendor or in-house agent"
+  buyer: "Product lead at a mobile F2P studio shipping weekly"
+  input: "Agent playthrough video of nightly builds + build metadata"
+  why_existing_tools_cannot: "QA agents (modl.ai, nunu.ai) report bugs, not comprehension; no product maps agent stalls to FTUE risk (market.md §3 'Does NOT do')"
+  willingness_to_pay: "2 - trust in AI outcomes is low (16%, market.md §3); a cheap smoke test at best"
+
+- id: f2p-19
+  title: "First-offer exposure audit: seconds from install to first starter-pack popup, share dismissed in under 1 s, and whether the next tutorial step is completed, compared across offer-timing variants"
+  level: L4
+  cell: {buyer-role: product-retention, signal-extracted: economy-and-store-events, companion-data: purchase-and-ad-revenue-events, lifecycle-moment: ftue-first-session, analysis-type: ab-test-variant-explanation, delivery-form: per-cohort-report, game-platform-and-genre: mobile-midcore-f2p}
+  object: "'player looked at the shop button for 6 s and did not tap' as the canonical un-instrumented step (methods-churn-funnel.md §1 INFERRED)"
+  situation: "Monetisation wants the starter pack at minute 3; product lead suspects it costs D1"
+  consequence: "Events record 'offer_shown' and 'offer_closed' but not whether the player read it, so the D1 cost of an early offer is argued, not measured"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "'dwell/reading time on a tutorial card before dismiss' listed among signals in video and not in standard event streams (methods-churn-funnel.md §2 INFERRED)"
+  proposed: "Per-variant table: offer timestamp, dismiss latency distribution, next-step completion, D1, D1 payer rate"
+  shallow: false
+  mechanism: "Offer-popup detector timestamps appearance; touch overlay gives time to close and whether the close followed any scroll or price-area dwell; joined to purchase and progression events"
+  example: "Minute-3 variant: 71% close in under 1 s and 6% quit within 30 s; minute-8 variant: 44% close under 1 s and payer rate is equal; product lead moves the offer"
+  cost: S
+  depends_on: "f2p-1; offer-timing variants in Remote Config"
+  buyer: "Product lead negotiating FTUE offer timing with the monetisation lead at a mid-size F2P studio"
+  input: "FTUE clips + offer and purchase events + variant ID"
+  why_existing_tools_cannot: "Event analytics log show and close; replay tools see the engine canvas as screenshots with no popup identity (methods-churn-funnel.md §2, §6)"
+  willingness_to_pay: "3 - part of the f2p-1 subscription; settles an internal argument rather than a budget line"
+
+- id: f2p-20
+  title: "Consent-bias calibrator: compare installs that accept recording against non-consenters on 10 telemetry features and reweight every video-derived rate to the full install base, with a warning under 100 clips per cohort"
+  level: L4
+  cell: {buyer-role: product-retention, constraint-to-overcome: sampling-bias, capture-trigger-and-sampling: opt-in-panel, companion-data: telemetry-events, analysis-type: cohort-comparison, delivery-form: per-cohort-report}
+  object: "'Regulatory and platform friction ... pushes any device-video product toward opt-in cohorts' (methods-churn-funnel.md §7 INFERRED)"
+  situation: "Only a small share of new installs accept the recording prompt (assumed 3-8%), skewed to engaged players on Wi-Fi in tier-1 countries"
+  consequence: "Reason-code shares describe the consenters, not the churners; the CFO or analytics head rejects the numbers"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "Apple 2019: 'explicit user consent and ... a clear visual indication when recording' (methods-churn-funnel.md §7)"
+  proposed: "Weights per cohort shown next to every rate in f2p-1, with raw and reweighted values"
+  shallow: false
+  mechanism: "Propensity model on consent using device tier, country, session-1 length, install source, D1; inverse-propensity weights applied to clip-derived rates"
+  example: "Raw 'stuck on level 3' 18%, reweighted 26% because low-tier Android players consent less and fail more"
+  cost: S
+  depends_on: "f2p-2 consent flag in telemetry for all installs"
+  buyer: "Product lead, to defend numbers to the analytics head"
+  input: "Consent flag + telemetry for all installs + clip-derived rates"
+  why_existing_tools_cannot: "Playtest vendors report on recruited panels with no reweighting to live installs (market.md §1)"
+  willingness_to_pay: "2 - nobody buys a calibrator alone; without it f2p-1 numbers are not trusted"
+
+- id: f2p-21
+  title: "REFUSED: front-camera facial emotion scores on live players during the first session"
+  level: L3
+  cell: {buyer-role: product-retention, signal-extracted: facecam-expression, companion-data: facecam, constraint-to-overcome: privacy-and-consent, video-source: own-players-consented-sdk, lifecycle-moment: ftue-first-session}
+  object: "EU AI Act Art. 50(3) disclosure duty and GDPR biometric rules for emotion recognition (methods-churn-funnel.md §7)"
+  situation: "Vendor pitches 'see the frustration on their face' for FTUE"
+  consequence: "Refused: a camera permission prompt in minute 1 costs FTUE conversion, adds biometric obligations, and research shows gameplay features beat facial features for frustration anyway"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "'gameplay-feature models were significantly more accurate than facial-feature models for perceived frustration' (methods-churn-funnel.md §5)"
+  proposed: "Drop; use pixel-and-input signals only"
+  shallow: false
+  mechanism: "Facial expression model on front-camera stream synced to gameplay"
+  example: "Refusal in practice: product lead rejects the camera prompt in the FTUE test plan after legal review"
+  cost: M
+  depends_on: "camera permission; biometric consent flow"
+  buyer: "Product lead (refusing) at a mobile F2P studio"
+  input: "Front-camera video + gameplay clips"
+  why_existing_tools_cannot: "Only lab and playtest tools capture facecam (Antidote, iMotions) with recruited consent; live-player facecam is a legal and conversion cost, not a tool gap (market.md §1, §7)"
+  willingness_to_pay: "1 - Player Research's own researcher: biometrics are 'often oversold' (market.md §1)"
+
+- id: f2p-22
+  title: "REFUSED: full-session 720p recording of every new install's first session"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, constraint-to-overcome: bandwidth-and-storage, signal-extracted: ui-state-and-screen-flow, pricing-model: per-hour-of-video, lifecycle-moment: ftue-first-session}
+  object: "'a 30-minute first session at 2 Mbps is about 450 MB of upload' (methods-churn-funnel.md §7)"
+  situation: "Vendor prices per hour of video and recommends recording 100% of first sessions"
+  consequence: "Refused: 450 MB upload per new player on top of the game download triggers battery and data complaints in store reviews; 100k installs/day at 10 min and 1 Mbps is about 7.5 TB/day"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "'Full capture is unrealistic on mobile ... A studio at 100k new installs/day recording only the first 10 minutes at 1 Mbps would ingest about 7.5 TB/day' (methods-churn-funnel.md §7)"
+  proposed: "Drop in favour of f2p-2 triggered ring buffer at 1-5% sample"
+  shallow: false
+  mechanism: "Continuous 720p capture and upload"
+  example: "Refusal in practice: SDK review rejects 100% capture; pilot proceeds at 2% sample with trigger-only upload"
+  cost: S
+  depends_on: "nothing"
+  buyer: "Product lead (refusing) with the CTO at a mobile F2P studio"
+  input: "Full first-session video"
+  why_existing_tools_cannot: "Not a tool gap: UXCam and Sentry already sample and use screenshots or ring buffers for cost reasons (methods-churn-funnel.md §6)"
+  willingness_to_pay: "1 - per-hour pricing at full capture scales cost with installs, not insight"
+
+- id: f2p-23
+  title: "REFUSED: a vendor-hosted 'video churn risk score' per user with no feature table and no reason code"
+  level: L3
+  cell: {buyer-role: product-retention, analysis-type: churn-prediction-features, delivery-form: dashboard, automation-level: insight-for-human, constraint-to-overcome: accuracy-and-trust, lifecycle-moment: d1-to-d7}
+  object: "Firebase Predictions caught 'only 275 of 145k churn instances' for Surge (methods-churn-funnel.md §1)"
+  situation: "Vendor offers 'AI churn score from gameplay video' as a dashboard column"
+  consequence: "Refused: a score with no reason cannot be acted on, cannot be validated in the studio's own model, and there is no published evidence video predicts churn"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "'No paper was found that predicts churn or engagement directly from human gameplay video frames' (methods-churn-funnel.md §3)"
+  proposed: "Replace with f2p-7 feature table and f2p-1 reason codes"
+  shallow: false
+  mechanism: "Opaque model over clips outputs a 0-1 churn risk per user"
+  example: "Refusal in practice: product lead asks 'what would I change on Monday if a user scores 0.8?' and gets no answer"
+  cost: M
+  depends_on: "nothing"
+  buyer: "Product lead (refusing) at a mobile F2P studio"
+  input: "Clips + vendor model"
+  why_existing_tools_cannot: "Firebase and Google Play already offered churn scores and buyers found recall low (methods-churn-funnel.md §1)"
+  willingness_to_pay: "1 - black-box churn scores were given away free (Firebase) and still criticised"
+
+- id: f2p-24
+  title: "LOW: managed analyst service that watches 200 clips a month and sends a PDF in 10 working days"
+  level: L3
+  cell: {buyer-role: product-retention, delivery-form: managed-service-with-analyst, pricing-model: managed-project, value-lever-b2b: replace-labour-hours, lifecycle-moment: d1-to-d7, buyer-org-type: mid-size-studio}
+  object: "Player Research: 'a people-heavy agency rather than software, so it does not scale to thousands of sessions' (market.md §1)"
+  situation: "Studio ships a build every week; the PDF arrives two builds later"
+  consequence: "Mostly refused for live ops: stale by delivery. Accepted once, at soft launch, as a one-off read alongside f2p-9"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "PlaytestCloud 'most results within 48 hours' is the turnaround buyers already get (market.md §1)"
+  proposed: "Offer analyst review only as a soft-launch add-on to f2p-9"
+  shallow: false
+  mechanism: "Human analyst watches sampled clips, writes findings"
+  example: "Product lead buys one 2-week soft-launch read, declines the monthly retainer"
+  cost: S
+  depends_on: "f2p-2 clips"
+  buyer: "Product lead at a mid-size F2P studio"
+  input: "Sampled clips + funnel export"
+  why_existing_tools_cannot: "Agencies exist (Player Research); the gap is speed and scale, not human review (market.md §1)"
+  willingness_to_pay: "2 - one-off only; recurring analyst time competes with in-house UX research"
+
+- id: f2p-25
+  title: "LOW: arousal-from-pixels curve over the FTUE timeline with no link to a step, reason code or retention outcome"
+  level: L3
+  cell: {buyer-role: product-retention, signal-extracted: emotion-arousal-from-pixels, analysis-type: funnel-drop-off-why, delivery-form: dashboard, constraint-to-overcome: ground-truth-labels, lifecycle-moment: ftue-first-session}
+  object: "Makantasis et al.: arousal from gameplay video alone, 'over 78% accuracy on average' (methods-churn-funnel.md §5)"
+  situation: "Vendor shows a line chart of predicted arousal across minutes 0-15 of the first session"
+  consequence: "Low value: a rising or falling curve does not say which screen to change; the product lead would accept arousal only as one more feature column in f2p-7"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Biometrics are 'often oversold' (market.md §1); the AGAIN dataset covers 9 games, not the studio's own (methods-churn-funnel.md §5)"
+  proposed: "Fold into f2p-7 as a feature; drop the standalone chart"
+  shallow: false
+  mechanism: "Pixel-only arousal model scored per second, averaged per minute"
+  example: "Chart shows arousal dip at minute 6; nobody can tell if it is the shop tutorial or a loading screen until they watch clips anyway"
+  cost: M
+  depends_on: "per-genre arousal labels for calibration"
+  buyer: "Product lead at a mobile F2P studio"
+  input: "FTUE clips only"
+  why_existing_tools_cannot: "Research models exist but are trained on 9 games with lab labels; no product ties arousal to a funnel step (methods-churn-funnel.md §5)"
+  willingness_to_pay: "2 - no buyer price signal for game arousal analytics in the notes; emotion vendors moved to ads and automotive (market.md §7)"
+
+- id: f2p-26
+  title: "Genre FTUE benchmark from emulator capture: my time-to-first-win, tutorial length and first-session quit points vs the median of 200 merge and puzzle titles captured on an Android emulator platform"
+  level: L3
+  cell: {buyer-role: product-retention, video-source: platform-or-emulator-capture, analysis-type: benchmark-vs-competitor, effort: requires-partner-or-platform-deal, game-platform-and-genre: mobile-casual-hypercasual, delivery-form: dashboard, pricing-model: per-game}
+  object: "'many top-performing studios store data in-house and never appear in public benchmarks' (methods-churn-funnel.md §1)"
+  situation: "Product lead's FTUE runs 14 minutes to the first free choice; nobody knows whether that is long for the genre"
+  consequence: "Without a behavioural benchmark, FTUE length is debated on taste; public benchmarks give D1 only"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "'No vendor found that does CV-based competitor gameplay analysis' (market.md §9)"
+  proposed: "Percentile dashboard per FTUE metric, refreshed monthly from platform capture"
+  shallow: false
+  mechanism: "Emulator or cloud platform captures first sessions of many titles without an SDK; the same screen and step extractors run per title; metrics aggregated per genre"
+  example: "Time to first win: own game 2:40, genre median 0:55; product lead cuts the opening cutscene"
+  cost: L
+  depends_on: "partnership with an emulator or cloud platform that captures sessions with consent; per-title extractor generalisation"
+  buyer: "Product lead at a casual mobile F2P studio"
+  input: "Platform-captured first sessions across 200 titles + own SDK clips"
+  why_existing_tools_cannot: "Competitive intelligence is human-played (GameRefinery 260 features) and public benchmarks are retention-only (competitor-and-ua.md §1, methods-churn-funnel.md §1)"
+  willingness_to_pay: "3 - competitive intelligence sells at $45-115k/yr (competitor-and-ua.md §8), but at publisher level, not per product lead"
+
+- id: f2p-27
+  title: "Session-1 ending comparison: the last 30 s of session 1 for D1 returners vs non-returners (ended on reward screen, fail screen, mid-tutorial or energy-out), as a per-ending D1 rate table"
+  level: L4
+  cell: {buyer-role: product-retention, analysis-type: cohort-comparison, lifecycle-moment: d1-to-d7, signal-extracted: ui-state-and-screen-flow, capture-trigger-and-sampling: random-sample, companion-data: telemetry-events, delivery-form: per-cohort-report}
+  object: "Tilting Point: 'highest churn rate occurs within the first 30 minutes of play'; Playio's 'session-1 to session-2 conversion' measure (methods-churn-funnel.md §1)"
+  situation: "Many players end session 1 voluntarily; the lead does not know which ending state predicts a return"
+  consequence: "Design cannot shape the session-1 ending (cliffhanger, reward pending, energy refill timer) without knowing which ending returns players"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Rovio/Aalto: churn tied to 'churn without completing the level' (r = -0.586) suggests ending state matters (methods-churn-funnel.md §3)"
+  proposed: "Table: ending state, share of session-1 endings, D1 rate, 3 clips per state"
+  shallow: false
+  mechanism: "Random 2% sample with an end-of-session buffer; classifier labels the final screen state; joined to D1 return"
+  example: "Ending on a pending chest timer: D1 41%; ending on a fail screen: D1 17%; team adds a chest timer that starts at the end of the tutorial"
+  cost: S
+  depends_on: "f2p-2 with 'session end' as a trigger"
+  buyer: "Product lead owning D1 at a mobile F2P studio"
+  input: "Last 30 s of session-1 clips + D1 return flag"
+  why_existing_tools_cannot: "Telemetry logs session end and last event but not the visible state; session replay tools do not label game screens (methods-churn-funnel.md §2, §6)"
+  willingness_to_pay: "4 - part of the f2p-1 package priced against PlaytestCloud's €113-141 per analysed session (market.md §1)"
