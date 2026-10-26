@@ -1,0 +1,532 @@
+- id: ingest-1
+  title: "Add video pop-up has no rule for a video still ingesting when the pop-up opens: hidden, listed-disabled with a status badge, or selectable"
+  level: L3
+  cell: {surface: add-video-popup, video-state: still-ingesting, library-state: 50-videos, action: open-add-video-popup}
+  object: "Add video pop-up; 'select videos from their ingested videos'"
+  situation: "User uploaded 3 videos 2 minutes ago, they are mid-ingestion, user opens the pop-up from Report mode"
+  consequence: "If hidden, the user thinks the upload was lost and re-uploads, creating duplicates; if selectable, the run has no transcript to read"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "Whether a video that is still ingesting, or failed ingestion, can be selected."
+  proposed: "Spec line: still-ingesting videos are listed greyed with an 'Ingesting' badge and are not selectable"
+  shallow: false
+
+- id: ingest-2
+  title: "Pop-up list does not refresh when a listed video finishes ingesting while the pop-up is open"
+  level: L4
+  cell: {surface: add-video-popup, actor: ingestion-job, video-state: still-ingesting, time-and-connection: steady-state, action: open-add-video-popup}
+  object: "Add video pop-up video list"
+  situation: "Pop-up open for 4 minutes; ingestion-job flips video 'demo-07' from ingesting to ingested at minute 2"
+  consequence: "Row stays greyed until the user closes and reopens the pop-up, losing any selections made so far"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "the user selects videos from their ingested videos"
+  proposed: "Acceptance criterion: pop-up polls ingestion status every 10 s (or on push) and enables the row in place without clearing selections"
+  shallow: false
+
+- id: ingest-3
+  title: "Video re-ingested after an edit on the Videos page between selection and Submit: run uses old transcript, new one, or blocks"
+  level: L3
+  cell: {surface: submit-button, actor: ingestion-job, video-state: ingested, action: submit}
+  object: "Submit button; Videos page 'uploaded videos get ingested'"
+  situation: "User selects 'interview-3' (ingested), trims it on the Videos page in a second tab, re-ingestion starts, user clicks Submit 30 s later"
+  consequence: "Run either reads a half-overwritten transcript or the old untrimmed one; the report quotes content the user cut out"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Videos page: users upload videos; uploaded videos get ingested."
+  proposed: "Spec line: a video under re-ingestion counts as 'ingesting'; Submit is rejected for it with copy naming the video"
+  shallow: false
+
+- id: ingest-4
+  title: "Video selected in the pop-up then deleted on the Videos page before Submit: Submit behaviour is unspecified"
+  level: L3
+  cell: {surface: selected-videos-list, actor: same-user-second-tab, video-state: deleted-after-selection-before-run, action: submit}
+  object: "Selected videos list on Report form; Submit"
+  situation: "4 videos selected; user deletes 1 of them in another tab, then clicks Submit"
+  consequence: "Server may accept a dangling video id; the run later fails or silently covers 3 of 4 videos while History shows 4"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "Videos are selected from already-uploaded, ingested videos via the Add video pop-up"
+  proposed: "Server revalidates every id at Submit; on a missing id return an error banner naming the video and keep the form intact"
+  shallow: false
+
+- id: ingest-5
+  title: "Video deleted after Submit while the run is still queued: run snapshots content at Submit or reads it at start"
+  level: L3
+  cell: {surface: history-entry-row, actor: background-agent-job, video-state: deleted-after-selection-before-run, run-status: queued}
+  object: "History entry row status"
+  situation: "Run queued behind 10 others for 3 minutes; user deletes 1 of its 5 videos during the wait"
+  consequence: "Entry flips to Failed or to partial with no explanation; the user never connects it to the delete"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "a new entry appears with whatever was submitted"
+  proposed: "Spec line: content is resolved at run start; a deleted video yields status 'Partial' with 'video X was deleted before the run started'"
+  shallow: false
+
+- id: ingest-6
+  title: "History entry detail for a done run whose video was later deleted: thumbnail, name and link to the video are unspecified"
+  level: L4
+  cell: {surface: history-entry-detail, video-state: deleted-after-run, history-state: entry-referencing-deleted-video, action: open-history-entry}
+  object: "History entry detail, list of videos covered"
+  situation: "Report on 6 videos done last week; user deleted 2 of them yesterday and opens the entry"
+  consequence: "Broken thumbnails and dead links, or the 2 names vanish and the report text cites videos the entry no longer lists"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "History tab: Lists past and current submissions from both modes."
+  proposed: "Entry stores video name at submit; deleted videos render as '<name> (deleted)' with placeholder thumbnail and no link"
+  shallow: false
+
+- id: ingest-7
+  title: "Videos page delete confirmation shows no count of History entries and threads that reference the video"
+  level: L4
+  cell: {surface: videos-page, actor: creator-owner, video-state: deleted-after-run, history-state: entry-referencing-deleted-video}
+  object: "Videos page delete action"
+  situation: "User deletes a video used in 3 reports and 1 open question thread"
+  consequence: "User unknowingly breaks follow-ups and source links in 4 History entries"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "Videos page: users upload videos; uploaded videos get ingested."
+  proposed: "Delete dialog copy: 'Used in 4 History entries. They will keep their output but lose access to this video.'"
+  shallow: false
+
+- id: ingest-8
+  title: "Follow-up asked after one of the thread's videos was deleted: agent source for the answer is unspecified"
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-after-video-deleted, video-state: deleted-after-run, action: ask-follow-up}
+  object: "Follow-up thread; 'Follow-up questions are supported after the first answer.'"
+  situation: "Thread over 3 videos; video 2 deleted; user asks follow-up 'what did participant 2 say about pricing?'"
+  consequence: "Agent answers from cached transcript the user thought was deleted (privacy surprise) or answers without it and does not say so"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Ask question supports follow-ups."
+  proposed: "Spec line: deleting a video purges its transcript; follow-ups in affected threads show a banner 'video X deleted, answers exclude it'"
+  shallow: false
+
+- id: ingest-9
+  title: "Two videos re-uploaded with the same name appear as identical rows in the pop-up with no disambiguator"
+  level: L4
+  cell: {surface: add-video-popup, video-state: re-uploaded-same-name, library-state: 50-videos, action: search}
+  object: "Add video pop-up, 'searching by name'"
+  situation: "User re-uploads 'session-1.mp4' after a bad first upload; search 'session-1' returns 2 rows"
+  consequence: "User picks the wrong copy (the bad one) 50% of the time"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "The pop-up supports filtering by the tags the user has applied to videos, and searching by name."
+  proposed: "Each pop-up row shows upload date, duration and thumbnail; same-name rows get a '(2)' suffix"
+  shallow: false
+
+- id: ingest-10
+  title: "Re-upload with the same name after deleting the original: History entries must not rebind to the new video by name"
+  level: L3
+  cell: {surface: history-entry-detail, video-state: re-uploaded-same-name, history-state: entry-referencing-deleted-video, action: open-history-entry}
+  object: "History entry detail video references"
+  situation: "User deletes 'kickoff.mp4', uploads a different file named 'kickoff.mp4', opens an old report"
+  consequence: "If references resolve by name, the old report links to and follow-ups query a video it never covered"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "a new entry appears with whatever was submitted"
+  proposed: "Acceptance criterion: entries reference video ids, never names; old entry shows 'kickoff.mp4 (deleted)'"
+  shallow: false
+
+- id: ingest-11
+  title: "Selected-video chip shows only the name, so a same-name re-upload in another tab makes the selection ambiguous"
+  level: L3
+  cell: {surface: selected-videos-list, actor: same-user-second-tab, video-state: re-uploaded-same-name, action: select-video}
+  object: "Selected videos list in Report and Ask question forms"
+  situation: "User has 'test-A' selected, re-uploads a corrected 'test-A' in a second tab, returns to the form"
+  consequence: "User believes the corrected file is selected; the run uses the old one"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "Add video: clicking 'Add video' opens a pop-up where the user selects videos"
+  proposed: "Selected chip shows thumbnail + upload timestamp; hover shows video id short code"
+  shallow: false
+
+- id: ingest-12
+  title: "Ingestion-failed video in the pop-up: hidden or listed disabled with the failure reason and a link to retry on the Videos page"
+  level: L3
+  cell: {surface: add-video-popup, video-state: ingestion-failed, library-state: 50-videos, action: open-add-video-popup}
+  object: "Add video pop-up"
+  situation: "1 of 50 videos failed ingestion (unsupported codec); user searches for it by name"
+  consequence: "If hidden, search returns 0 results and the user cannot tell the video exists but failed"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "Whether a video that is still ingesting, or failed ingestion, can be selected."
+  proposed: "List failed videos disabled with 'Ingestion failed: <reason>' and a 'Retry on Videos page' link"
+  shallow: false
+
+- id: ingest-13
+  title: "If still-ingesting videos are selectable, ingestion that fails after Submit leaves the run status undefined"
+  level: L3
+  cell: {surface: history-entry-row, actor: ingestion-job, video-state: ingestion-failed, run-status: partial-some-videos-unusable}
+  object: "History entry row status"
+  situation: "User submits 5 videos, 1 still ingesting; its ingestion fails 6 minutes later"
+  consequence: "Run either waits forever, fails as a whole, or reports on 4 with no notice"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Statuses an entry can have on the History tab"
+  proposed: "Spec line: run proceeds with remaining videos, status 'Partial (4/5)', detail names the failed video and reason"
+  shallow: false
+
+- id: ingest-14
+  title: "If runs may wait on ingestion, no maximum wait or distinct History status for 'waiting for ingestion'"
+  level: L4
+  cell: {surface: history-entry-row, video-state: still-ingesting, run-status: stuck-over-1h, videos-selected: "2-5"}
+  object: "History entry status column"
+  situation: "Run includes a 3-hour video whose ingestion takes 70 minutes"
+  consequence: "Entry shows 'Queued' for over an hour; user cannot tell if the agent or ingestion is the bottleneck"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "There is no loading page, to save the user's time."
+  proposed: "Status 'Waiting for ingestion (1 video)'; fail the wait after 120 minutes with a named reason"
+  shallow: false
+
+- id: ingest-15
+  title: "Silent video with no speech completes ingestion with an empty transcript and is listed as a normal ingested video"
+  level: L4
+  cell: {surface: add-video-popup, video-state: silent-or-no-transcript, mode: report, action: select-video}
+  object: "Add video pop-up row; 'ingested' state"
+  situation: "User uploads a 12-minute unnarrated screen recording; ASR returns 0 words"
+  consequence: "User selects it expecting analysis; report contains nothing about it"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "select videos from their ingested videos"
+  proposed: "Pop-up row shows a 'No speech detected' badge; selecting it shows an inline warning"
+  shallow: false
+
+- id: ingest-16
+  title: "Report over 5 videos where 1 has no transcript: report does not say which video contributed nothing"
+  level: L4
+  cell: {surface: history-entry-detail, videos-selected: "2-5", video-state: silent-or-no-transcript, run-status: partial-some-videos-unusable, mode: report}
+  object: "Report output; 'A Report produces one output covering all selected videos'"
+  situation: "5 videos selected, video 4 is silent"
+  consequence: "Report claims to cover 5 sessions but synthesises 4; findings counts (e.g. '3 of 5 users') are wrong"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "A Report produces one output covering all selected videos, not one per video."
+  proposed: "Report header lists per-video coverage: 'Used: 4/5. Skipped: video-4 (no speech)'"
+  shallow: false
+
+- id: ingest-17
+  title: "Ask question with only silent videos selected: Submit not blocked and output may be empty or hallucinated"
+  level: L3
+  cell: {surface: ask-question-form, videos-selected: "1", video-state: silent-or-no-transcript, run-status: done-with-empty-output, action: submit}
+  object: "Ask question form Submit"
+  situation: "User selects 1 silent video and asks 'what confused the user?'"
+  consequence: "Entry shows Done with an invented answer or a blank answer, no reason given"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "A question about the selected videos, typed by the user"
+  proposed: "Block Submit with copy 'Selected videos have no transcript' or return a fixed 'No speech found in selected videos' answer"
+  shallow: false
+
+- id: ingest-18
+  title: "Suggested questions derived from transcripts are empty for a silent or transcript-less selection, and the area's empty state is unspecified"
+  level: L3
+  cell: {surface: suggested-questions, mode: ask-question, videos-selected: "1", video-state: silent-or-no-transcript}
+  object: "Suggested questions"
+  situation: "Suggested questions generated from selected videos; the only selected video has 0 transcript words"
+  consequence: "Area renders blank, spinner forever, or generic questions the video cannot answer"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Whether suggested questions are static or derived from the selected videos."
+  proposed: "If derived and transcript is empty, fall back to the static list and label it 'General questions'"
+  shallow: false
+
+- id: ingest-19
+  title: "Partial transcript: a 3-hour video whose ASR stops at minute 47 is still marked 'ingested'"
+  level: L3
+  cell: {surface: videos-page, actor: ingestion-job, video-state: 3-hour-long, action: open-add-video-popup}
+  object: "'ingested' state on Videos page and pop-up"
+  situation: "ASR job hits a 45-minute processing timeout; transcript covers 0:00-0:47 of 3:00:00 (26%)"
+  consequence: "Reports and answers silently ignore 74% of the session"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "uploaded videos get ingested"
+  proposed: "Ingestion records transcript coverage %; below 95% status is 'Partially ingested' with the covered range shown"
+  shallow: false
+
+- id: ingest-20
+  title: "Answer from a partially transcribed video gives no disclosure that later minutes were not read"
+  level: L4
+  cell: {surface: history-entry-detail, mode: ask-question, video-state: 3-hour-long, run-status: done}
+  object: "History entry detail answer"
+  situation: "User asks 'what happened at the checkout step?' which occurs at 2:10:00, beyond transcript coverage"
+  consequence: "Agent answers 'checkout was not discussed', a false negative"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "A question about the selected videos, typed by the user"
+  proposed: "Answer footer: 'Transcript covers 0:00-0:47 of this video'"
+  shallow: false
+
+- id: ingest-21
+  title: "'Ingested' has no definition of which artifacts must exist (transcript, frames, duration, thumbnail) before a video is selectable"
+  level: L3
+  cell: {surface: videos-page, actor: ingestion-job, video-state: ingested, library-state: 50-videos}
+  object: "Named state 'ingested'"
+  situation: "Transcript done, frame extraction and thumbnail still pending"
+  consequence: "Pop-up and agent disagree on readiness; video selectable but run lacks visual data"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Videos are selected from already-uploaded, ingested videos"
+  proposed: "Spec line: 'ingested' = transcript + duration + thumbnail stored; optional artifacts listed separately"
+  shallow: false
+
+- id: ingest-22
+  title: "Multi-language audio transcribed with one detected language garbles the other language's segments in the report"
+  level: L3
+  cell: {surface: history-entry-detail, mode: report, video-state: non-english-audio, run-status: done}
+  object: "Report output quoting video content"
+  situation: "Interview alternates English and Hindi; ASR locks to English for the whole 40 minutes"
+  consequence: "Report quotes phonetic gibberish as participant statements"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "uploaded videos get ingested"
+  proposed: "Ingestion uses per-segment language detection; Videos page shows detected languages per video"
+  shallow: false
+
+- id: ingest-23
+  title: "Answer language unspecified when the video's audio is non-English and the question is in English"
+  level: L3
+  cell: {surface: ask-question-form, video-state: non-english-audio, text-input-state: question-picked-from-suggested, mode: ask-question}
+  object: "Question field / suggested questions"
+  situation: "Video audio is Japanese; user picks an English suggested question"
+  consequence: "Answer may be in Japanese, English, or mixed; quotes may be untranslated"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Suggested questions are shown and can be picked"
+  proposed: "Spec line: answers are in the question's language; quotes shown in original with translation"
+  shallow: false
+
+- id: ingest-24
+  title: "Pop-up offers no way to see or filter by audio language, only tags and name"
+  level: L4
+  cell: {surface: add-video-popup, video-state: non-english-audio, library-state: 2000-videos, action: filter-by-tag}
+  object: "Tag filter and search box in Add video pop-up"
+  situation: "Library of 2000 videos in 4 languages; user wants only the German sessions"
+  consequence: "User must have tagged by language manually; untagged videos cannot be found by language"
+  p_typical: 0.02
+  grounded: quote
+  evidence: "The pop-up supports filtering by the tags the user has applied to videos, and searching by name."
+  proposed: "Ingestion auto-applies a 'lang:<code>' system tag usable in the tag filter"
+  shallow: false
+
+- id: ingest-25
+  title: "Missing thumbnail (generation failed or black first frame of a 3-second clip) renders as a broken image in the pop-up"
+  level: L4
+  cell: {surface: add-video-popup, video-state: 3-second-clip, library-state: 50-videos, action: open-add-video-popup}
+  object: "Add video pop-up row thumbnail"
+  situation: "Thumbnail extraction at t=1s returns a black frame or fails for a 3-second clip"
+  consequence: "Rows look broken or identical; user cannot visually pick the clip"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "the user selects videos from their ingested videos"
+  proposed: "Thumbnail failure does not block 'ingested'; row shows a placeholder icon with duration"
+  shallow: false
+
+- id: ingest-26
+  title: "History entry row: whether it shows video thumbnails and what placeholder appears when a thumbnail is missing"
+  level: L3
+  cell: {surface: history-entry-row, video-state: ingested, history-state: 100-entries, action: open-history-entry}
+  object: "History entry row; 'a new entry appears with whatever was submitted'"
+  situation: "100 entries, each with 1-20 videos, some without thumbnails"
+  consequence: "Rows render inconsistently; 20 thumbnails per row overflows layout"
+  p_typical: 0.02
+  grounded: quote
+  evidence: "a new entry appears with whatever was submitted"
+  proposed: "Row shows up to 3 thumbnails + '+N' counter, placeholder for missing"
+  shallow: false
+
+- id: ingest-27
+  title: "First-use empty pop-up while 20 uploads are still ingesting says 'no videos' instead of '20 ingesting'"
+  level: L4
+  cell: {surface: empty-state, video-state: still-ingesting, library-state: empty-library, time-and-connection: first-ever-use, action: open-add-video-popup}
+  object: "Add video pop-up empty state"
+  situation: "New user uploads 20 videos, immediately goes to the Agent page and opens the pop-up; 0 are ingested"
+  consequence: "User concludes uploads failed and re-uploads all 20, doubling ingestion load"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "the user selects videos from their ingested videos"
+  proposed: "Empty state copy: '20 videos are still ingesting (about N minutes). Check the Videos page.'"
+  shallow: false
+
+- id: ingest-28
+  title: "No ingestion progress or ETA in the pop-up for a long video that is still ingesting"
+  level: L4
+  cell: {surface: add-video-popup, video-state: 3-hour-long, actor: ingestion-job, action: open-add-video-popup}
+  object: "Add video pop-up row for a still-ingesting video"
+  situation: "3-hour video uploaded; ingestion takes about 25 minutes"
+  consequence: "User keeps reopening the pop-up with no signal of when it becomes selectable"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "uploaded videos get ingested"
+  proposed: "Row shows 'Ingesting 40%' or ETA; same value as the Videos page"
+  shallow: false
+
+- id: ingest-29
+  title: "Tag filter results for videos tagged while still ingesting: included greyed or excluded"
+  level: L3
+  cell: {surface: tag-filter, video-state: still-ingesting, library-state: 50-videos, action: filter-by-tag}
+  object: "Tag filter in Add video pop-up"
+  situation: "User tags 6 uploads 'round-2' right after upload; filters by 'round-2' while 4 are still ingesting"
+  consequence: "Filter shows 2 of 6; user believes 4 tags were not saved"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "filtering by the tags the user has applied to videos"
+  proposed: "Filter result count shows '2 ready, 4 ingesting'"
+  shallow: false
+
+- id: ingest-30
+  title: "History entry does not record which transcript version a run used, so re-ingestion makes old reports unreproducible"
+  level: L3
+  cell: {surface: history-entry-detail, actor: background-agent-job, video-state: ingested, action: re-run-not-in-spec}
+  object: "History entry detail"
+  situation: "Video re-ingested with a better ASR model after the report was produced; user compares report to the new transcript"
+  consequence: "Quotes in the report do not match the current transcript; user distrusts the report"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Entry stores transcript version id per video; detail shows 'transcript updated since this run'"
+  shallow: false
+
+- id: ingest-31
+  title: "Re-ingestion overwrites transcript rows while a run is reading them, producing mixed old/new content"
+  level: L3
+  cell: {actor: ingestion-job, video-state: ingested, run-status: running, action: submit}
+  object: "Run reading video transcripts; Videos page re-ingestion"
+  situation: "Run over 8 videos takes 4 minutes; re-ingestion of video 5 completes at minute 2"
+  consequence: "Report blends segments from two transcript versions with shifted timestamps"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "uploaded videos get ingested"
+  proposed: "Runs read an immutable transcript version pinned at run start"
+  shallow: false
+
+- id: ingest-32
+  title: "Follow-up after re-ingestion reads the new transcript while the first answer used the old one"
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-1, actor: ingestion-job, video-state: ingested, action: ask-follow-up}
+  object: "Follow-up thread"
+  situation: "First answer cites timestamp 12:30; video trimmed and re-ingested; follow-up 'expand on 12:30'"
+  consequence: "Follow-up refers to different content at 12:30; thread contradicts itself"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: "Threads pin transcript versions from the first question; banner offers 'Start new thread on updated video'"
+  shallow: false
+
+- id: ingest-33
+  title: "Re-ingestion of a previously ingested video fails: old transcript kept and video stays selectable, or video drops to failed"
+  level: L3
+  cell: {surface: videos-page, actor: ingestion-job, video-state: ingestion-failed, history-state: 1-entry}
+  object: "Videos page ingestion status"
+  situation: "Video ingested last month, used in 1 report; user edits and re-ingestion fails"
+  consequence: "Video disappears from the pop-up although a usable older transcript exists"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "Whether a video that is still ingesting, or failed ingestion, can be selected."
+  proposed: "Spec line: failed re-ingestion keeps the last good version selectable with a 'Re-ingestion failed' badge"
+  shallow: false
+
+- id: ingest-34
+  title: "Submit-time error when several selected videos are no longer ingested has no specified copy or per-video detail"
+  level: L4
+  cell: {surface: error-toast-or-banner, videos-selected: 6-20, video-state: deleted-after-selection-before-run, action: submit}
+  object: "Submit; error banner"
+  situation: "12 videos selected; 2 deleted and 1 now re-ingesting at Submit"
+  consequence: "Generic 'Something went wrong' toast; user cannot tell which 3 to remove"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "On submit the user is redirected to the History tab"
+  proposed: "Banner lists the 3 videos with reason each and a 'Remove and submit' button; no redirect"
+  shallow: false
+
+- id: ingest-35
+  title: "Selecting both the original and a same-name re-upload in one Report double-weights that session"
+  level: L3
+  cell: {surface: selected-videos-list, mode: report, videos-selected: "2-5", video-state: re-uploaded-same-name}
+  object: "Selected videos list; 'one output covering all selected videos'"
+  situation: "User selects 'p3.mp4' twice (2 uploads of the same file) among 5"
+  consequence: "Report counts participant 3 as 2 participants ('2 of 5 users said...')"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "A Report produces one output covering all selected videos"
+  proposed: "Ingestion stores a content hash; pop-up warns 'Identical to video already selected'"
+  shallow: false
+
+- id: ingest-36
+  title: "3-second clip produces a 0-5 word transcript with no minimum duration for ingestion or selection"
+  level: L3
+  cell: {surface: videos-page, actor: ingestion-job, video-state: 3-second-clip, action: select-video}
+  object: "Videos page upload and ingestion"
+  situation: "User uploads a 3-second accidental recording; it ingests and appears selectable"
+  consequence: "Report spends coverage on a meaningless clip or claims it as a session"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "Minimum and maximum number of videos per run; video length and size limits."
+  proposed: "Spec a minimum duration (e.g. 10 s) or label clips under 10 s 'Too short to analyse'"
+  shallow: false
+
+- id: ingest-37
+  title: "No combined transcript budget per run: 20 three-hour videos exceed what one Report can read"
+  level: L4
+  cell: {surface: submit-button, mode: report, videos-selected: 6-20, video-state: 3-hour-long}
+  object: "Submit; listed unknown 'video length and size limits'"
+  situation: "20 videos x 3 hours, about 25,000 words each, 500,000 words total"
+  consequence: "Run truncates silently, fails after minutes, or times out as stuck"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "Minimum and maximum number of videos per run; video length and size limits."
+  proposed: "Spec a total transcript-hours cap per run (e.g. 10 h) shown as a live counter in the selected list"
+  shallow: false
+
+- id: ingest-38
+  title: "If videos are workspace-shared, another user deleting a video breaks this user's selection; ownership of videos is unspecified"
+  level: L3
+  cell: {surface: selected-videos-list, actor: other-user-same-workspace, video-state: deleted-after-selection-before-run, action: select-video}
+  object: "'their ingested videos'; 'History is per user, currently'"
+  situation: "Teammate deletes a shared video while this user has it selected"
+  consequence: "Run fails with no hint that someone else removed the video"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "History is per user, currently."
+  proposed: "Spec line stating whether the video library is per user or per workspace, and who may delete"
+  shallow: false
+
+- id: ingest-39
+  title: "Pop-up opened hours ago still lists a video that has since been deleted, and selecting it succeeds"
+  level: L4
+  cell: {surface: add-video-popup, video-state: deleted-after-selection-before-run, time-and-connection: page-open-for-hours, action: select-video}
+  object: "Add video pop-up list"
+  situation: "Agent page open 3 hours; video deleted from Videos page in that time; user selects it"
+  consequence: "Error surfaces only at Submit or at run time instead of in the pop-up"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "clicking 'Add video' opens a pop-up where the user selects videos from their ingested videos"
+  proposed: "Pop-up refetches the list on every open and on select verifies existence"
+  shallow: false
+
+- id: ingest-40
+  title: "Run where every selected video is unusable at run time: Failed versus Done-with-empty-output, and the reason text"
+  level: L3
+  cell: {surface: history-entry-detail, videos-selected: "2-5", video-state: ingestion-failed, run-status: failed}
+  object: "History entry detail when failed"
+  situation: "3 videos selected while ingesting; all 3 fail ingestion"
+  consequence: "Entry shows a blank report marked Done, or Failed with no reason"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "what opening an entry shows while running, when done, and when failed"
+  proposed: "Status Failed; detail: 'All 3 videos failed ingestion: <names, reasons>'"
+  shallow: false
+
+- id: ingest-41
+  title: "Silent screen recordings (common in user tests) get no analysis because ingestion is unspecified on visual content"
+  level: L3
+  cell: {surface: history-entry-detail, mode: report, video-state: silent-or-no-transcript, run-status: done-with-empty-output}
+  object: "Videos page ingestion; Report output"
+  situation: "Unmoderated test: 8 screen recordings with no think-aloud audio"
+  consequence: "Report has nothing to say about clicks, hesitation or errors visible on screen"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "uploaded videos get ingested"
+  proposed: "Spec states whether ingestion extracts frames/OCR/captions; if not, pop-up labels audio-only analysis"
+  shallow: false

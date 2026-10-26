@@ -1,0 +1,540 @@
+- id: backend-1
+  title: "Report over 20 x 3-hour videos (~60 h of transcript, roughly 0.8-1.0M tokens) exceeds one model context; spec states neither a cap nor a chunk-and-merge strategy"
+  level: L3
+  cell: {surface: report-form, mode: report, videos-selected: 6-20, video-state: 3-hour-long, run-status: running}
+  object: "Report mode Submit; clarification 'A Report produces one output covering all selected videos'"
+  situation: "User selects 20 ingested videos of 3 h each and submits a Report with no prompt"
+  consequence: "Job either fails on context overflow after spending tokens, or silently drops transcript beyond the window and reports on the first ~6 videos while claiming to cover 20"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "A Report produces one output covering all selected videos, not one per video. / Still unspecified: Minimum and maximum number of videos per run; video length and size limits."
+  proposed: "Spec a total transcript budget per run (e.g. 400k tokens or 20 h of audio) enforced at Submit with copy naming the overage, and state that runs above one context use per-video summaries merged in a final pass"
+  shallow: false
+- id: backend-2
+  title: "Per-video intermediate summaries in a chunked report: spec does not say whether they are cached and reused by the next run on the same videos"
+  level: L3
+  cell: {actor: background-agent-job, mode: report, videos-selected: 6-20, history-state: 100-entries, action: re-run-not-in-spec}
+  object: "Report run; History entry 'whatever was submitted'"
+  situation: "User submits 5 reports in a day on the same 15 videos with different prompts"
+  consequence: "Each run re-reads all 15 transcripts from scratch: 5x token cost and 5x latency, or, if cached, a stale summary is reused after a video is re-ingested"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "A Report produces one output covering all selected videos"
+  proposed: "Define cache key = video_id + ingest_version + summariser_prompt_version; invalidate on re-ingest"
+  shallow: false
+- id: backend-3
+  title: "One video in a 20-video report has no transcript (silent audio): spec does not say whether the whole report fails or completes without it"
+  level: L3
+  cell: {surface: history-entry-detail, mode: report, videos-selected: 6-20, video-state: silent-or-no-transcript, run-status: partial-some-videos-unusable}
+  object: "History entry status; clarification 'one output covering all selected videos'"
+  situation: "Video 14 of 20 is ingested but its transcript is empty or under 10 words"
+  consequence: "Either 19 good videos are thrown away by one bad one, or the report claims to cover all 20 while one contributed nothing"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "A Report produces one output covering all selected videos, not one per video."
+  proposed: "Rule: run completes as Done-with-warnings if at least 1 video is usable; skipped videos listed by name with reason"
+  shallow: false
+- id: backend-4
+  title: "Report output has no coverage line: History entry detail should read 'Covered 19 of 20 videos; skipped: <name> (no speech detected)'"
+  level: L4
+  cell: {surface: history-entry-detail, run-status: partial-some-videos-unusable, videos-selected: 6-20, action: open-history-entry}
+  object: "History entry detail (what opening an entry shows when done is listed as unspecified)"
+  situation: "Partial run opened from History"
+  consequence: "User cannot tell a report on 19 videos from a report on 20; downstream decisions cite a video that was never read"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed."
+  proposed: "Acceptance criterion: every Done entry shows 'Covered N of M videos' and lists each excluded video with a reason code"
+  shallow: false
+- id: backend-5
+  title: "Video deleted on the Videos page between Submit and the job starting: job does not know whether to fail, skip, or use a snapshot"
+  level: L3
+  cell: {surface: videos-page, actor: background-agent-job, video-state: deleted-after-selection-before-run, run-status: queued}
+  object: "Videos page (upload/delete) vs. queued History entry"
+  situation: "Run sits Queued for 3 min; user deletes 1 of the 5 selected videos on the Videos page in another tab"
+  consequence: "Worker gets a 404 on the transcript and the run fails with a generic error, or runs on 4 while the entry lists 5"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Videos page: users upload videos; uploaded videos get ingested."
+  proposed: "Decide: resolve video set at Submit (snapshot transcript refs) or at run start; if at run start, deleted videos become 'skipped: deleted'"
+  shallow: false
+- id: backend-6
+  title: "If still-ingesting videos are selectable, the job needs a wait-for-ingestion rule with a timeout (e.g. 60 min) and a status shown while waiting"
+  level: L3
+  cell: {actor: ingestion-job, video-state: still-ingesting, run-status: queued, time-and-connection: steady-state}
+  object: "Listed unknown 'Whether a video that is still ingesting ... can be selected'; states ingested / ingesting"
+  situation: "User adds a 3-hour video that is 40% through ingestion and submits"
+  consequence: "Job either starts with an empty transcript and reports nothing for that video, or blocks indefinitely with the entry showing Queued"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Whether a video that is still ingesting, or failed ingestion, can be selected."
+  proposed: "If allowed: entry status 'Waiting for 1 video to finish processing'; fail that video after 60 min; otherwise disable the checkbox in the Add video pop-up"
+  shallow: false
+- id: backend-7
+  title: "Double-click on Submit with no loading page creates two jobs and two History entries; spec has no idempotency rule"
+  level: L3
+  cell: {surface: submit-button, action: double-submit, run-status: submitted-not-yet-visible-in-history, history-state: two-entries-same-second}
+  object: "Submit; 'There is no loading page'"
+  situation: "User double-clicks Submit on a 20-video report; both requests reach the API within 300 ms"
+  consequence: "Two identical runs bill twice and both appear in History with the same name"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "There is no loading page, to save the user's time. On submit the user is redirected to the History tab"
+  proposed: "Client sends an idempotency key per form instance; server returns the existing entry id for a repeat key within 24 h"
+  shallow: false
+- id: backend-8
+  title: "Model API returns 429/529 on the 12th of 20 per-video calls: retry count, backoff and resume-from-checkpoint are unspecified"
+  level: L3
+  cell: {actor: background-agent-job, run-status: running, videos-selected: 6-20, time-and-connection: during-agent-outage}
+  object: "History entry status (unspecified list of statuses)"
+  situation: "Transient overload mid-run after 11 video summaries already completed"
+  consequence: "Whole run restarts and re-spends tokens on 11 videos, or fails outright and the user resubmits manually"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Statuses an entry can have on the History tab ... when failed."
+  proposed: "Spec: up to 3 retries per step with exponential backoff (2/8/30 s); completed per-video steps persisted and not re-run"
+  shallow: false
+- id: backend-9
+  title: "Retry after a client-side timeout where the first attempt actually succeeded writes two outputs to one History entry; spec does not say which is kept"
+  level: L3
+  cell: {actor: background-agent-job, run-status: done, history-state: 1-entry, action: open-history-entry}
+  object: "History entry detail"
+  situation: "Worker times out at 600 s waiting for the final merge response, retries, and the first response lands at 610 s"
+  consequence: "Entry shows report A, then flips to report B on refresh; a user who copied A sees different text later"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Entry output is write-once: first committed result wins; later attempts are discarded and logged"
+  shallow: false
+- id: backend-10
+  title: "Model returns an empty string or a refusal: spec does not say whether that entry is Done or Failed"
+  level: L3
+  cell: {surface: history-entry-row, run-status: done-with-empty-output, mode: ask-question, text-input-state: question-unrelated-to-videos}
+  object: "History entry statuses (listed unknown)"
+  situation: "Question 'What's the weather tomorrow?' over 2 videos; model answers 'The videos don't cover this' or returns nothing"
+  consequence: "Row shows a green Done with an empty body; user cannot tell success from silent failure"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed."
+  proposed: "Define Done = non-empty output of at least 1 sentence; empty output = Failed with reason 'no answer produced'"
+  shallow: false
+- id: backend-11
+  title: "Report truncated by the output token cap (e.g. 8k tokens) ends mid-section; spec does not say whether stop_reason=max_tokens counts as Done"
+  level: L4
+  cell: {surface: history-entry-detail, mode: report, videos-selected: 21-100, run-status: done}
+  object: "Report output, 'one output covering all selected videos'"
+  situation: "Report across 40 videos with a prompt asking for per-video findings"
+  consequence: "Entry shows Done but the last heading is cut off and videos 31-40 are missing from the text"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "A Report produces one output covering all selected videos"
+  proposed: "Assert: if stop_reason is max_tokens, entry shows 'Report truncated' and offers continuation, never plain Done"
+  shallow: false
+- id: backend-12
+  title: "No maximum run duration: a stuck run shows Running in History forever; spec needs a wall-clock limit (e.g. 30 min) and a reaper that marks it Failed"
+  level: L4
+  cell: {surface: history-entry-row, run-status: stuck-over-1h, actor: background-agent-job, time-and-connection: page-open-for-hours}
+  object: "History tab 'Lists past and current submissions'"
+  situation: "Worker crashes after picking the job; no heartbeat; user returns 3 hours later"
+  consequence: "Row still reads Running at 3 h; user waits or resubmits, creating a duplicate"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Heartbeat every 30 s; no heartbeat for 5 min or runtime over 30 min -> status Failed (timed out)"
+  shallow: false
+- id: backend-13
+  title: "10th follow-up over 20 long videos: thread history plus transcripts exceeds context; spec does not say what is dropped first"
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-10, videos-selected: 6-20, video-state: 3-hour-long}
+  object: "'Follow-up questions are supported after the first answer.'"
+  situation: "Ask question thread at follow-up 10, each prior answer ~1k tokens, 20 videos of 3 h"
+  consequence: "Model forgets the first question or loses transcript detail without telling the user; answers contradict earlier turns"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: "Spec a follow-up cap (e.g. 20 turns) and the rule: retrieve transcript segments per turn, keep the last 5 turns verbatim and summarise older ones"
+  shallow: false
+- id: backend-14
+  title: "Follow-up asked weeks later runs on a newer model version than the first answer; spec does not say whether the thread pins the model"
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: thread-opened-from-history, time-and-connection: after-a-year, action: ask-follow-up}
+  object: "Follow-up thread opened from a History entry"
+  situation: "First answer produced on model version A in October; follow-up asked in December after the agent moved to version B"
+  consequence: "Follow-up contradicts the first answer in tone or facts; no record shows which model produced which turn"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "Ask question supports follow-ups. / History is per user, currently."
+  proposed: "Store model_id and system_prompt_version per turn; show 'answered with a newer model' when they differ from turn 1"
+  shallow: false
+- id: backend-15
+  title: "System prompt or agent template changes between a report and its follow-ups (prompt drift, separate from model drift) with no version recorded"
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-1, actor: background-agent-job, time-and-connection: steady-state}
+  object: "Follow-up thread; History entry 'with whatever was submitted'"
+  situation: "Team ships a new Ask-question system prompt on Tuesday; Monday's thread gets a follow-up on Wednesday"
+  consequence: "Answer format changes mid-thread (bullets -> prose, citations disappear); debugging a bad answer cannot reproduce the original prompt"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "On submit the user is redirected to the History tab, where a new entry appears with whatever was submitted."
+  proposed: "Persist prompt_template_version on each run and turn"
+  shallow: false
+- id: backend-16
+  title: "Follow-up context source unspecified: re-read the transcripts, or answer only from the prior answer text"
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-1, mode: ask-question, videos-selected: 2-5}
+  object: "'Follow-up questions are supported after the first answer.'"
+  situation: "Follow-up 'What exactly did the user say at the checkout step?' after a summary answer"
+  consequence: "If only the prior answer is in context, the follow-up cannot quote the video and fabricates a quote"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: "Spec that every follow-up has access to the same video set's transcripts as the first question"
+  shallow: false
+- id: backend-17
+  title: "Follow-up submitted while the first answer is still running: queue behind it, reject with 409, or run in parallel without the first answer"
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-while-first-still-running, run-status: running, action: ask-follow-up}
+  object: "Follow-up thread; no loading page rule"
+  situation: "First answer over 6 videos takes 90 s; user types a follow-up at 20 s"
+  consequence: "Follow-up runs without the first answer as context and answers a question out of order"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: "Follow-up input disabled until the previous turn reaches Done or Failed; server rejects with 409 otherwise"
+  shallow: false
+- id: backend-18
+  title: "Follow-up after one of the thread's videos was deleted: job silently runs on fewer videos than turn 1 used"
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-after-video-deleted, video-state: deleted-after-run, history-state: entry-referencing-deleted-video}
+  object: "History entry referencing a video deleted on the Videos page"
+  situation: "Thread over 5 videos; user deletes 1 on the Videos page; asks a follow-up 2 days later"
+  consequence: "Follow-up answer omits facts from the deleted video and contradicts turn 1 with no explanation"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Videos page: users upload videos; uploaded videos get ingested."
+  proposed: "Either retain transcripts referenced by any History entry, or block follow-ups with copy '1 video in this thread was deleted'"
+  shallow: false
+- id: backend-19
+  title: "Spec gives follow-ups only to Ask question; whether a Report run is stored as a continuable conversation is undecided, which fixes the data model"
+  level: L3
+  cell: {mode: report, surface: history-entry-detail, run-status: done, action: ask-follow-up}
+  object: "'Ask question supports follow-ups.' (Report mode has no such line)"
+  situation: "User opens a finished 20-video report and wants to ask 'expand section 3'"
+  consequence: "If reports are stored as a single blob, adding follow-ups later needs a migration of every existing report entry"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Ask question supports follow-ups."
+  proposed: "Decide now: store both modes as threads (turn 0 = report) even if the Report follow-up UI ships later"
+  shallow: false
+- id: backend-20
+  title: "Ask question shares the async queue with 20-video reports: a 1-video question waits behind a 30-minute report"
+  level: L3
+  cell: {mode: ask-question, videos-selected: 1, run-status: queued, actor: background-agent-job}
+  object: "After submit: 'There is no loading page'; History tab"
+  situation: "User has one 20-video report running and submits a one-video question"
+  consequence: "Question stays Queued for the length of the report; user perceives Ask question as broken"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "There is no loading page, to save the user's time."
+  proposed: "Spec per-user concurrency (e.g. 2 running runs) with Ask question jobs on a separate lane"
+  shallow: false
+- id: backend-21
+  title: "No per-user cap on concurrent or daily runs: 10 back-to-back 20-video reports enqueue ~600 h of transcript processing"
+  level: L3
+  cell: {actor: creator-owner, videos-selected: 6-20, history-state: 100-entries, action: submit}
+  object: "Submit; History 'Lists past and current submissions'"
+  situation: "User submits 10 reports in 2 minutes, each with 20 three-hour videos"
+  consequence: "Shared worker pool starves other users; model spend for one user in one afternoon is unbounded"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "none"
+  proposed: "Limit e.g. 3 concurrent runs and 50 runs/day per user; 4th submit shows 'You have 3 runs in progress'"
+  shallow: false
+- id: backend-22
+  title: "Spoken text in a video transcript ('ignore your instructions and ...') is fed to the model as data; spec does not separate transcript from instructions"
+  level: L3
+  cell: {actor: background-agent-job, video-state: ingested, text-input-state: text-contains-instructions-to-ignore-rules, mode: report}
+  object: "Report run reading transcripts of user-uploaded videos"
+  situation: "A test participant reads a prompt-injection phrase aloud during a session"
+  consequence: "Report follows the spoken instruction (e.g. omits findings or changes format) and the user trusts it"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Wrap transcripts in delimited data blocks; add a test video with an injection phrase to the acceptance suite"
+  shallow: false
+- id: backend-23
+  title: "Prompt field has no length cap; a 5000-character prompt eats token budget the job reserved for transcripts"
+  level: L3
+  cell: {surface: prompt-field, text-input-state: prompt-5000-chars, mode: report, videos-selected: 6-20}
+  object: "'Prompt / instructions (optional)'"
+  situation: "User pastes a 5000-char research plan as the prompt for a 20-video report"
+  consequence: "Budget maths assumed a ~200-token prompt; transcript share shrinks and coverage drops without notice"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Prompt / instructions (optional)"
+  proposed: "Cap prompt at e.g. 4000 chars with a counter; job subtracts prompt tokens before allocating transcript budget"
+  shallow: false
+- id: backend-24
+  title: "Prompt asks for 'a separate report per video' contradicting 'one output covering all selected videos'; spec does not say which wins"
+  level: L3
+  cell: {surface: prompt-field, text-input-state: prompt-contradicts-report-mode, mode: report, videos-selected: 2-5}
+  object: "Clarification 'A Report produces one output covering all selected videos, not one per video.'"
+  situation: "Prompt: 'Write one section per participant video'"
+  consequence: "Model emits 5 per-video sections inside one output; acceptance tests written for a single synthesized report fail or pass inconsistently"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "A Report produces one output covering all selected videos, not one per video."
+  proposed: "State that the prompt can shape structure within the single output, and that one entry per run is fixed"
+  shallow: false
+- id: backend-25
+  title: "Output language undefined when videos are in German, the prompt in English and the UI in English"
+  level: L3
+  cell: {video-state: non-english-audio, text-input-state: non-english-text, mode: ask-question, videos-selected: 2-5}
+  object: "Question field; transcripts from ingestion"
+  situation: "3 German-audio videos and 1 English; question typed in Spanish"
+  consequence: "Answer language flips between runs; quoted transcript snippets mix languages without translation"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "A question about the selected videos, typed by the user"
+  proposed: "Rule: answer in the language of the question/prompt; quotes kept in original language with translation"
+  shallow: false
+- id: backend-26
+  title: "Video identity in a run is unspecified: a re-uploaded file with the same name may be resolved by name and swap the content under an existing entry"
+  level: L3
+  cell: {video-state: re-uploaded-same-name, surface: history-entry-detail, history-state: entry-referencing-deleted-video}
+  object: "Add video pop-up 'searching by name'; History entry 'with whatever was submitted'"
+  situation: "User deletes 'Session 3.mp4', re-uploads a different 'Session 3.mp4', then opens an old report entry"
+  consequence: "Entry links to the new video and follow-ups read the new transcript while the report text describes the old one"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "The pop-up supports filtering by the tags the user has applied to videos, and searching by name."
+  proposed: "Runs store video_id + ingest_version, never name; a missing id shows 'video deleted'"
+  shallow: false
+- id: backend-27
+  title: "Re-ingestion (new transcript) after a run changes what follow-ups read, so follow-up answers disagree with the original answer's quotes"
+  level: L3
+  cell: {actor: ingestion-job, thread-state: follow-up-1, video-state: ingested, time-and-connection: steady-state}
+  object: "Ingested state on the Videos page; follow-up thread"
+  situation: "Ingestion pipeline re-transcribes all videos with a better ASR model; user asks a follow-up on last week's thread"
+  consequence: "Follow-up quotes words that differ from quotes in turn 1 for the same timestamp"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "Videos page: users upload videos; uploaded videos get ingested."
+  proposed: "Threads pin the transcript version used in turn 1"
+  shallow: false
+- id: backend-28
+  title: "Job runs under whose credentials: session expiring during a 30-minute run may revoke the worker's access to the video store"
+  level: L3
+  cell: {actor: background-agent-job, time-and-connection: session-expired-at-submit, run-status: running, action: submit}
+  object: "Submit; per-user History"
+  situation: "User token expires 5 min into a 20-video run; worker uses the user's token to fetch transcripts 6-20"
+  consequence: "Run fails halfway with an auth error unrelated to the content"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "History is per user, currently."
+  proposed: "Worker uses a service identity scoped to the run's video ids, authorised once at Submit"
+  shallow: false
+- id: backend-29
+  title: "During an agent/model outage the spec does not say whether Submit is accepted and queued or rejected; with no loading page the user only sees Queued"
+  level: L3
+  cell: {surface: submit-button, time-and-connection: during-agent-outage, run-status: queued, action: submit}
+  object: "'There is no loading page ... redirected to the History tab'"
+  situation: "Model provider down for 45 min; user submits 3 runs"
+  consequence: "Entries sit Queued with no message; user resubmits, then all 6 run when service returns"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "There is no loading page, to save the user's time. On submit the user is redirected to the History tab"
+  proposed: "Accept and queue up to 2 h; entry shows 'Delayed: agent unavailable'; after 2 h mark Failed"
+  shallow: false
+- id: backend-30
+  title: "History entry must be created synchronously in the Submit request (status Queued) before the redirect; if the worker creates it, the redirect lands on a History tab without it"
+  level: L4
+  cell: {surface: redirect-transition, time-and-connection: redirect-lands-before-entry-exists, run-status: submitted-not-yet-visible-in-history, action: submit}
+  object: "'a new entry appears with whatever was submitted'"
+  situation: "Submit returns 200 in 150 ms; worker picks up the job after 4 s"
+  consequence: "User lands on History, sees no new row, and submits again"
+  p_typical: 0.10
+  grounded: quote
+  evidence: "On submit the user is redirected to the History tab, where a new entry appears with whatever was submitted."
+  proposed: "Assert: Submit response contains entry_id; History tab after redirect always shows that id at the top"
+  shallow: false
+- id: backend-31
+  title: "Transport for status updates on the History tab unspecified: polling interval or push, and how long a tab open for hours keeps updating"
+  level: L3
+  cell: {surface: history-tab, time-and-connection: page-open-for-hours, run-status: running, history-state: 100-entries}
+  object: "History tab 'Lists past and current submissions'"
+  situation: "User leaves History open for 4 h with 3 runs in progress"
+  consequence: "Polling all 100 entries every 5 s = ~2,900 list requests per hour per tab; or no updates at all until refresh"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Poll only non-terminal entries every 10 s, back off to 60 s after 10 min, stop when none are running"
+  shallow: false
+- id: backend-32
+  title: "Two entries created in the same second sort non-deterministically if History is ordered by created_at only"
+  level: L4
+  cell: {surface: history-tab, history-state: two-entries-same-second, actor: same-user-second-tab, action: submit}
+  object: "History tab list ordering (unspecified)"
+  situation: "User submits a report in tab 1 and a question in tab 2 within 1 s"
+  consequence: "Rows swap position between refreshes"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Order by created_at desc, then entry_id desc"
+  shallow: false
+- id: backend-33
+  title: "No cancel: a mistaken 20-video report keeps consuming tokens for its full run; if cancel is added, spec must say whether partial per-video output is kept"
+  level: L3
+  cell: {action: cancel-run-not-in-spec, run-status: cancelled-not-in-spec, videos-selected: 6-20, surface: history-entry-row}
+  object: "History entry row actions (none specified)"
+  situation: "User realises 2 min in that the wrong 20 videos were selected"
+  consequence: "Full cost spent; user waits ~30 min for an unwanted report, then resubmits"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Add Cancel on Queued/Running rows; cancelled runs keep no output and show status Cancelled"
+  shallow: false
+- id: backend-34
+  title: "Re-running identical inputs gives a different report; the entry stores no model id, temperature or prompt version to explain why"
+  level: L3
+  cell: {action: re-run-not-in-spec, history-state: 100-entries, mode: report, run-status: done}
+  object: "History entry 'with whatever was submitted'"
+  situation: "User resubmits the same 8 videos and prompt to check a surprising finding"
+  consequence: "Second report reaches the opposite conclusion; no stored parameters to compare the two runs"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "a new entry appears with whatever was submitted"
+  proposed: "Store per run: model_id, temperature, prompt_template_version, video_id+ingest_version list, token counts"
+  shallow: false
+- id: backend-35
+  title: "Report retention and size unspecified: a year-old entry may keep its output while its transcripts are gone, so follow-ups fail"
+  level: L3
+  cell: {time-and-connection: after-a-year, history-state: 1000-entries, surface: history-entry-detail, action: open-history-entry}
+  object: "History tab 'Lists past ... submissions'"
+  situation: "User opens a report from 13 months ago with 1000 entries in History"
+  consequence: "Output loads but follow-up returns an error because source videos were purged by a storage policy"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: "Spec retention (e.g. outputs 2 years, transcripts while referenced) and a max stored output size (e.g. 200 KB)"
+  shallow: false
+- id: backend-36
+  title: "Citations to video + timestamp are unspecified; chunked processing drops segment timestamps unless carried through the merge step"
+  level: L3
+  cell: {surface: history-entry-detail, mode: report, videos-selected: 6-20, video-state: 3-hour-long}
+  object: "Report output covering all selected videos"
+  situation: "Report says 'participants struggled with checkout' across 20 videos"
+  consequence: "User cannot find the moment in a 3-hour video to verify the claim; trust in the report drops"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "A Report produces one output covering all selected videos"
+  proposed: "Each finding cites [video name @ hh:mm:ss]; per-video summaries keep timestamps into the merge"
+  shallow: false
+- id: backend-37
+  title: "Per-video failure state is not stored, so a 'retry failed videos only' action cannot be built later without re-running all videos"
+  level: L3
+  cell: {run-status: partial-some-videos-unusable, action: re-run-not-in-spec, videos-selected: 21-100, actor: background-agent-job}
+  object: "History entry statuses (listed unknown)"
+  situation: "3 of 40 videos failed with transient errors in a report"
+  consequence: "Only option is a full 40-video resubmit"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Statuses an entry can have on the History tab ... when failed."
+  proposed: "Store per-video status (ok / skipped / failed + reason) on each run"
+  shallow: false
+- id: backend-38
+  title: "If suggested questions are derived from selected videos, each selection change triggers a model call over transcripts; with 20 long videos that is seconds of latency and cost per click"
+  level: L3
+  cell: {surface: suggested-questions, action: select-video, videos-selected: 6-20, video-state: 3-hour-long}
+  object: "'Suggested questions are shown and can be picked'; listed unknown static vs derived"
+  situation: "User adds videos one by one up to 20 in the Add video pop-up"
+  consequence: "20 generation calls, suggestions flicker and lag 5-10 s behind the selection"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Whether suggested questions are static or derived from the selected videos."
+  proposed: "If derived: generate once on pop-up close, debounce 1 s, cache per sorted video-id set"
+  shallow: false
+- id: backend-39
+  title: "Submit with 0 videos: no server-side validation rule or error code in spec"
+  level: L4
+  cell: {videos-selected: 0, surface: submit-button, mode: ask-question, action: submit}
+  object: "Add video; 'Minimum ... number of videos per run' listed unknown"
+  situation: "API called with an empty video list (UI bug or direct call)"
+  consequence: "Job runs a model call with no transcripts and produces a hallucinated answer recorded as Done"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Minimum and maximum number of videos per run; video length and size limits."
+  proposed: "Assert: API returns 400 'select at least 1 video' and no History entry is created"
+  shallow: false
+- id: backend-40
+  title: "A 3-second clip gives a one-line transcript; with no minimum-content threshold the model writes a confident report from nothing"
+  level: L3
+  cell: {video-state: 3-second-clip, videos-selected: 1, mode: report, run-status: done}
+  object: "Report run; listed unknown 'video length ... limits'"
+  situation: "Single 3-second clip submitted for a Report with prompt 'summarise usability issues'"
+  consequence: "Report lists 5 usability issues not present in the clip"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Minimum and maximum number of videos per run; video length and size limits."
+  proposed: "Below e.g. 50 transcript words in total, the run returns 'Not enough speech to report on' as Done-with-warning"
+  shallow: false
+- id: backend-41
+  title: "Video library ownership (per user vs workspace) is unspecified while History is per user; a job reading a teammate's video breaks when the teammate deletes it"
+  level: L3
+  cell: {actor: other-user-same-workspace, video-state: deleted-after-run, history-state: entry-referencing-deleted-video}
+  object: "'History is per user, currently.'; 'their ingested videos'"
+  situation: "If workspace-shared videos are added later, user B deletes a video used in user A's report"
+  consequence: "A's entry and follow-ups lose their source with no notice to A"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "History is per user, currently."
+  proposed: "State the permission check at job start: videos must be owned by or shared with the submitting user at that moment"
+  shallow: false
+- id: backend-42
+  title: "No run record schema: spec gives no fields to debug a bad report (token counts, attempts, per-video status, model id)"
+  level: L3
+  cell: {actor: admin, surface: history-entry-detail, run-status: failed, action: open-history-entry}
+  object: "History entry (contents beyond 'whatever was submitted' unspecified)"
+  situation: "Support gets a ticket 'my report was wrong' about one of 1000 entries"
+  consequence: "Engineer cannot see what inputs, model and attempts produced the output"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "a new entry appears with whatever was submitted"
+  proposed: "Run record: run_id, user_id, mode, video ids+versions, prompt/question, model_id, prompt_version, tokens in/out, attempts, per-video status, timings"
+  shallow: false
+- id: backend-43
+  title: "Video names shown in an entry: snapshot at Submit or live lookup; renaming a video changes old entries if looked up live"
+  level: L3
+  cell: {surface: history-entry-row, history-state: 100-entries, video-state: ingested, action: open-history-entry}
+  object: "'a new entry appears with whatever was submitted'"
+  situation: "User renames 'P3 raw' to 'Participant 3' a week after the run"
+  consequence: "Report text references 'P3 raw' while the entry header lists 'Participant 3'"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "a new entry appears with whatever was submitted"
+  proposed: "Snapshot name at Submit, show current name with 'renamed' hint if it differs"
+  shallow: false
+- id: backend-44
+  title: "Selecting 'all videos in library' (e.g. 2000) has no server-side cap; the request payload and job fan-out are unbounded"
+  level: L3
+  cell: {videos-selected: all-videos-in-library, library-state: 2000-videos, surface: add-video-popup, action: submit}
+  object: "Add video pop-up; listed unknown 'maximum number of videos per run'"
+  situation: "Pop-up has a select-all on a filtered tag with 2000 matches"
+  consequence: "One run fans out 2000 per-video calls; queue blocked for hours for every user"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Minimum and maximum number of videos per run; video length and size limits."
+  proposed: "Hard server cap (e.g. 50 videos/run) returned as 400 with the limit in the message, mirrored in the pop-up counter"
+  shallow: false
+- id: backend-45
+  title: "Refresh or back-button after redirect re-POSTs the Submit form if Submit is a form post without a redirect-after-post"
+  level: L4
+  cell: {surface: redirect-transition, action: refresh-after-redirect, run-status: queued, history-state: two-entries-same-second}
+  object: "'On submit the user is redirected to the History tab'"
+  situation: "User presses F5 on the History tab right after landing"
+  consequence: "Browser prompts to resubmit; accepting creates a second identical run"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "On submit the user is redirected to the History tab"
+  proposed: "Submit via API call returning entry_id; History tab URL carries no form state; idempotency key blocks repeats"
+  shallow: false
