@@ -1,6 +1,6 @@
 ---
 name: deep
-description: Exhaustive, topic-agnostic analysis engine. Generates its own perspectives and scenario grid for any topic (PRD gaps, UX review, video review, churn hypotheses, risks), then forces every finding down to a concrete, actionable leaf, audits for gaps, and loops. Use when the user wants "everything we are missing", scenario thinking, or a review that must not stay high-level.
+description: Exhaustive, topic-agnostic analysis engine for four request types, gaps (what are we missing in something that exists), ideate (what should we do and how), diagnose (why is this happening, e.g. churn), and review (what is wrong in this screenshot or video). Generates its own perspectives and grid for the topic, forces every finding down to a concrete, actionable leaf, audits for gaps, and loops. Use when the user wants "everything we are missing", scenario thinking, or a review that must not stay high-level.
 argument-hint: "<topic>" [artifact paths...] [--quick] [--full]
 disable-model-invocation: true
 allowed-tools: Read Glob Grep Agent Write Bash(mkdir *) Bash(ls *) Bash(cat *)
@@ -31,7 +31,7 @@ Stages A, B, C are judgement stages; do them yourself, inline, with the artifact
 
 **A0. Intake questions.** Read `prompts/A0-intake.md`. Read every artifact in full. Write `A0-questions.md`: at most 8 questions, each one tied to the axis, value range or perspective it would change, each with the assumption used if unanswered. Stop and ask the user unless `--no-questions` was given or the user already said to run without questions. When answers arrive, write them into a copy of the spec in the run directory under "Clarifications" and continue.
 
-**A. Frame.** Read `prompts/A-frame.md`. Read every artifact in full. Write `A-frame.yaml`.
+**A. Frame.** Read `prompts/A-frame.md`. Read every artifact in full. Choose the `request_type` (gaps / ideate / diagnose / review) from the table in that prompt; it sets the unit, the leaf test, the rubric and what the axes mean for the rest of the run. Write `A-frame.yaml`.
 
 **B. Perspectives.** Read `prompts/B-perspectives.md`. Write `B-perspectives.yaml` (12 primary + 8 tail).
 

@@ -21,3 +21,9 @@ pruned_cells:
   - cell: {<axis>: <value>, ...}
     reason: <why impossible>
 ```
+
+## Axes by request type
+
+- `gaps` / `review`: axes partition the situations the artifact can be in (surface, actor, cardinality, state, time, action, content of the media or data).
+- `ideate`: axes partition the solution space (Zwicky box of options): lever (what we change), user segment, moment in the journey, channel or surface, effort size, and at least one axis of "mechanism type" (remove friction / add capability / change default / change incentive / change information / change timing). Cells are option slots, and each cell should yield several distinct options.
+- `diagnose`: axes partition causes: cohort (plan, size, channel, tenure), lifecycle stage, trigger type (price, bug, competitor, champion left, usage drop, failed payment, integration broke, feature moved), observable signal (usage, support contact, billing event, NPS, silence), time window before the outcome. Every cell is a hypothesis slot.

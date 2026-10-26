@@ -48,3 +48,11 @@ Anything above L3 is NOT output. It is a node: expand it into children (at least
 - Tail sampling: at least two thirds of your items must have `p_typical` below 0.10. The obvious items are allowed, but they are not the job; the job is what a typical reviewer would not say.
 - Minimum item count is given in your brief. Fewer items is a failed run.
 - Every item must belong to a grid cell. If an item fits no cell, emit it anyway with `cell: {uncategorised: true}`; the audit uses those to find missing axes.
+
+## Type-specific leaf fields (required in addition to the schema above, per `request_type` in the frame)
+
+- `gaps` and `review`: no extra fields.
+- `ideate`: `mechanism` (what changes, for whom, where), `example` (one concrete instance in use, 1-2 lines), `cost` (S / M / L), `depends_on` (what must exist first, or "nothing").
+- `diagnose`: `cohort` (definable in the data), `trigger` (condition or event), `signal` (what you would observe), `test` (the query, segment comparison or check that confirms or refutes it), `if_true_then` (what action it would imply).
+
+An `ideate` leaf that is a category ("improve onboarding") is not a leaf. An option is a leaf only when a designer could sketch it tomorrow from the line alone. A `diagnose` leaf without a `test` is not a leaf.
