@@ -1,0 +1,650 @@
+- id: bi-1
+  title: "Table video_ui_state_events: one row per screen-state change (tutorial card, CTA highlighted, popup, fail screen) per sampled first session, keyed to the studio's own session_id"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, lifecycle-moment: ftue-first-session, delivery-form: warehouse-table-export, companion-data: telemetry-events, processing-location: customer-cloud-byoc}
+  object: "GameAnalytics Progression funnel for tutorial steps (methods-churn-funnel.md section 1) and the 'small vision vocabulary' of tutorial card visible / CTA highlighted / popup open / fail screen / level-complete (methods-churn-funnel.md section 4 INFERRED)"
+  situation: "Tutorial step 3 shows 12% leaving; the funnel has no column for what was on screen at the moment of leaving, and the analytics head will not open a replay tool to look"
+  consequence: "Without the table, the why of a funnel step stays a hypothesis (Unity docs: 'investigate'); with it, a SQL GROUP BY on screen_state at last_event answers it for 1-5% of sessions"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 1 INFERRED: 'Event funnels answer where and how many; every tool above leaves why to a hypothesis step (Unity's own docs say investigate)'"
+  proposed: "Per-title detector emits rows (session_id, t_ms, screen_state, confidence) into the customer's Snowflake schema nightly"
+  shallow: false
+  mechanism: "A per-title screen classifier runs on sampled first-session video and writes one row per state change into a warehouse table the BI head joins on session_id; no UI, no replay viewer"
+  example: "Match-3 game, 4,000 sampled sessions: table shows 31% of players who left at tutorial step 3 had the 'booster explainer' popup open for under 1 s before the app went to background"
+  cost: M
+  depends_on: "consented capture of first 10 minutes at 1-5 fps; per-title label set of a few hundred frames"
+  buyer: "Head of analytics/BI at a mid-size mobile F2P studio that owns Amplitude/GameAnalytics and Snowflake"
+  input: "sampled first-session screen video at 1-5 fps plus the studio's tutorial_step events and session_id"
+  why_existing_tools_cannot: "Event funnels give where not why (methods-churn-funnel.md section 1); replay tools such as PostHog Unity are screenshot-only and viewer-shaped (market.md section 2); no vendor extracts game state into a table (market.md section 9)"
+  willingness_to_pay: "4 - PlaytestCloud list works out to about 113-141 EUR per recorded and analysed session (market.md section 1); a table at 10-20 EUR per 100 sessions replaces hypothesis time; UXCam median about 21k USD/year (market.md section 2)"
+
+- id: bi-2
+  title: "Table event_video_mismatch: sessions where a telemetry event fired but the video shows no matching screen, or the screen appeared without the event"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: anomaly-alert, delivery-form: warehouse-table-export, companion-data: telemetry-events, constraint-to-overcome: ground-truth-labels, value-lever-b2b: create-data-that-did-not-exist}
+  object: "Ordered-funnel (Unity) vs any-order (GameAnalytics) drop-off rules that give different numbers for the same players (methods-churn-funnel.md section 1 INFERRED)"
+  situation: "tutorial_step_3_complete is logged by 94% of players but the video shows the step-3 card for only 81% of the same sampled sessions; 13 points of the funnel are phantom"
+  consequence: "Every downstream funnel, churn model and A/B readout inherits the phantom completions; the BI head currently has no independent ground truth to audit instrumentation against"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 1 INFERRED: 'Funnel quality is bounded by instrumentation... Ordered-funnel rules (Unity) and any-order rules (GameAnalytics) produce different drop-off numbers for the same players'"
+  proposed: "Weekly job joins video_ui_state_events to the event stream per session_id and writes rows with mismatch_type in (event_without_screen, screen_without_event, order_swap)"
+  shallow: false
+  mechanism: "Video-derived screen sequence is used as independent ground truth against the telemetry stream; mismatches are tabulated per event name and per build"
+  example: "After build 4.12 the 'shop_opened' event double-fires on 7% of sessions; table lists the 212 affected session_ids and the build"
+  cost: S
+  depends_on: "bi-1 table"
+  buyer: "Head of analytics/BI who owns the event taxonomy"
+  input: "video-derived state table plus raw event stream per session_id"
+  why_existing_tools_cannot: "Funnel tools trust the events they are given (methods-churn-funnel.md section 1); session replay is for watching, not for auditing event counts (methods-churn-funnel.md section 6)"
+  willingness_to_pay: "4 - the buyer already pays for Amplitude/GameAnalytics instrumentation; no price signal for audits in the notes, so the anchor is Sensor Tower-class 29,500-115,460 USD/year contracts for data a team trusts (competitor-and-ua.md section 1)"
+
+- id: bi-3
+  title: "Retroactive funnel step: define a new step in plain language after launch and backfill it as a column for sampled past sessions"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: input-timing-and-hesitation, analysis-type: cohort-comparison, lifecycle-moment: d1-to-d7, delivery-form: warehouse-table-export, value-lever-b2b: cut-time-to-insight, constraint-to-overcome: joining-video-to-events}
+  object: "Unity Funnel Analyzer rule that editing a funnel is blocked because it 'would invalidate any existing data' (methods-churn-funnel.md section 1)"
+  situation: "Product asks on a Tuesday whether players who stared at the shop button for 6 s without tapping churn more; that event was never instrumented"
+  consequence: "Today the answer takes a client release plus 2-4 weeks of new data; with retroactive extraction it takes a query over footage already stored"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 2: 'Most of these can in principle be instrumented as events, but only if anticipated; video captures them retroactively for any screen, which is the practical difference'"
+  proposed: "Analyst writes a one-line definition, job runs over stored clips and returns session_id, step_hit boolean and t_ms in a new table"
+  shallow: false
+  mechanism: "A general video model labels stored clips against a natural-language step definition and writes a boolean plus timestamp per session into the warehouse"
+  example: "'shop button visible and not tapped for 6 s' backfilled over 3,000 d1 sessions in one afternoon; hit rate 9%, D7 retention 4 points lower than non-hit"
+  cost: M
+  depends_on: "retained clips for at least 14 days; bi-6 label quality harness to know the hit-rate error"
+  buyer: "Head of analytics/BI at a mid-size mobile studio"
+  input: "stored sampled session clips plus touch overlay plus event stream"
+  why_existing_tools_cannot: "Funnels cannot add steps retroactively (methods-churn-funnel.md section 1); an in-house Gemini script can, but offers no versioned definitions or joined output (competitor-and-ua.md section 1: Gemini takes video, no game FTUE extraction covered)"
+  willingness_to_pay: "3 - the saved cost is one client release cycle; no direct price in the notes, nearest anchor is IV Metrics Pro 99 USD/month for 100 videos (market.md section 2), so this must price well above that"
+
+- id: bi-4
+  title: "Column session_end_reason: classify the last 10 s of video before app kill as rage-quit, interruption (call, notification) or crash"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: churn-prediction-features, lifecycle-moment: d1-to-d7, delivery-form: warehouse-table-export, capture-trigger-and-sampling: on-crash-or-anomaly, companion-data: crash-and-error-logs}
+  object: "Session-end handling in Sony's rage-quit patent (disconnect 2 points vs menu exit 1 point, methods-churn-funnel.md section 2) and the INFERRED 'exact screen state at the moment of app kill (rage quit vs. interruption)' (section 2)"
+  situation: "Session length of 41 s ends with app_background; telemetry cannot say whether the player was on a fail screen or got a phone call"
+  consequence: "Churn models treat all short sessions alike; interruptions inflate early-exit rates and can make a healthy level look like a churn driver"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 2 INFERRED: 'the exact screen state at the moment of app kill (rage quit vs. interruption)'"
+  proposed: "On-device ring buffer of 30-120 s uploaded on app kill under 60 s session; one label per session written to warehouse"
+  shallow: false
+  mechanism: "Classifier reads the final frames and overlay (call banner, notification, fail screen, frozen frame) and writes an enum into a session-level column"
+  example: "Hyper-casual game: 18% of sessions under 60 s end on an iOS notification banner, not a fail screen; level 6 was wrongly flagged as a churn level"
+  cost: S
+  depends_on: "ring-buffer capture on app lifecycle events"
+  buyer: "Head of analytics/BI or the data scientist who owns the churn model"
+  input: "last 30-120 s of screen video plus app lifecycle events and crash logs"
+  why_existing_tools_cannot: "Event analytics sees app_background only (methods-churn-funnel.md section 1); Sentry-style ring buffers capture errors, not interruptions, and give video to a human (methods-churn-funnel.md section 6)"
+  willingness_to_pay: "3 - cheap to run (30-120 s per ended session); Sentry replay pattern is established pricing logic but no game price in notes; buyer signal is Firebase Predictions use by Halfbrick for +5 pp D7 (methods-churn-funnel.md section 1)"
+
+- id: bi-5
+  title: "Table sample_weights: inverse-probability weight per sampled session so video-derived rates extrapolate to the full install cohort"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, analysis-type: cohort-comparison, delivery-form: warehouse-table-export, constraint-to-overcome: sampling-bias, capture-trigger-and-sampling: random-sample, companion-data: telemetry-events, value-lever-b2b: increase-coverage-from-sample-to-all}
+  object: "Practical sampling knob 'user-level sampling (e.g. 1-5% of new installs) with Wi-Fi-only upload' (methods-churn-funnel.md section 7 INFERRED)"
+  situation: "Wi-Fi-only upload at 3% sampling over-represents players with home Wi-Fi, who skew to higher-spending tablet users; video-derived rates are biased by 8 points on one segment"
+  consequence: "The BI head would never publish a number from a biased 3% sample, so the video data stays unused"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7: 'user-level sampling (e.g. 1-5% of new installs) with Wi-Fi-only upload'; also 'opt-in cohorts' push (section 7 INFERRED)"
+  proposed: "Model P(captured | country, device tier, install source, payer flag from events) and emit weight per session_id; rates in downstream queries use SUM(weight)"
+  shallow: false
+  mechanism: "Propensity model over the studio's event-side attributes estimates capture probability, writes weights to the warehouse so every video-derived metric can be reweighted to the cohort"
+  example: "Share of players who skip the tutorial: raw 14% in sample, weighted 19% for all installs; the decision to shorten the tutorial uses 19%"
+  cost: S
+  depends_on: "bi-1 table; telemetry for all installs"
+  buyer: "Head of analytics/BI or studio data scientist"
+  input: "capture log (who was sampled, who uploaded) plus telemetry for the whole cohort"
+  why_existing_tools_cannot: "Playtest vendors sell recruited panels with no population frame (market.md section 1, panel-quality note); replay tools sell random sessions without weights (market.md section 2)"
+  willingness_to_pay: "3 - not priced in notes; it is a trust feature that unlocks the rest, so it is bundled into the table price rather than sold alone"
+
+- id: bi-6
+  title: "Label-quality harness: per-label precision and recall of the pipeline against 300 human-labelled frames per title, versus the studio's own Gemini prompt"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: ask-a-question-over-footage, delivery-form: warehouse-table-export, constraint-to-overcome: commoditisation-by-general-video-llms, value-lever-b2b: de-risk-a-go-kill-decision, pricing-model: managed-project}
+  object: "Zero-shot VLM baseline of precision 0.50 / accuracy 0.72 on 100 industrial videos, where many flagged anomalies were on-screen log messages (adjacent-usecases.md section 1)"
+  situation: "The BI head points Gemini at 200 sessions and gets plausible prose; nobody knows its error rate for 'tutorial popup dismissed in under 1 s'"
+  consequence: "Without a confusion matrix per label the output is not allowed into a model or a board slide; the harness is what turns 'we tried Gemini' into a number"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "adjacent-usecases.md section 1: 'best off-the-shelf VLM zero-shot baseline reached precision 0.50 / accuracy 0.72 on 100 industrial videos'; methods-churn-funnel.md section 4: VLMs 'detect a certain range of visual bugs'"
+  proposed: "Table label_quality(label, model_version, precision, recall, n_frames) refreshed on every model or prompt change, includes the studio's Gemini prompt as one of the contenders"
+  shallow: false
+  mechanism: "Stratified frame sampling, 300 human labels per title, and automatic scoring of any labeller (vendor model, Gemini prompt, per-title detector) written to a warehouse table"
+  example: "Studio's Gemini prompt: 0.71 precision on 'booster popup open'; per-title detector: 0.93; the studio keeps both and routes by label"
+  cost: S
+  depends_on: "a small human labelling pass (about 1 day per title)"
+  buyer: "Head of analytics/BI and data scientist at a studio that already experiments with general video LLMs"
+  input: "sampled frames from sessions plus 300 human labels plus any model's predictions"
+  why_existing_tools_cannot: "Vendors publish accuracy only as vendor claims (market.md section 3: 'proper case studies are still hard to find', Naavik); only 16% of devs fully trust AI QA outcomes (market.md section 3 survey)"
+  willingness_to_pay: "3 - sold as a fixed project; managed-project anchor is Admiral AI-video batches of 10,000 EUR per 20 videos (competitor-and-ua.md section 3) as proof teams pay project fees, no direct price for evaluation"
+
+- id: bi-7
+  title: "Versioned label taxonomy: a label_taxonomy_version column and frozen definitions so video labels do not drift when the underlying model changes"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: build-to-build-regression-diff, delivery-form: warehouse-table-export, constraint-to-overcome: accuracy-and-trust, value-lever-b2b: de-risk-a-go-kill-decision}
+  object: "Segwise's description of taggers 'drifting on labels' and its creative tag taxonomy (competitor-and-ua.md section 3)"
+  situation: "A model upgrade in March moves 'popup open' from 12% to 15% of frames with no game change; a D1 comparison across build 4.10 and 4.12 is now meaningless"
+  consequence: "Time series built on video labels break at every model upgrade; the BI head refuses data whose definition can move under his dashboards-of-record"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "competitor-and-ua.md section 3: Segwise 'describes taggers drifting on labels' and publishes a creative tag taxonomy (vendor)"
+  proposed: "Each row carries taxonomy_version and model_version; on upgrade, both old and new labels are written for 14 days with a bridge table"
+  shallow: false
+  mechanism: "Frozen label definitions plus dual-run on upgrade; the warehouse keeps both versions and a mapping so historical comparisons stay valid"
+  example: "Upgrade from detector v3 to v4: bridge table shows 'popup open' recall rose 0.88 to 0.93; analyst rescales the pre-upgrade baseline instead of reading a false D1 shift"
+  cost: S
+  depends_on: "bi-6 harness"
+  buyer: "Head of analytics/BI"
+  input: "the same stored clips run through two model versions"
+  why_existing_tools_cannot: "SaaS vendors replace models silently; Segwise-type tagging platforms discuss drift only as a human tagging problem (competitor-and-ua.md section 3); in-house Gemini calls change behaviour with model updates (market.md section 6 GameAnalytics IQ suite is not versioned for video)"
+  willingness_to_pay: "2 - a hygiene feature the BI head demands but will not pay separately; priced inside the table subscription"
+
+- id: bi-8
+  title: "Table video_event_alignment: per-session clock offset in ms between video frames and telemetry timestamps, including background-pause gaps"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: input-timing-and-hesitation, analysis-type: root-cause-of-a-metric-change, delivery-form: warehouse-table-export, constraint-to-overcome: joining-video-to-events, companion-data: touch-and-controller-input}
+  object: "Patent 'Gameplay telemetry and video acquisition system' for synchronised capture (methods-churn-funnel.md section 6) and Medal's value in clips 'paired with recorded inputs' (section 6)"
+  situation: "Video clip starts at app foreground; events carry server timestamps; a 2.3 s drift places the 'purchase_tap' event on the wrong frame, so 'hesitation before purchase' is measured on the wrong second"
+  consequence: "Every join between video and events is off by a variable amount; hesitation metrics (the thing the video was bought for) are quietly wrong"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 6: 'synchronised input + video is worth more than video alone'; patent 11000771 on synchronised capture"
+  proposed: "Align using visible on-screen events (level start banner, currency counter change) as anchors; write offset_ms and anchor_count per session"
+  shallow: false
+  mechanism: "Anchor-based alignment: detect a few unambiguous on-screen events in video and match them to the same events in telemetry, solving per-session offset and pause gaps"
+  example: "Median offset 380 ms, 6% of sessions above 2 s; sessions above 2 s are excluded from hesitation tables automatically"
+  cost: S
+  depends_on: "bi-1 detector emits anchors; event stream with client timestamps"
+  buyer: "Head of analytics/BI or the engineer who owns the event pipeline"
+  input: "video timestamps, client and server event timestamps, app lifecycle events"
+  why_existing_tools_cannot: "Replay vendors attach video to a session id but do not publish alignment error (market.md section 2); Antidote syncs recruited-tester recordings with inputs and events in a lab context only (market.md section 1)"
+  willingness_to_pay: "2 - invisible plumbing; BI head expects it inside the product"
+
+- id: bi-9
+  title: "Capture triggers written as SQL over the event stream (3 level_fail in a row on level 12) compiled into SDK ring-buffer trigger rules"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, capture-trigger-and-sampling: event-triggered-clip, delivery-form: api-or-sdk, analysis-type: funnel-drop-off-why, constraint-to-overcome: bandwidth-and-storage, signal-extracted: ui-state-and-screen-flow, effort: M-one-quarter}
+  object: "Sentry replay pattern: onErrorSampleRate buffers about the last minute and uploads only when an error occurs (methods-churn-funnel.md section 6), adapted to triggers 'tutorial abandon, app kill on fail screen, N fails in a row' (section 6 INFERRED)"
+  situation: "Full capture of a 30-minute first session at 2 Mbps is about 450 MB per player (methods-churn-funnel.md section 7); the BI head wants only the 60 s around event patterns he already defines in SQL"
+  consequence: "Capturing by rule, not by lottery, cuts upload to a small share of sessions and keeps 100% of the cases he cares about; he refuses a capture tool he cannot configure in his own language"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7 INFERRED: 'a 30-120 s on-device ring buffer uploaded only on trigger (tutorial abandon, app kill on fail screen, rage taps, repeated fails), as Sentry does for errors'"
+  proposed: "dbt-style trigger spec in YAML checked into the analytics repo, compiled to a remote-config JSON that the SDK evaluates on-device"
+  shallow: false
+  mechanism: "Trigger predicates over event counters are shipped to the SDK as remote config; matching sessions upload the buffered 30-120 s with the clip id written back to a warehouse table"
+  example: "Trigger 'fail_count >= 3 on level_id = 12 within 5 min' fires on 1.8% of sessions and uploads 62 s clips; 1,100 clips in a week with no random sampling"
+  cost: M
+  depends_on: "SDK with on-device ring buffer and remote config"
+  buyer: "Head of analytics/BI with the SDK platform engineer as co-signer"
+  input: "on-device event counters plus ring-buffered screen video"
+  why_existing_tools_cannot: "Error-triggered buffers exist for crashes only (Sentry, methods-churn-funnel.md section 6); IV Metrics records full sessions up to 50-100 videos a month (market.md section 2)"
+  willingness_to_pay: "3 - bandwidth savings are real (about 7.5 TB/day at 100k installs/day, methods-churn-funnel.md section 7); no game price in notes"
+
+- id: bi-10
+  title: "Table build_state_diff: share of sampled sessions in each screen state and transition for build N versus N-1, with a significance column"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: build-to-build-regression-diff, lifecycle-moment: new-version-release, delivery-form: warehouse-table-export, companion-data: build-and-config-metadata, value-lever-b2b: cut-time-to-insight}
+  object: "GameAnalytics 2026 benchmark: median D1 about 22% with P75 just above 30% (methods-churn-funnel.md section 1); a 2-point D1 drop between builds is the question being asked"
+  situation: "D1 fell from 24% to 22% after build 4.12; events show no step changed; the BI head needs to see which screen transitions changed in frequency"
+  consequence: "Root cause is currently guessed from release notes; a transition-frequency diff points at the screen where share moved by more than 3 points"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 1: median D1 about 22%; Unity docs only suggest candidate causes ('a bug that crashes the game, or the level is too hard')"
+  proposed: "Per build pair, rows (from_state, to_state, share_n, share_n_minus_1, p_value) written to the warehouse"
+  shallow: false
+  mechanism: "Markov-style transition table over video-derived states per build, compared with a two-proportion test, written as a table the analyst can pivot"
+  example: "Build 4.12: share of sessions reaching 'daily reward popup' then 'shop' rose 9 points while 'level 2 start' fell 5; ad-banner overlay covers the reward claim button on small phones"
+  cost: S
+  depends_on: "bi-1 table; build metadata in events"
+  buyer: "Head of analytics/BI or product-retention lead reading his tables"
+  input: "video-derived state sequences per session plus app_version"
+  why_existing_tools_cannot: "Funnel tools compare predefined steps only (methods-churn-funnel.md section 1); Razer-style visual bug checks run on QA builds, not on production sessions (market.md section 3)"
+  willingness_to_pay: "3 - time-to-insight sells (48-hour PlaytestCloud turnaround, market.md section 1); no per-diff price"
+
+- id: bi-11
+  title: "A/B variant explanation columns: time-to-first-meaningful-action and screen-state share per experiment arm, written next to the experiment's own result table"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: ab-test-variant-explanation, lifecycle-moment: ab-test-running, delivery-form: warehouse-table-export, companion-data: telemetry-events, pricing-model: per-session}
+  object: "FunCraft (Wordgrams) funnel finding that players wanted easier puzzles rather than tutorials, +40% D1 (methods-churn-funnel.md section 1, Amplitude case study)"
+  situation: "Variant B shortens the tutorial and wins D1 by 1.2 points; nobody knows whether it won because players reached play faster or because a confusing card vanished"
+  consequence: "A winning variant is shipped without knowing why; the next experiment repeats the guess"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 1: Amplitude case studies stop at funnel level; EA used replay to get the why, 30% faster onboarding"
+  proposed: "Join experiment assignment to video state table; output per arm: median seconds to first action, share seeing each popup, share with idle over 10 s"
+  shallow: false
+  mechanism: "Variant assignment from the experiment tool joined to video-derived behaviour; the explanation is a set of per-arm metrics, not prose"
+  example: "Variant B: median 38 s to first merge versus 71 s for control, but popup 'daily reward' seen by 22% fewer players; the win is speed, not clarity"
+  cost: S
+  depends_on: "bi-1 table; experiment assignment table"
+  buyer: "Head of analytics/BI running Amplitude Experiment-style tests"
+  input: "video-derived states plus experiment assignment per user_id"
+  why_existing_tools_cannot: "Experiment tools report the outcome, not behaviour on screen (methods-churn-funnel.md section 1); Amplitude replay is a watch-a-clip step, not a column (EA case, methods-churn-funnel.md section 1)"
+  willingness_to_pay: "3 - EA bought replay for a 30% onboarding-time gain (methods-churn-funnel.md section 1); per-session pricing small enough to run on 3% of test traffic"
+
+- id: bi-12
+  title: "dbt test and Slack alert when a video-derived column drifts (share of sessions with a popup covering the main CTA above 5%)"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, delivery-form: alert-or-slack, lifecycle-moment: live-event-or-update, companion-data: build-and-config-metadata, automation-level: auto-created-ticket-or-asset}
+  object: "Live-ops event UI 'not noticed' and 'offer screens dismissed in under a second' (B-perspectives live-ops-manager) and Sentry onErrorSampleRate as an alerting-style capture (methods-churn-funnel.md section 6)"
+  situation: "Weekly event launches at 18:00 UTC; at 18:40 the share of sessions where the event banner covers the play button hits 9% on one Android model"
+  consequence: "Telemetry never fires an error; the BI head wants it as a failing test in his own pipeline, not a new alerting product"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Video-derived columns registered as dbt sources with accepted_range tests; a failing test posts to the existing Slack channel and opens a ticket with 5 clip ids"
+  shallow: false
+  mechanism: "Hourly micro-batch labels a sampled stream of clips; a distribution test on the resulting columns fails when a share crosses a threshold"
+  example: "Event banner covers the CTA on 9% of Galaxy A14 sessions at 18:40; ticket opened with 5 clip links before the first support complaint"
+  cost: M
+  depends_on: "bi-1 table at hourly latency; Slack and ticket integrations"
+  buyer: "Head of analytics/BI plus live-ops manager as consumer"
+  input: "hourly sampled video clips plus build and device metadata"
+  why_existing_tools_cannot: "Crash tooling alerts on errors, not layout faults (market.md section 2: Bugsee and Instabug do no visual analysis); QA vision tools run pre-release (market.md section 3)"
+  willingness_to_pay: "2 - speculative; live-ops same-day evidence has no price in the notes"
+
+- id: bi-13
+  title: "Churn-feature table with a lift harness: per-user video features (tutorial-card dwell, mis-swipe count, idle share) plus holdout AUC with and without them"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: input-timing-and-hesitation, analysis-type: churn-prediction-features, lifecycle-moment: d1-to-d7, delivery-form: warehouse-table-export, companion-data: telemetry-events, constraint-to-overcome: ground-truth-labels}
+  object: "No paper predicts churn from human gameplay video; Kim et al. PLOS ONE 2017 found CNN/LSTM on logs 'about same or slightly worse' than traditional ML (methods-churn-funnel.md section 3)"
+  situation: "The studio's XGBoost churn model plateaus at one AUC; the data scientist wants to know if 12 video features add anything before paying for capture at scale"
+  consequence: "A video product sold as churn prediction with no measured lift is a 0.75 AUC claim nobody can verify; the harness gives a go/kill number per feature in 4 weeks"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 3 INFERRED: 'Video is an untested source of new features, which is a research gap rather than a proven lift'"
+  proposed: "Feature table keyed to user_id, plus a notebook-free report table (feature, delta_AUC, delta_recall_at_top_decile) on the studio's own holdout"
+  shallow: false
+  mechanism: "Extract fixed video features per sampled user, join to the churn model's training set, and report incremental lift per feature on a time-split holdout"
+  example: "Add 'idle share in first 5 min' and 'popup dismiss under 1 s': recall in top decile of D7 churners from 31% to 36%; kill 10 other features"
+  cost: M
+  depends_on: "bi-1 or bi-4 features at 3,000+ users with D7 labels"
+  buyer: "Studio data scientist reporting to the head of analytics"
+  input: "video-derived per-user features plus event history and D7 labels"
+  why_existing_tools_cannot: "Churn tools use log features only (methods-churn-funnel.md section 3); Firebase Predictions caught 275 of 145k churn instances for Surge (methods-churn-funnel.md section 1), so buyers do not trust a packaged score"
+  willingness_to_pay: "3 - Halfbrick +5 pp D7 on gifted predicted churners (methods-churn-funnel.md section 1) shows value of a few points of retention; pays only if lift is shown"
+
+- id: bi-14
+  title: "Early payer-prediction features from first-session store-screen footage (dwell on offer, price text read via OCR) joined to purchase events"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: economy-and-store-events, analysis-type: early-ltv-or-payer-prediction, lifecycle-moment: d1-to-d7, delivery-form: warehouse-table-export, companion-data: purchase-and-ad-revenue-events, constraint-to-overcome: per-game-ui-generalisation}
+  object: "Visible CTA never tapped / store screens scrolled past (B-perspectives monetisation-lead; methods-churn-funnel.md section 2 INFERRED 'a visible CTA never tapped (UI not noticed)')"
+  situation: "Day-0 payer model uses level reached and sessions; it does not know the player saw the 4.99 USD starter pack for 6 s and swiped away"
+  consequence: "Targeting of day-1 offers misses players who looked but hesitated; offer timing is set by averages"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 2 INFERRED: 'a visible CTA never tapped (UI not noticed)'; B-perspectives: 'store screens scrolled past, rewarded-ad prompts ignored, purchase hesitation'"
+  proposed: "Feature table offer_exposure(user_id, offer_id, seconds_visible, tapped) from sampled day-0 video; lift test as in bi-13"
+  shallow: false
+  mechanism: "Detect store and offer screens, read price text by OCR, measure seconds visible and tap outcome; output per-user exposure rows"
+  example: "Players who looked at the starter pack for more than 4 s and did not buy convert 3x higher on a discounted re-offer at D2"
+  cost: M
+  depends_on: "bi-1 detector with store screens in vocabulary; purchase events"
+  buyer: "Head of analytics/BI with monetisation lead as consumer"
+  input: "first-session video of store screens plus purchase and ad revenue events"
+  why_existing_tools_cannot: "Event analytics logs shop_opened and purchase but not dwell or what was read (methods-churn-funnel.md section 2); playtest video gives hesitation from 5-9 USD testers, not paying players (market.md section 1)"
+  willingness_to_pay: "3 - IAP revenue is the highest-leverage metric; GameAnalytics IQ Suite shows analytics vendors productise prediction (market.md section 6); no direct price"
+
+- id: bi-15
+  title: "Table creative_to_first_minute: MMP creative_id joined to the first 60 s screen-state sequence of the players that creative acquired"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: creative-insight-for-ads, lifecycle-moment: ua-campaign-launch, delivery-form: warehouse-table-export, companion-data: attribution-campaign-and-creative-id, buyer-org-type: mid-size-studio}
+  object: "GeekLab's complaint that it is hard to see which creative acquired players who later retain and pay, especially on iOS (competitor-and-ua.md section 3)"
+  situation: "A fail-state hook ad drives CPI of 1.41 USD on iOS casual but its installs quit at the first level; ad tools only see IPM and CPI"
+  consequence: "UA scales a creative whose players do not reach level 2; the BI head wants the join as a table the UA team can query, not another creative tool"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "competitor-and-ua.md section 3 INFERRED: 'None links an ad element to what the acquired player did on device in the first session; that link is the gap GeekLab describes'"
+  proposed: "Rows (creative_id, install_cohort_date, share_reaching_state_X_within_60s, median_seconds_to_first_action) refreshed daily"
+  shallow: false
+  mechanism: "Join MMP attribution rows to the first-minute video state sequence of sampled installs, aggregate by creative, and write the aggregate table"
+  example: "Creative 'merge-fail-hook-17' players reach the first merge in 44 s vs 29 s for 'calm-demo-03'; D1 4 points lower; UA moves 20% of spend"
+  cost: M
+  depends_on: "bi-1 table; MMP creative_id passed to the player record; sufficient sampled installs per creative (about 300)"
+  buyer: "Head of analytics/BI serving the UA manager"
+  input: "first-minute video states plus attribution campaign and creative id"
+  why_existing_tools_cannot: "Segwise, Alison and Replai analyse the ad plus network metrics only (competitor-and-ua.md section 3 INFERRED); Sensor Tower Creative Gallery shows impressions and duration (competitor-and-ua.md section 1)"
+  willingness_to_pay: "3 - Segwise charges 499-1,699 USD/month tied to ad spend (competitor-and-ua.md section 3); UA is the best-funded AI buyer (market.md section 6, Sett 57M USD)"
+
+- id: bi-16
+  title: "Competitor FTUE teardown table from scheduled bot playthroughs: step index, screen type, seconds, popups, first IAP prompt time, side by side with the studio's own funnel"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: automated-bot-or-agent-playthrough, signal-extracted: on-screen-text-ocr, analysis-type: benchmark-vs-competitor, lifecycle-moment: prototype-and-greenlight, delivery-form: warehouse-table-export, capture-trigger-and-sampling: scheduled-bot-playthrough, effort: L-multi-quarter}
+  object: "GameRefinery manual coverage of about 260 features per game and 2,500+ deconstructions at 45-51k USD/year (competitor-and-ua.md section 1); Gamedexy's 186 human-captured flows (competitor-and-ua.md section 1)"
+  situation: "The analytics head benchmarks the studio's tutorial length of 4.5 min against 12 competitors; today the numbers are typed by an analyst from manual play"
+  consequence: "A benchmark that is 12 games by hand is stale in a month; the BI head wants rows he can join to his own funnel table"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "competitor-and-ua.md section 1 INFERRED: 'FTUE and monetisation-flow teardown of competitors has no named automated product in search results'"
+  proposed: "Vision-based agent plays the first 10 minutes of a competitor build on a device farm weekly and writes (game, step, screen_type, t_s, text_ocr) rows"
+  shallow: false
+  mechanism: "A vision-based playing agent (nunu.ai-style) captures competitor first sessions, a classifier and OCR turn them into a step table; no player consent needed because the bot is the player"
+  example: "Competitor X reaches first IAP prompt at 3 min 10 s, studio at 8 min; benchmark row sits beside own funnel in Snowflake"
+  cost: L
+  depends_on: "agent that can play competitor FTUEs on real devices; legal review of store terms"
+  buyer: "Head of analytics/BI or competitive-intel analyst at a publisher"
+  input: "bot-played device video of competitor games plus OCR text"
+  why_existing_tools_cannot: "GameRefinery and Playliner are analyst-played (competitor-and-ua.md section 1); nunu.ai agents play to test own games, not to extract competitors' flows (market.md section 3)"
+  willingness_to_pay: "4 - Sensor Tower median 75,000 USD/year, GameRefinery 45-51k USD/year (competitor-and-ua.md section 1); both buyers pay for manually-collected equivalents"
+
+- id: bi-17
+  title: "Fixed-fee bake-off: vendor runs its pipeline and the studio's own Gemini prompt on the same 500 sessions and delivers cost, error rate and a go/no-go memo"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: ask-a-question-over-footage, delivery-form: managed-service-with-analyst, constraint-to-overcome: commoditisation-by-general-video-llms, pricing-model: managed-project, value-lever-b2b: de-risk-a-go-kill-decision}
+  object: "Gemini video input at 1 FPS default, about 6 hours of video in 2M context, up to 88% lower token use for agentic analysis (competitor-and-ua.md section 1)"
+  situation: "The BI head says 'we can point Gemini at a sample ourselves'; the CFO asks what the vendor does that a 2-week internal script does not"
+  consequence: "A vendor who refuses the comparison loses to the in-house script by default; one who runs it earns a measured answer and sometimes the contract"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "competitor-and-ua.md section 1: 'No source covers game FTUE extraction' for Gemini video; persona note in B-perspectives (in-house-analytics-head-build-vs-buy)"
+  proposed: "2-week project: same 500 sessions, same label set, report cost per session, per-label precision (bi-6), turnaround hours; deliver a table plus a 1-page memo"
+  shallow: false
+  mechanism: "A neutral head-to-head on the buyer's footage with its own prompt as the control; outputs cost per 1,000 sessions and error rates"
+  example: "Gemini prompt: 0.52 per session cost, precision 0.71 on 'popup open'; detector: 0.04 per session, precision 0.93; studio keeps Gemini for new labels only"
+  cost: S
+  depends_on: "bi-6 harness; 500 consented sessions"
+  buyer: "Head of analytics/BI with CFO sign-off"
+  input: "500 sampled sessions plus the studio's existing Gemini prompt"
+  why_existing_tools_cannot: "Vendors sell demos, not a comparison against the buyer's own script (market.md section 3: proof is thin, 'proper case studies are still hard to find')"
+  willingness_to_pay: "2 - managed-project anchor: Admiral batches 10,000-29,000 EUR (competitor-and-ua.md section 3); expected 5-15k USD for a bake-off, mostly as a path into a subscription"
+
+- id: bi-18
+  title: "Gemini-bootstrapped per-title detector: general model labels 2,000 frames, a small YOLO-class detector is trained and then runs the sessions at a fraction of the per-session cost"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, delivery-form: warehouse-table-export, constraint-to-overcome: cost-per-session, processing-location: edge-or-platform-server, effort: M-one-quarter, pricing-model: per-session}
+  object: "YOLOv5-ABLN mAP 91.9% on 298 UI screens from 6 mobile games from a 2,400-image set (methods-churn-funnel.md section 4); 'a per-title detector trained on a few hundred labelled frames is plausibly enough; general VLMs could label first and bootstrap it' (section 4 INFERRED)"
+  situation: "Running a general video model over 3,000 sessions of 10 minutes each at 1 FPS is 1.8 million frames per week; the BI head will not pay that every week"
+  consequence: "Cost per session decides whether the table covers 3% or 30% of installs"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 4 INFERRED: 'a per-title detector trained on a few hundred labelled frames is plausibly enough; general VLMs could label first and bootstrap it'"
+  proposed: "One-time distillation per title, with per-label accuracy from bi-6 published; reruns on new UI at about 100 new labelled frames"
+  shallow: false
+  mechanism: "Teacher-student: general video model labels frames, human spot check, student detector deployed; student handles the bulk, teacher called only on low-confidence frames"
+  example: "Match-3 studio: cost per 10-minute session drops from 0.50 USD to 0.03 USD, coverage rises from 3% to 25% of d1 installs at the same budget"
+  cost: M
+  depends_on: "bi-6 harness; 2,000 frames per title"
+  buyer: "Head of analytics/BI paying per session out of the analytics budget"
+  input: "2,000 labelled frames per title plus the session video stream"
+  why_existing_tools_cannot: "Generic replay tools capture, they do not interpret (market.md section 2); NVIDIA event recognition assumes per-game configuration done by hand (methods-churn-funnel.md section 4)"
+  willingness_to_pay: "3 - UXCam median about 21k USD/year (market.md section 2) is the generic-replay ceiling; savings versus a general model are the pitch"
+
+- id: bi-19
+  title: "Table redaction_audit: per session, counts of player names, chat text, notification overlays and payment sheets detected and masked in stored video"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: compliance-audit, delivery-form: warehouse-table-export, constraint-to-overcome: privacy-and-consent, processing-location: on-device, value-lever-b2b: avoid-fine-or-cert-failure}
+  object: "Privacy hazards specific to game video: player names and chat in HUD or social panels, notifications overlaying the screen, payment sheets (methods-churn-funnel.md section 7 INFERRED); PostHog Unity SDK has no masking of text or images (market.md section 2)"
+  situation: "Counsel asks the BI head to prove masking worked on last month's 40,000 stored clips; today he has no countable evidence"
+  consequence: "Without an audit table, privacy counsel can veto the whole programme; with one, a 0.2% unmasked rate becomes a tracked metric"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7 INFERRED: 'player names and chat in HUD/social panels, notifications overlaying the screen, payment sheets'; Apple 2019 Glassbox action (section 7)"
+  proposed: "Masking runs on-device before upload; the audit table counts detections, masks applied and residual-risk frames per clip"
+  shallow: false
+  mechanism: "On-device detectors mask regions before upload and log counts; a second server-side pass samples 1% of clips to estimate residual unmasked text"
+  example: "Month report: 38,412 clips, 4,096 with a notification overlay masked, residual unmasked sample rate 0.2%; counsel signs off"
+  cost: M
+  depends_on: "on-device inference budget; consent flow"
+  buyer: "Head of analytics/BI with privacy counsel as co-signer"
+  input: "screen video plus on-device region detections"
+  why_existing_tools_cannot: "Unity replay in PostHog has no built-in masking (market.md section 2); Bugsee-style tools leave GDPR masking to the customer (market.md section 2)"
+  willingness_to_pay: "3 - removes a veto; Apple's 2019 crackdown gave one developer under a day to comply (methods-churn-funnel.md section 7)"
+
+- id: bi-20
+  title: "Containerised pipeline that runs in the studio's own cloud (BYOC) so raw video never leaves the studio account and only label tables are produced"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, processing-location: customer-cloud-byoc, constraint-to-overcome: security-review-soc2-residency, delivery-form: warehouse-table-export, buyer-org-type: aaa-studio, pricing-model: annual-enterprise-licence, effort: L-multi-quarter}
+  object: "S3 Standard 0.023 USD/GB-month storage cost at roughly 0.04 USD/month per stored player-hour (methods-churn-funnel.md section 7 INFERRED), and the privacy and vendor-risk constraints on pre-release footage (B-perspectives studio-ciso)"
+  situation: "A studio with Snowflake and an S3 landing zone will not upload video to a vendor bucket; storage is cheap, the security review is the blocker"
+  consequence: "A vendor-cloud-only product dies in security review; BYOC makes the deal possible and the studio keeps raw video"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7 INFERRED: 'storage is cheap, upload is the constraint'; the BI head's condition from B-perspectives: 'only accepts output as tables in the warehouse'"
+  proposed: "Helm chart or Terraform module deploying ingest, labelling and writer into the customer's VPC; vendor sees only model-version telemetry"
+  shallow: false
+  mechanism: "Pipeline software shipped into the customer's account; vendor never receives pixels; billing by metered sessions reported in a table"
+  example: "Studio deploys in its AWS account; 40,000 clips per month stay in its S3; label rows land in Snowflake; security review takes 3 weeks instead of 9 months"
+  cost: L
+  depends_on: "model weights licensing; customer GPU or inference budget"
+  buyer: "Head of analytics/BI plus CISO"
+  input: "video in the customer's bucket plus warehouse credentials"
+  why_existing_tools_cannot: "All replay and playtest vendors in the notes are SaaS clouds (market.md sections 1-2); none documents BYOC or warehouse-native delivery (market.md section 9 gap map)"
+  willingness_to_pay: "3 - enterprise licence level; Sensor Tower median 75,000 USD/year (competitor-and-ua.md section 1) is the nearest enterprise data anchor"
+
+- id: bi-21
+  title: "Table ad_visible_seconds: seconds each rewarded or interstitial ad was actually visible on screen, reconciled with the mediation impression log"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: ad-and-playable-ad-sessions, signal-extracted: ad-render-and-viewability, analysis-type: ad-verification-and-fraud, delivery-form: warehouse-table-export, companion-data: purchase-and-ad-revenue-events, buyer-org-type: mid-size-studio, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "AppLovin ad-seen-in-game mislabelled by manual spying (competitor-and-ua.md section 2); ad-network persona noting 'whether the ad actually rendered and was visible' (B-perspectives ad-network-and-mediation-ops)"
+  situation: "Mediation reports 1.2 million rewarded impressions this week; 6% of sampled sessions show a black frame or a frozen ad when the impression fired"
+  consequence: "Ad revenue forecasts and eCPM comparisons by network are overstated by the share of invisible impressions"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Per impression row (impression_id, network, visible_seconds, rendered boolean) joined to the mediation log by timestamp"
+  mechanism: "Detect ad container frames in video, measure visible duration and black or frozen frames; write per-impression row"
+  example: "Network B: 9% of rewarded impressions render under 1 s; the studio reweights the waterfall"
+  shallow: false
+  cost: M
+  depends_on: "bi-8 alignment; capture inside ad SDK views (platform policy permitting)"
+  buyer: "Head of analytics/BI serving the monetisation lead"
+  input: "screen video of ad sessions plus mediation impression logs"
+  why_existing_tools_cannot: "Ad-intel tools analyse creatives and spend (competitor-and-ua.md section 1); no source covers on-device ad render verification (market.md section 9 gap map)"
+  willingness_to_pay: "2 - speculative; no price evidence for in-game ad verification in the notes"
+
+- id: bi-22
+  title: "Column load_wait_seconds from pixels (spinner or black screen visible) for third-party SDK screens that emit no load event"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: load-and-wait-screens, analysis-type: root-cause-of-a-metric-change, delivery-form: warehouse-table-export, companion-data: device-perf-counters, game-platform-and-genre: mobile-midcore-f2p, constraint-to-overcome: device-performance}
+  object: "'reliable fps/load measurement uses in-game profiling or GameBench rather than video alone' (adjacent-usecases.md section 6) and the HeadSpin CEO quote 'over 30 per cent of people left their game due to a bad experience' (market.md section 3)"
+  situation: "Login through a social SDK shows a spinner for 14 s on 5% of sessions; the game logs no event until the lobby appears"
+  consequence: "Load time in the analytics tool starts after the wait; D1 loss is blamed on content"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "adjacent-usecases.md section 6 INFERRED: 'video-only analysis competes with cheap counters for fps; its edge is rendering/visual defects per device model and no-SDK use on shipped builds'"
+  proposed: "Compute wait seconds only where no in-game counter exists; leave fps to profilers"
+  shallow: false
+  mechanism: "Detect spinner and static or black frames between app launch and first interactive screen, write per-session wait seconds, joined to device model"
+  example: "Android 9 devices wait 11 s median at social login versus 3 s elsewhere; 7% of those players never reach the lobby"
+  cost: S
+  depends_on: "bi-1 detector with load screens in vocabulary"
+  buyer: "Head of analytics/BI or engineering-performance lead"
+  input: "launch-time video plus device model and perf counters"
+  why_existing_tools_cannot: "GameBench and device clouds measure counters on lab devices, not production load waits in third-party screens (adjacent-usecases.md section 6)"
+  willingness_to_pay: "2 - GameBench is already paid for by studios; video wins only where counters do not exist"
+
+- id: bi-23
+  title: "MCP server over the video-derived tables so the studio's existing agents and GameAnalytics MCP workflow can query them in SQL"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, delivery-form: ask-question-agent-chat, analysis-type: ask-a-question-over-footage, go-to-market-channel: self-serve, companion-data: telemetry-events, effort: S-weeks, automation-level: insight-for-human}
+  object: "GameAnalytics MCP server added Feb 2026 and IQ Suite launched 15 Oct 2025 (market.md section 6)"
+  situation: "The BI head's analysts already ask an agent questions over Snowflake and GameAnalytics MCP; video tables should appear as tools in the same agent, not a new chat window"
+  consequence: "A separate 'ask the footage' chat is refused; the same facts exposed as SQL-backed tools are accepted"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "market.md section 6: GameAnalytics 'MCP server added Feb 2026'"
+  proposed: "Read-only MCP tools (get_state_sequence, list_mismatch, get_clip_link) with row limits and per-table descriptions"
+  shallow: false
+  mechanism: "Warehouse tables from bi-1 and bi-2 exposed through MCP tools; clip links resolve inside the studio's bucket"
+  example: "Analyst asks 'which build changed popup dismiss time' in the agent and gets a table plus 3 clip links in the studio's own console"
+  cost: S
+  depends_on: "bi-1 table"
+  buyer: "Head of analytics/BI"
+  input: "warehouse video tables plus clip store"
+  why_existing_tools_cannot: "PlaytestCloud and Antidote AI chat sits inside their own UI over recorded testers (market.md section 1); GameAnalytics MCP has no video tables (market.md section 6)"
+  willingness_to_pay: "2 - a delivery detail priced inside the table subscription"
+
+- id: bi-24
+  title: "Licensed dataset of consented sessions (video plus inputs plus events) sold to world-model labs, with the studio keeping a revenue share"
+  level: L3
+  cell: {buyer-role: data-buyer-training, video-source: own-players-consented-sdk, analysis-type: training-dataset-export, delivery-form: licensed-dataset, pricing-model: data-licence-per-hour, value-lever-b2b: produce-a-sellable-asset, companion-data: touch-and-controller-input}
+  object: "Worldmodeldata licensed nearly 1M hours of game data; Origin Lab 500k+ hours from 250+ games (market.md section 4)"
+  situation: "The CFO hears that gameplay with inputs sells; the analytics head owns the consent records and the event IDs that make the footage worth more"
+  consequence: "A second revenue line, but a privacy and player-trust risk; the BI head does not budget for it and wants no part in selling players' screens"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "market.md section 4 INFERRED: 'a second revenue line for studios'; Microsoft Muse EULA criticism (market.md section 4)"
+  proposed: "Explore only if consent is explicit and separate from analytics consent"
+  shallow: false
+  mechanism: "Package consented, de-identified sessions with inputs and event labels into a licensable set; vendor brokers and keeps a fee"
+  example: "Studio with 20,000 consented hours of a racing game licenses 5,000 hours to a lab; vendor and studio split proceeds"
+  cost: L
+  depends_on: "separate consent; legal review; bi-19 redaction audit"
+  buyer: "Studio CFO or BD; the analytics head is a blocker, not the buyer"
+  input: "consented video, inputs and event labels"
+  why_existing_tools_cannot: "Medal and General Intuition buy gameplay for training, not for studios (market.md section 4); Worldmodeldata and Origin Lab broker without analytics labels"
+  willingness_to_pay: "1 for the analytics buyer, 3 for a CFO - OpenAI reportedly offered 500M USD for Medal (market.md section 4) but a studio's footage is a small slice"
+
+- id: bi-25
+  title: "REFUSE: AI-summarised replay dashboard with theme cards and linked clips (the PlaytestCloud First Findings pattern) as a new tab for the analytics team"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: recruited-playtesters, analysis-type: funnel-drop-off-why, delivery-form: dashboard, signal-extracted: speech-or-think-aloud, buyer-org-type: mid-size-studio, constraint-to-overcome: commoditisation-by-general-video-llms}
+  object: "PlaytestCloud 'First Findings': reviews all videos, groups by theme, links each friction point to its clip (market.md section 1)"
+  situation: "The vendor offers another web UI with AI themes; the BI head already has Amplitude, GameAnalytics and Snowflake and 3 BI dashboards per team"
+  consequence: "Rejected on sight: findings that cannot be joined to event IDs cannot be audited or filtered; adoption would be one user (the UX researcher)"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "market.md section 1: 'groups findings by theme, and links each friction point to its clip'; B-perspectives: 'refuses another dashboard'"
+  proposed: "Do not build for this buyer; keep for the UX-research beachhead"
+  shallow: false
+  mechanism: "Theme clustering of annotated clips in a web UI"
+  example: "A themed report of 40 tutorial friction points with clips; the BI head asks for the CSV and the session_ids, which the product does not provide"
+  cost: XS
+  depends_on: "nothing"
+  buyer: "UX researcher, not the head of analytics"
+  input: "recruited-tester video, transcripts, survey answers"
+  why_existing_tools_cannot: "It exists already (PlaytestCloud, Antidote, market.md section 1); the point is that this buyer will not pay for the existing form either"
+  willingness_to_pay: "1 - analytics head declines; UX research buyers pay 13.6-33.9k EUR/year (market.md section 1)"
+
+- id: bi-26
+  title: "REFUSE: per-session emotion or arousal score from gameplay pixels as a numeric column"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: emotion-arousal-from-pixels, analysis-type: churn-prediction-features, delivery-form: warehouse-table-export, constraint-to-overcome: ground-truth-labels, buyer-org-type: mid-size-studio}
+  object: "Makantasis et al. ACII 2019: arousal from gameplay video, over 78% average accuracy, 98% at best; AGAIN dataset of 1,100 videos from 9 games (methods-churn-funnel.md section 5)"
+  situation: "A vendor offers 'frustration score per session'; the BI head asks what the label is, who annotated it, and on which of the studio's games"
+  consequence: "Trained on 9 research games with 124 annotators, the score has no ground truth on the studio's game; Player Research says biometrics are 'often oversold'; the column is not used"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 5: 'over 78% accuracy on average'; market.md section 1: biometrics 'often oversold'"
+  proposed: "Do not build as a headline; offer only as an experimental feature inside the bi-13 lift harness"
+  shallow: false
+  mechanism: "Pixel-only arousal model producing a 0-1 score per minute of footage"
+  example: "A score of 0.82 for session 4412 with no way to check against the studio's own rage-quit label"
+  cost: M
+  depends_on: "per-game annotation"
+  buyer: "Head of analytics/BI (declines); data scientist might trial it inside the harness"
+  input: "gameplay pixels only"
+  why_existing_tools_cannot: "Research exists but is offline and per-game (methods-churn-funnel.md section 5); vendors for emotion capture moved to automotive (market.md section 7)"
+  willingness_to_pay: "1 - no price evidence; Affectiva was bought for about 73.5M USD and then moved to automotive (market.md section 7)"
+
+- id: bi-27
+  title: "REFUSE: facecam expression column (joy, frustration) joined to player_id"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: beta-and-early-access-testers, signal-extracted: facecam-expression, analysis-type: cohort-comparison, delivery-form: warehouse-table-export, constraint-to-overcome: minors-coppa-gdpr-k, companion-data: facecam}
+  object: "EU AI Act Art. 5(1)(f) ban on emotion recognition in workplace and education and Art. 50(3) disclosure duty (methods-churn-funnel.md section 7); gameplay features beat facial features for perceived frustration (methods-churn-funnel.md section 5)"
+  situation: "Vendor proposes a facecam in a beta with 17 and 19 year olds; the BI head sees biometric data attached to a warehouse key"
+  consequence: "Legal veto and a leak surface; a column joined to player_id turns the warehouse into a biometric store, for unclear lift over pixel-only signals"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 5 INFERRED: 'Face cam adds consent and biometric-law cost for unclear lift'"
+  proposed: "Do not build for this buyer"
+  shallow: false
+  mechanism: "Facial coding on the camera feed, one expression label per second"
+  example: "Beta with 400 testers; 38 are minors; the biometric column forces a DPIA before any use"
+  cost: M
+  depends_on: "consent for biometrics"
+  buyer: "UX researcher at best; not the analytics head"
+  input: "facecam video plus gameplay"
+  why_existing_tools_cannot: "Antidote already captures facecam and sentiment for testers (market.md section 1); the head of analytics would not accept it into the warehouse"
+  willingness_to_pay: "1 - legal cost exceeds value; iMotions and Affectiva have no current game-studio product (market.md section 7)"
+
+- id: bi-28
+  title: "REFUSE: vendor-hosted black-box churn score delivered by API"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, analysis-type: churn-prediction-features, delivery-form: api-or-sdk, constraint-to-overcome: accuracy-and-trust, pricing-model: per-mau, value-lever-b2b: enable-automated-action, automation-level: closed-loop-in-game-action}
+  object: "Surge's finding that Firebase Predictions caught only 275 of 145k churn instances (methods-churn-funnel.md section 1)"
+  situation: "Vendor offers a score per player updated daily and an offer trigger at 0.7; the BI head already runs a churn model he can inspect"
+  consequence: "He cannot audit features, recall or drift; one bad week of recall is blamed on him; features must arrive as inputs to his model (bi-13), not as a verdict"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 1: 'dating app Surge found Firebase Predictions caught only 275 of 145k churn instances in its data'"
+  proposed: "Do not build as a verdict; ship as features"
+  shallow: false
+  mechanism: "Vendor model scores each active player from video and logs; scores pushed to the game by API"
+  example: "Score above 0.7 triggers a gift; recall unknown because labels are on the vendor's side"
+  cost: M
+  depends_on: "vendor-side labels"
+  buyer: "Head of analytics/BI declines; product-retention lead might trial"
+  input: "video features plus the vendor's view of events"
+  why_existing_tools_cannot: "Packaged prediction exists (Firebase Predictions, methods-churn-funnel.md section 1) and is distrusted by data-owning teams"
+  willingness_to_pay: "1 - Halfbrick saw +5 pp D7 on gifted predicted churners (methods-churn-funnel.md section 1) but this buyer would not pay for a score he cannot audit"
+
+- id: bi-29
+  title: "REFUSE: per-analyst seat licence for a video-insight product"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, delivery-form: dashboard, pricing-model: per-month-seat, buyer-org-type: mid-size-studio, go-to-market-channel: direct-sales, constraint-to-overcome: cost-per-session}
+  object: "Segwise Pro tier of 1,699 USD/month with unlimited seats priced by ad spend (competitor-and-ua.md section 3) versus Alison's 10-25 USD per user per month"
+  situation: "The BI team has 6 analysts and 40 consumers who only read tables; a seat model charges for users who never open the product"
+  consequence: "Seat pricing prices the wrong thing; he buys per session or per label row so cost tracks usage he can forecast"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "competitor-and-ua.md section 3: Alison.ai '10, 20 or 25 USD per user per month'"
+  proposed: "Do not price per seat for this buyer; per session with a spend cap"
+  shallow: false
+  mechanism: "Named-user licences on a web UI"
+  example: "6 analyst seats at 25 USD/month is 150 USD/month, which looks cheap but locks the product to people who do not need it"
+  cost: XS
+  depends_on: "nothing"
+  buyer: "Head of analytics/BI declines"
+  input: "none"
+  why_existing_tools_cannot: "Seat pricing is the norm in creative tools (competitor-and-ua.md section 3); warehouse-native consumption does not need seats"
+  willingness_to_pay: "1 - mismatch with how value is delivered (a table read by many)"
+
+- id: bi-30
+  title: "REFUSE: vendor cloud storage of raw session video as the system of record"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, processing-location: vendor-cloud, constraint-to-overcome: studio-ip-and-prerelease-leak, delivery-form: dashboard, buyer-org-type: aaa-studio, companion-data: build-and-config-metadata}
+  object: "Antidote anti-leak SDK that watermarks a player ID on screen (market.md section 1) as evidence leaks are a real worry; B-perspectives studio-ciso 'vetoes cloud upload of pre-release footage'"
+  situation: "A vendor wants every build's session video in its bucket, including an unannounced season's art, for 90 days"
+  consequence: "Vetoed by security; even the BI head, who wants the output table, asks for the pipeline to run in his cloud instead (bi-20)"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "market.md section 1: Antidote offers an anti-leak SDK watermarking player ID, showing leak risk is a priced feature for lab testers"
+  proposed: "Do not build as default; replace with bi-20"
+  shallow: false
+  mechanism: "Multi-tenant vendor storage of raw video with vendor-side analysis"
+  example: "Pre-release build video of 3 testers appears in a vendor's staff view; leak liability unclear"
+  cost: S
+  depends_on: "nothing"
+  buyer: "CISO declines; head of analytics follows"
+  input: "raw video in vendor storage"
+  why_existing_tools_cannot: "Existing SaaS replay is cloud-only (market.md section 2), which is exactly the pattern refused"
+  willingness_to_pay: "1 - blocked at security review"
+
+- id: bi-31
+  title: "REFUSE: ask-a-question chat over raw footage that returns prose with no session_id list"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, analysis-type: ask-a-question-over-footage, delivery-form: ask-question-agent-chat, constraint-to-overcome: accuracy-and-trust, automation-level: insight-for-human, go-to-market-channel: direct-sales}
+  object: "AI summaries per session and across projects at Antidote ('AI Insights', market.md section 1) and the assumption that the company already has an ask-question agent (A-frame assumptions)"
+  situation: "A stakeholder asks the chat 'why do players quit level 3?' and gets 4 paragraphs and 2 clips; the BI head asks how many sessions, which cohort, which build"
+  consequence: "No counts, no cohort, no reproducibility; he treats it as an anecdote generator and does not allow it into a decision memo"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "market.md section 1: 'AI Insights summarises feedback per session and across projects'; B-perspectives: 'only accepts output as tables in the warehouse joined to their event IDs'"
+  proposed: "Ship the agent as a front end to tables (see bi-23), never as a prose source of record"
+  shallow: false
+  mechanism: "LLM reads sampled clips and answers in prose"
+  example: "Answer: 'players seem confused by the key mechanic'; the BI head asks for n, sessions, build and gets none"
+  cost: XS
+  depends_on: "existing User Test product agent"
+  buyer: "Head of analytics/BI declines; UX researcher accepts"
+  input: "sampled clips"
+  why_existing_tools_cannot: "Exists already inside playtest vendors (market.md section 1)"
+  willingness_to_pay: "1 - declined for lack of counts and IDs"

@@ -1,0 +1,545 @@
+- id: adnet-1
+  title: "Blank-or-hidden-ad detector: classify the last 3 frames before every rewarded-ad close as rendered / black / frozen / close-button-missing, per ad adapter and device model"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: ad-render-and-viewability, analysis-type: ad-verification-and-fraud, buyer-org-type: ad-network-or-dsp, companion-data: purchase-and-ad-revenue-events, delivery-form: dashboard, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "rewarded-ad session on a publisher's Android game: SDK-reported 'ad completed' event versus the rendered frames of the ad surface"
+  situation: "The mediation SDK logs impression=true and reward=granted, but 4% of completions on one adapter on Android 12 mid-range phones show a black rectangle for the full 30 s"
+  consequence: "The network bills advertisers for impressions no one saw and publishers see 'rewarded video unavailable' complaints; one blank adapter on 4% of 2M daily rewarded views is 80,000 wasted impressions a day"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "market.md section 2 INFERRED: engine-rendered game canvases 'show up as a black box or as screenshots'; no note covers ad rendering, so this is an extension of the same capture limit to ad surfaces"
+  proposed: "Per adapter x device x OS: share of ad sessions with a visible creative, with 5 sample clips of the worst cell"
+  shallow: false
+  mechanism: "A small on-device or edge frame classifier reads sampled frames (1-2 fps) of the ad surface and returns a visibility verdict; the verdict is joined to the SDK impression id and rolled up per adapter, device model and OS"
+  example: "Hyper-casual runner: ad network ops sees 'Adapter X, Pixel 6a, Android 12: 9% blank' on Monday, pauses that adapter for the model, and refunds the affected impressions"
+  cost: M
+  depends_on: "an ad-surface capture hook in the network's own SDK; consented sampling; impression id passed to the verdict"
+  buyer: "Ad quality or SDK ops lead at a mediation platform or ad network"
+  input: "Ad-surface screen frames sampled at 1-2 fps from the network's own SDK plus the SDK impression id, adapter name, device model, OS version"
+  why_existing_tools_cannot: "market.md section 2: Bugsee and Instabug record video of crashes but do no automated visual analysis of frames, and PostHog Unity replay is screenshot-only; no note lists any tool that verifies an ad actually rendered"
+  willingness_to_pay: "3: no ad-network price in the notes (speculative); the nearest anchor is UXCam about $21k/year median (market.md section 2) and a loss of 4% of billable impressions is a direct revenue number for the buyer"
+
+- id: adnet-2
+  title: "Accidental-click classifier: tap lands within 400 ms of an interstitial appearing, on the close-button area, with no visible reading dwell"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: input-timing-and-hesitation, analysis-type: ad-verification-and-fraud, buyer-org-type: ad-network-or-dsp, companion-data: touch-and-controller-input, capture-trigger-and-sampling: event-triggered-clip, delivery-form: alert-or-slack}
+  object: "interstitial ad frame sequence with the touch overlay at the moment of the first tap after appearance"
+  situation: "A player is mid-swipe in a runner game when a full-screen interstitial pops up at t=0 and the tap at t=+0.31 s opens the store page; the click is billed as a valid CPC/CPI intent"
+  consequence: "Advertisers' install quality drops, the network gets refund requests; if accidental clicks are 15% of one publisher's clicks, that publisher is a quality risk"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 2: 'Signals that exist in screen video (plus touch overlay) but not in standard event streams: ... repeated failed gestures (mis-swipes) ... time-to-first-meaningful-action'; UXCam rage-tap rule uses a 300 ms threshold"
+  proposed: "Flag clicks with tap latency under 400 ms after render and a preceding in-game swipe still in progress; score publisher games by accidental-click share"
+  shallow: false
+  mechanism: "Video of the ad surface plus touch trace; classifier labels the click as deliberate (dwell on CTA, pause in prior game input) or accidental (carry-over gesture, hit on a moving close button); output is a per-publisher accidental-click rate"
+  example: "Puzzle game publisher A has 18% accidental clicks versus a 5% network median; the network adds a 1.0 s input guard to A's interstitial and invoices fall back"
+  cost: M
+  depends_on: "touch event stream and ad-surface frame capture in the network SDK; click event id"
+  buyer: "Traffic quality or publisher-ops manager at an ad network or mediation platform"
+  input: "Ad-surface video plus touch coordinates with timestamps, the prior 2 s of game touch input, click and install postbacks"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 2: UXCam rage-tap and unresponsive-gesture rules work on app view trees with a fixed 300 ms rule, not on game canvases or ad surfaces; competitor-and-ua.md section 2 shows ad spy tools only see the creative, not the click moment"
+  willingness_to_pay: "2: no price signal in the notes for click-quality tools; speculative demand because refunds and advertiser churn are a network cost, est. a per-publisher-game monthly fee"
+
+- id: adnet-3
+  title: "Emulator-farm fingerprint from screen video: 200 sessions with identical frame sequences and tap coordinates on a 1-pixel grid"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: bot-or-fraud-behaviour, analysis-type: ad-verification-and-fraud, buyer-org-type: ad-network-or-dsp, companion-data: touch-and-controller-input, capture-trigger-and-sampling: random-sample, processing-location: vendor-cloud, constraint-to-overcome: ground-truth-labels}
+  object: "per-session sequence of ad-surface and game-surface frames plus tap trace, clustered across sessions that share a campaign id"
+  situation: "A campaign's installs arrive with 200 sampled sessions that show the same 14 frames in the same order, taps at the same pixel (540, 1620) at the same timestamp offset +/-20 ms"
+  consequence: "The advertiser pays CPI for emulator installs; the network discovers it at D7 payer rate rather than at hour 2, and the invalid share is clawed back from the publisher"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 2: 'vision-cheat growth (screen-reading bots) is the reason video-level detection is a live problem; sellers of it are few'; Anybrain claims detection of pixel-bot cheats; FACEIT says AI-based and DMA cheats were 40% of cheating bans in May 2026"
+  proposed: "Cluster sampled sessions by frame-sequence hash and tap-coordinate entropy; auto-flag clusters over 50 sessions for campaign pause"
+  shallow: false
+  mechanism: "Perceptual hashes of keyframes and quantised tap coordinates give a per-session fingerprint; near-duplicate clustering across sessions of one campaign or publisher marks scripted traffic; humans see 3 sample clips"
+  example: "Casual card game, campaign X: 612 of 3,000 sampled installs fall into 4 near-identical trajectories; campaign is paused at 6 hours instead of at the D7 payer check"
+  cost: M
+  depends_on: "sampled session capture with touch trace; campaign id; labelled fraud cases from the network's existing blocklist"
+  buyer: "Fraud and traffic quality lead at an ad network, DSP or mobile measurement vendor"
+  input: "Sampled on-device screen frames and touch traces from the network SDK, campaign id, device and IP metadata"
+  why_existing_tools_cannot: "adjacent-usecases.md section 2: no source confirms any vendor running computer vision on recorded footage as production anti-cheat; vision work found is academic or built as test cheats, and public detail is server-side input and timing models"
+  willingness_to_pay: "3: no price in the notes for ad fraud; Anybrain is quote-only; speculative because invalid-traffic refunds are a direct line item for a network"
+
+- id: adnet-4
+  title: "Interrupt-quality score per placement: label what the player was doing in the 2 s before each interstitial (mid-swipe, boss fight, results screen, menu) and rank placements"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: anomaly-alert, lifecycle-moment: live-event-or-update, delivery-form: per-cohort-report, game-platform-and-genre: mobile-midcore-f2p, companion-data: purchase-and-ad-revenue-events, value-lever-b2b: increase-coverage-from-sample-to-all}
+  object: "interstitial placement id on a publisher's game, with the game-surface frames of the 2 s before the ad call"
+  situation: "A publisher sets a placement 'level_end' but the ad fires on 11% of calls while the player is still in the boss-fight animation of the next level"
+  consequence: "Players kill the app within 3 s of the ad close, publishers blame the network, and the placement's eCPM looks high while D1 falls; a 3-point D1 loss on 300k daily installs is 9,000 lost day-1 players"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 6 INFERRED: sampling keyed on 'tutorial step abandon, app kill on fail screen' is the adaptation; no note shows any vendor labelling the moment an ad interrupts"
+  proposed: "A 'moment type' tag on each ad call and a table of placement x moment x app-kill-within-5-s share"
+  shallow: false
+  mechanism: "A UI-state classifier labels the game frame at the ad call (fail screen, in-action, results, menu, loading); the label is joined to the ad event and to the 5 s after close; output ranks placements by interrupt cost"
+  example: "Match-3 game: placement 'after_fail' kills 14% of sessions within 5 s of close versus 3% for 'after_win'; the mediation team recommends moving frequency from the first to the second"
+  cost: M
+  depends_on: "consented sampled capture in the mediation SDK; per-game UI-state labels bootstrapped by a VLM"
+  buyer: "Publisher-success or yield manager at a mediation platform serving rewarded and interstitial ads"
+  input: "Sampled game-surface frames around each ad call from the mediation SDK plus ad events, revenue events, session-end timestamps"
+  why_existing_tools_cannot: "market.md section 2: generic replay tools reconstruct native UI trees and miss game canvases; competitor-and-ua.md section 3: every UA tool analyses the ad plus network metrics (IPM, CPI), none the player state at ad time"
+  willingness_to_pay: "3: no price in the notes for placement analytics; a yield manager already bills on eCPM, so a tool that moves D1 and ad revenue per DAU has a direct anchor (speculative, est. a few $k per month per publisher account)"
+
+- id: adnet-5
+  title: "Adapter-by-device render-defect matrix: run scheduled bot playthroughs on 40 device models and score each mediated network's ad for overlap, stretch, notch cut-off and wrong orientation"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: automated-bot-or-agent-playthrough, signal-extracted: visual-errors-and-glitches, analysis-type: build-to-build-regression-diff, lifecycle-moment: new-version-release, capture-trigger-and-sampling: scheduled-bot-playthrough, delivery-form: issue-tracker-ticket, buyer-org-type: ad-network-or-dsp, automation-level: auto-created-ticket-or-asset}
+  object: "mediation SDK release candidate rendering ads from 6 networks on a device farm"
+  situation: "SDK 4.9 ships; on foldables an ad is stretched to 1.4x aspect and its close button sits under the camera cut-out on 3 of 40 tested models"
+  consequence: "The defect is found by publishers in store reviews 4 days later; with the matrix it is a ticket at hour 2 with the clip attached"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "market.md section 3: Razer QA Companion-AI detects rendering bugs from footage and files Jira tickets with video; nunu.ai agents play via a live device stream; adjacent-usecases.md section 6: 500 to 2,000+ device-OS combinations for a major mobile title; none of these point at ad SDKs"
+  proposed: "Nightly device-farm run against the SDK release candidate; ticket per defect with clip, device, adapter and network"
+  shallow: false
+  mechanism: "A scripted or vision-agent bot plays a test game that requests ads from each mediated network on a device farm; a visual-defect classifier compares each ad frame set to expected layout rules and opens a ticket"
+  example: "SDK 4.9 release candidate: ticket 'Network C interstitial close button hidden on Galaxy Z Fold, landscape' with 12 s clip attached before release goes out"
+  cost: M
+  depends_on: "device farm access (AWS Device Farm, BrowserStack, own lab); a test game with the SDK; Jira integration"
+  buyer: "SDK QA lead or release manager at a mediation platform"
+  input: "Bot-driven screen video on real devices from a test game, ad requests per network, device and OS metadata, expected layout rules"
+  why_existing_tools_cannot: "market.md section 3 and adjacent-usecases.md section 1: Razer, ManaMind and nunu.ai test game content, not third-party ad creatives injected at runtime; GameDriver is object-level and has no video"
+  willingness_to_pay: "3: QA anchors in the notes are outsourced QA USD 15-50 per tester hour and GameDriver from $150/month; an SDK vendor with hundreds of customers would justify low five figures per year (speculative)"
+
+- id: adnet-6
+  title: "Playable-ad drop-off trace: per-second map of where players abandon a playable and what they hesitated on, delivered per creative id"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: input-timing-and-hesitation, analysis-type: funnel-drop-off-why, lifecycle-moment: ua-campaign-launch, delivery-form: per-cohort-report, game-platform-and-genre: mobile-casual-hypercasual, pricing-model: per-mau}
+  object: "playable ad session: first 30 s of interaction with the touch overlay, ending in close, store click or timeout"
+  situation: "A playable has 38% completion but 70% of drop-offs happen at second 9, where an unlabelled draggable item appears and 4 taps hit nothing"
+  consequence: "The advertiser sees only 'low completion' in the network dashboard and rebuilds the whole playable at $3,000-$5,000; the actual fix is moving one hint by 2 s"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "competitor-and-ua.md section 3: 'playables being too slow to tag by hand so most teams skip them' (Segwise, vendor) and 'playables $3,000-$5,000 each externally (AppAgent) up to $30,000+ for complex ones'"
+  proposed: "A second-by-second hesitation and dead-tap map per playable, with 10 sample clips of the main drop second"
+  shallow: false
+  mechanism: "Screen frames and touch trace of playable sessions are segmented into states (intro, first action, hint, fail, end card); dead taps and idle seconds are counted per state and aggregated per creative id"
+  example: "Merge playable P-221: 61% of players wait 5+ s at second 9 on an unlabelled draggable; network sends the advertiser a report and a suggested hint position, and completion rises on the next version"
+  cost: M
+  depends_on: "playable runtime instrumented to export frames and touches, with the network's viewer consent in the ad container"
+  buyer: "Creative-services or playable-ads product manager at an ad network, white-labelled to advertisers"
+  input: "Playable ad screen frames at 2-5 fps plus touch coordinates, creative id, impression and click events"
+  why_existing_tools_cannot: "competitor-and-ua.md section 3: Segwise, Alison.ai and Vidmob tag ads and report network metrics; playables are tagged by hand or skipped; none returns a per-second view of player hesitation inside the playable"
+  willingness_to_pay: "3: Segwise tiers $499-$1,699/month by ad spend and playable build costs of $3,000-$5,000 each show budget exists, est. $500-$1,500/month per advertiser seat resold by the network"
+
+- id: adnet-7
+  title: "Post-install truth card: sell advertisers a per-creative panel of 50 consented first-session clips from their own acquired installs"
+  level: L3
+  cell: {buyer-role: ad-network-ops, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: creative-insight-for-ads, lifecycle-moment: ua-campaign-launch, delivery-form: clip-reel, value-lever-b2b: produce-a-sellable-asset, companion-data: attribution-campaign-and-creative-id, capture-trigger-and-sampling: opt-in-panel}
+  object: "creative id from the network's own impression log joined to the first 5 minutes of footage from opt-in installs in the network SDK"
+  situation: "An advertiser asks why creative C-17 has CPI $1.20 but no payers; the network holds creative and install data but nothing on what players did after the click"
+  consequence: "The network loses budget to networks with better post-install optimisation; a 10% budget loss on $2M monthly spend is $200,000"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "competitor-and-ua.md section 3 INFERRED: 'Every tool above analyses the ad video plus network metrics (impressions, IPM, CPI). None links an ad element to what the acquired player did on device in the first session'; GeekLab: hard to see which creative acquired players who later retain and pay"
+  proposed: "Clip reel and a 'promise kept' score per creative, delivered through the network's advertiser console"
+  shallow: false
+  mechanism: "Where the network SDK is also in the advertised game, opt-in sessions are sampled for the first 5 minutes; a VLM labels the screens and the mechanic shown in the ad, and the network sells a per-creative 'shown vs delivered' score as an advertiser add-on"
+  example: "Casual puzzle advertiser sees that 60% of C-17 installs never reach the advertised bomb mechanic before minute 5, swaps the creative, and CPI-to-payer ratio improves"
+  cost: L
+  depends_on: "the network SDK present in the advertised game (partner studios only); opt-in consent; creative id join"
+  buyer: "Product lead for advertiser tools at an ad network or DSP"
+  input: "Consented first-session video from advertiser games that run the network SDK, creative id and install id, the ad creative itself"
+  why_existing_tools_cannot: "competitor-and-ua.md section 3: Segwise, Alison.ai, Replai, Vidmob stop at the ad and network metrics; GeekLab says creative-to-retained-player linkage is weak, especially on iOS"
+  willingness_to_pay: "3: UA tool anchors are Segwise $499-$1,699/month and Sensor Tower about $75,000/year median; a network could price it as an add-on to media spend, speculative"
+
+- id: adnet-8
+  title: "Rival-network ad library built by bots: scheduled playthroughs of 300 games log which advertiser creative each competing network actually serves, with timestamp and placement"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: automated-bot-or-agent-playthrough, signal-extracted: ad-render-and-viewability, analysis-type: benchmark-vs-competitor, capture-trigger-and-sampling: scheduled-bot-playthrough, delivery-form: api-or-sdk, buyer-org-type: ad-network-or-dsp, game-platform-and-genre: mobile-midcore-f2p, value-lever-b2b: create-data-that-did-not-exist}
+  object: "ad creatives shown inside publisher games during bot sessions, identified by network SDK name on screen and the end-card store link"
+  situation: "A network wants to know which top-10 advertisers its competitor serves in a puzzle game and at what frequency; AppLovin publishes no public ad library and manual screenshots mislabel ads as that game's creative"
+  consequence: "Sales teams guess competitor share of voice from Sensor Tower estimates priced at $29,500-$115,460 a year; a bot library gives per-game frequency and creative lists"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "competitor-and-ua.md section 2: 'AppLovin publishes no public competitor ad library; screenshotting ads seen inside another game mislabels them as that game's creative (vendor guide)'"
+  proposed: "A weekly table of (publisher game, network, advertiser, creative hash, count) from bot sessions across 300 games"
+  shallow: false
+  mechanism: "Vision-agent bots play 300 games on rented devices; the ad-frame detector tags the ad network by SDK chrome and end-card, extracts the advertised app from the store handoff, and hashes the creative for dedupe"
+  example: "Network strategy team sees a rival gave 22% of interstitials in 40 hyper-casual games to one advertiser, and builds a targeted pitch to that advertiser"
+  cost: L
+  depends_on: "device farm access; per-game login handling; legal review of terms of service"
+  buyer: "Competitive intelligence or sales strategy lead at an ad network or mediation platform"
+  input: "Bot-driven screen video on rented devices, store handoff URLs on ad click, a list of 300 target games"
+  why_existing_tools_cannot: "competitor-and-ua.md section 2: AppLovin has no public library and manual spying mislabels ads; section 1: Sensor Tower Ad Intelligence is priced at $29,500-$115,460 a year via Vendr and shows creatives by network, not what each game actually serves in session"
+  willingness_to_pay: "2: Sensor Tower median $75,000/year is an anchor for the category, but the notes show no buyer asking for in-game served-ad capture; speculative, partly a terms-of-service risk"
+
+- id: adnet-9
+  title: "Reward-not-granted evidence clip: auto-attach the 30 s ring buffer to a publisher's 'I watched the ad but got nothing' ticket and diff SDK reward callback against frames"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: support-ticket-attachment, signal-extracted: economy-and-store-events, analysis-type: evidence-pack-for-enforcement, capture-trigger-and-sampling: on-player-report, delivery-form: enforcement-or-cert-evidence-pack, companion-data: support-ticket-text, buyer-org-type: ad-network-or-dsp, automation-level: auto-created-ticket-or-asset}
+  object: "rewarded-ad session ring buffer (30 s) from the player's device attached to a support ticket, with the SDK 'reward granted' callback timestamp"
+  situation: "A player writes in with 'watched the full ad, got no gems'; the SDK log says the callback fired 0.4 s after the close, the game says it never arrived, and neither side has proof"
+  consequence: "Each dispute takes 3-5 days of back and forth; with 1,000 disputes a month the network pays agents or refunds without evidence"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 9: 'NOT FOUND: no off-the-shelf vendor of a rolling last-30-seconds game-client buffer attached to a ticket'; Helpshift auto-captures device and session state but no video confirmed"
+  proposed: "Verdict 'ad completed and reward callback missing' or 'ad skipped at 11 s' with the clip, for the publisher and the network to share"
+  shallow: false
+  mechanism: "On player report, the last 30 s of the ad surface is uploaded; the model checks completion (end card shown, timer reached 0) against the reward callback log and emits a verdict plus the clip"
+  example: "Fantasy RPG publisher disputes 120 rewarded views in one month; the clips show 87 were truly completed and the callback failed on one adapter, so the network credits the publisher and files a bug"
+  cost: M
+  depends_on: "ring-buffer capture in the network SDK; report trigger in the host game; ticketing connector"
+  buyer: "Publisher support or billing-disputes manager at a mediation platform or ad network"
+  input: "On-report 30 s ring buffer of ad surface, SDK callback log, ticket text, device and OS"
+  why_existing_tools_cannot: "adjacent-usecases.md section 9: Helpshift captures device and session state and no video was confirmed; Fullview, Screendesk are non-game and web-based; players self-record and agents watch"
+  willingness_to_pay: "2: Helpshift is priced per issue with 1,000 issues/month included and reviewed as expensive; a dispute-evidence tool is a niche add-on, speculative"
+
+- id: adnet-10
+  title: "Billed-versus-seen impression audit: reconcile the network's billed rewarded impressions with frame-verified ones for one publisher game and issue a credit memo"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: ad-render-and-viewability, analysis-type: compliance-audit, delivery-form: enforcement-or-cert-evidence-pack, pricing-model: cpm-or-per-impression-verified, buyer-org-type: ad-network-or-dsp, value-lever-b2b: avoid-fine-or-cert-failure}
+  object: "monthly impression invoice line for one publisher game: 1.2M billed impressions versus a 20,000-session verified sample"
+  situation: "An advertiser agency disputes the invoice; the network has the SDK log but cannot show the ad was visible for 5+ of 30 s on screen"
+  consequence: "The network concedes 6% credits by default (e.g. $18,000 on a $300,000 month) because it cannot prove viewability inside a game canvas"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "market.md section 5: Relo Metrics sells CV sponsor-logo prominence and duration in sports broadcast video paired with viewership, a mature 'CV on video sold to marketers' model; search found no in-game equivalent"
+  proposed: "Sample-based visible-seconds estimate per placement with confidence interval, produced as an evidence pack per invoice"
+  shallow: false
+  mechanism: "A random 1-2% of ad sessions upload frames; a classifier measures visible ad area and seconds (covered by popup, out of foreground, muted); results extrapolate to the invoice with a stated error band"
+  example: "Match-3 publisher: sample says 93.1% +/-1.2% of impressions had 5+ visible seconds; the network defends the invoice and caps the credit at 7%"
+  cost: M
+  depends_on: "random-sample capture in the SDK; agreement on a viewability definition with advertisers"
+  buyer: "Billing or measurement ops lead at an ad network or DSP"
+  input: "Randomly sampled ad-surface frames plus SDK impression id, foreground and audio-state flags"
+  why_existing_tools_cannot: "market.md section 5: Relo Metrics-style CV exists for broadcast sports and was not found for in-game moments; market.md section 2: generic replay tools see black boxes for game canvases"
+  willingness_to_pay: "2: no price signal in the notes for viewability in games; Hatchet $249-$1,249/month shows marketers pay for measurement, speculative at CPM-linked pricing"
+
+- id: adnet-11
+  title: "Ad-fatigue app-kill alert: flag publisher games where the app is killed or backgrounded within 2 s of an ad close in more than 8% of sessions"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: own-players-consented-sdk, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: anomaly-alert, lifecycle-moment: d1-to-d7, delivery-form: alert-or-slack, capture-trigger-and-sampling: on-crash-or-anomaly, game-platform-and-genre: mobile-casual-hypercasual, companion-data: telemetry-events}
+  object: "session end timestamp within 2 s after an interstitial close, with the ad frames and the state of the game before it"
+  situation: "A publisher raises interstitial frequency from every 3 levels to every level; app-kill-after-ad rises from 4% to 11% in 48 hours"
+  consequence: "The network earns more eCPM impressions while D7 falls; if unfixed the publisher churns the network within one quarter"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 2: 'the exact screen state at the moment of app kill (rage quit vs. interruption)' is visible in video and absent from events; Sentry's onErrorSampleRate pattern buffers the last minute and uploads only on trigger (section 6)"
+  proposed: "Trigger a clip upload on app kill within 2 s of ad close and a Slack alert when the share exceeds the 8% threshold for a placement"
+  shallow: false
+  mechanism: "On-device ring buffer uploads only when the app is killed or backgrounded within 2 s of an ad close; a classifier labels the screen (ad end card, game screen, error) and the alert aggregates share per placement and frequency setting"
+  example: "Runner game: after the frequency change app-kill-after-ad is 11%; Slack alert goes to the publisher success manager, who proposes a cap of 1 per 3 levels"
+  cost: S
+  depends_on: "ring-buffer capture in the SDK; session-end hook"
+  buyer: "Publisher success manager at a mediation platform"
+  input: "Triggered 30-60 s on-device clips around ad close and app kill, placement id, frequency cap settings"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 6: Sentry-style error ring buffers key on crashes, and replay tools key on UI trees; no note shows a trigger keyed on ad-close-then-kill"
+  willingness_to_pay: "2: speculative, no price in the notes; an alert is cheap to build and a publisher-retention argument for the network, est. bundled into a premium SDK tier"
+
+- id: adnet-12
+  title: "Ad-audio mismatch detector: flag ads that play sound while the device is muted or a game track is playing, from 5 s audio-plus-frame samples"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: game-audio-and-sfx, analysis-type: anomaly-alert, delivery-form: issue-tracker-ticket, companion-data: device-perf-counters, buyer-org-type: ad-network-or-dsp, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "audio track and speaker icon state of an interstitial on the player's device"
+  situation: "A video ad starts at full volume while the device ringer is muted and the game's own music is also playing, causing a double audio track"
+  consequence: "Players leave 1-star reviews citing 'loud ad', and publishers pause the network; one noisy creative in 5% of impressions becomes a support issue"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none in the notes for ad audio; game-audio-and-sfx is a C-axis value, and market.md section 7 mentions voice and facecam tools but not ad audio"
+  proposed: "Per creative and per adapter audio-overlap and mute-ignore rate, ticketed when over 2%"
+  shallow: false
+  mechanism: "5 s audio snippets plus mute-state flags are compared; overlapping speech or music tracks and ignoring of the mute flag are labelled; per-creative rates are tracked"
+  example: "Creative C-905 plays at full volume on 30% of muted devices; ticket opened to the demand partner and the creative is blocked"
+  cost: S
+  depends_on: "audio capture permission in the ad container (device audio is rarely capturable on iOS)"
+  buyer: "Ad quality reviewer at an ad network"
+  input: "Short audio and frame samples from the ad surface plus the device mute and volume flags"
+  why_existing_tools_cannot: "no research note covers ad audio quality; market.md section 2 lists replay and bug-video tools that record visuals only; this is an absence in the notes, not a finding"
+  willingness_to_pay: "1: speculative, no buyer signal in the notes; a player complaint, not a purchase driver; likely a feature inside an ad-quality suite"
+
+- id: adnet-13
+  title: "Deceptive-ad triage: scan 2% of served ad sessions for fake-system-dialog, fake-close-button and mismatched-gameplay creatives, and queue them for human review"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: dark-pattern-and-disclosure-ui, analysis-type: compliance-audit, buyer-org-type: ad-network-or-dsp, capture-trigger-and-sampling: random-sample, delivery-form: enforcement-or-cert-evidence-pack, value-lever-b2b: reduce-cost-per-incident, automation-level: auto-created-ticket-or-asset}
+  object: "served ad creative in an in-game session with its end card and close controls"
+  situation: "A creative shows an X in the top-right that is 4 px and animated, and a banner saying 'Your battery is damaged' that mimics a system dialog"
+  consequence: "Platforms (Apple, Google) can sanction the network's SDK; each manual creative review costs minutes of a reviewer's time, with thousands of new creatives a week"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "competitor-and-ua.md section 2: ad review today is by free libraries plus occasional paid tools; section 3: RocketShip HQ says top advertisers produce 5x the median's creative variants per week and Segwise cites 50-200 new variants per title per week, which sets the review volume"
+  proposed: "Auto-label each sampled ad session with fake dialog, hidden or tiny close control, forced click and mismatch with store page; queue for review when 2 or more labels fire"
+  shallow: false
+  mechanism: "A VLM reads sampled ad frames (including the end card and close control size and delay) and returns policy labels with confidence; items over threshold join a review queue with the clip"
+  example: "Network ad-quality team reviews 600 flagged sessions a week instead of 12,000 sampled and blocks 14 creatives per week before platform complaints"
+  cost: M
+  depends_on: "network policy taxonomy; sampled ad-surface capture; review queue"
+  buyer: "Ad quality and policy manager at an ad network"
+  input: "Sampled ad frames and close-control timing from the network SDK, creative metadata, store page of the advertised app"
+  why_existing_tools_cannot: "competitor-and-ua.md section 3: Vidmob scores creatives against platform rules for paid-media assets under 2 minutes but has no gaming-specific product and sees the asset, not the in-game close-control behaviour"
+  willingness_to_pay: "3: Vidmob is sales-led with no published price; the buyer already pays reviewers; est. replaces 1-2 reviewer FTEs, speculative"
+
+- id: adnet-14
+  title: "Ad-over-purchase detector: raise a P1 alert when an ad overlay appears on top of an IAP sheet, consent screen or age gate in a sampled session"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: anomaly-alert, delivery-form: alert-or-slack, constraint-to-overcome: store-or-platform-policy, game-platform-and-genre: mobile-midcore-f2p, capture-trigger-and-sampling: event-triggered-clip, companion-data: purchase-and-ad-revenue-events}
+  object: "frame where the ad container overlaps a payment sheet, consent dialog or age gate"
+  situation: "An interstitial fires while the Apple payment sheet is open and the player taps the ad close at the same position as the 'Pay' button"
+  consequence: "Accidental purchases and consent bypass lead to chargebacks, store sanctions and a publisher complaint; a policy breach could suspend the publisher's app"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7: 'Privacy hazards specific to game video: player names and chat in HUD/social panels, notifications overlaying the screen, payment sheets'; Apple's guidelines require explicit consent and a clear indication of recording"
+  proposed: "On-device frame check that blocks an ad call while a payment sheet or consent screen is on top, and logs the clip"
+  shallow: false
+  mechanism: "A small on-device UI-state classifier detects payment sheet, consent and age-gate frames; if present at ad-call time the call is held and the event is logged with a frame hash (not the full frame)"
+  example: "Casual card game: 0.3% of ad calls land on a payment sheet; the SDK holds them for 2 s, and chargebacks on affected sessions fall"
+  cost: M
+  depends_on: "on-device processing; per-platform recognition of the OS payment sheet; game-side callback"
+  buyer: "SDK product lead at a mediation platform"
+  input: "On-device frame classification of the screen state at ad call plus purchase and ad events"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 7: payment sheets are flagged as a capture hazard, and market.md section 2: generic replay tools see game canvases as black boxes, so no tool reasons about overlay conflicts"
+  willingness_to_pay: "2: speculative; a protective SDK feature that avoids platform sanctions; no price in the notes"
+
+- id: adnet-15
+  title: "Rewarded-prompt uptake diagnosis: explain why 41% of players dismiss the 'watch for 2x' prompt in under 1 s, by layout, timing and last action"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: own-players-consented-sdk, signal-extracted: input-timing-and-hesitation, analysis-type: cohort-comparison, delivery-form: per-cohort-report, buyer-org-type: ad-network-or-dsp, go-to-market-channel: through-services-vendor, value-lever-b2b: cut-time-to-insight, game-platform-and-genre: mobile-midcore-f2p}
+  object: "rewarded-ad opt-in prompt screen in a publisher game: layout, copy, and dwell before dismiss"
+  situation: "The prompt appears over the results screen while the player's thumb is still on the continue button; 41% dismiss within 1 s and 12% never see the reward amount"
+  consequence: "Publisher revenue per DAU stays 20% under benchmark and the publisher blames the network's demand; an account manager lacks the evidence to say it is the prompt"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 2: video captures 'dwell/reading time on a tutorial card before dismiss' and 'a visible CTA never tapped (UI not noticed)'; research on tutorial skipping: '>80%' clicked straight through an instruction screen (anecdotal)"
+  proposed: "Per-game prompt report: dismissal-under-1s share, reward-amount-visible share, thumb-position conflict, with 10 clips"
+  shallow: false
+  mechanism: "UI-state and dwell extraction on the prompt frames, joined to the touch trace before the prompt; the cohort comparison splits uptake by layout and timing variants"
+  example: "Match-3 game: 34% dismiss because the prompt appears during the win animation; moving it after the animation lifts uptake from 18% to 26% and ad revenue per DAU by 9%"
+  cost: S
+  depends_on: "consented capture; the existing report agent as in User Test product"
+  buyer: "Publisher account manager or monetisation consultant at a mediation platform"
+  input: "Consented screen video plus touch overlay around the prompt, opt-in events, ad revenue per user"
+  why_existing_tools_cannot: "market.md section 2: IV Metrics caps at 50-100 human-reviewed videos a month and PostHog Unity replay is screenshots without masking; methods-churn-funnel.md section 1: funnels show where not why (Unity docs)"
+  willingness_to_pay: "3: ad monetisation consulting is not priced in the notes; analogous buyer pays PlaytestCloud about EUR 113 per analysed session, so est. $1-3k/month per game for a network that wants stickier publishers"
+
+- id: adnet-16
+  title: "Intrinsic-ad billboard exposure meter for in-game ads: seconds of on-screen logo area above 5% of the frame, by scene and camera angle, sold per verified impression"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: platform-or-emulator-capture, signal-extracted: brand-logo-exposure, analysis-type: ad-verification-and-fraud, pricing-model: cpm-or-per-impression-verified, game-platform-and-genre: pc, buyer-org-type: ad-network-or-dsp, effort: requires-partner-or-platform-deal, delivery-form: api-or-sdk}
+  object: "3D billboard or sponsored crate in a driving game, frame by frame, as it passes through the camera view"
+  situation: "A brand's logo is on a roadside billboard visible at 2% of frame area for 0.8 s at 150 mph; the network's SDK counts it as one impression"
+  consequence: "Brands pay a CPM for exposures too small to see; a verified exposure rule (5% of frame, 1 s) would cut billed impressions by 30-50% and protect renewals"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "market.md section 5: Relo Metrics detects every visible sponsor logo across broadcast and streaming video with prominence, screen share and duration, paired with viewership; 'Search found no esports or in-game equivalent'"
+  proposed: "A logo-visibility API: area share, duration, occlusion and angle per placement per session, with the clip"
+  shallow: false
+  mechanism: "Logo detector on platform-captured frames estimates visible area share, occlusion, angle and dwell; sessions sum to a viewability-standard per-impression count"
+  example: "Racing game: 62% of billboard impressions fall under the 5% / 1 s rule; the network renegotiates creative placement for the next season"
+  cost: L
+  depends_on: "partner agreement with a platform or game that exposes frames; per-brand logo templates"
+  buyer: "Measurement lead at an in-game ad network or agency"
+  input: "Platform-side or engine-side frames from sampled sessions plus placement ids and brand logos"
+  why_existing_tools_cannot: "market.md section 5: Relo Metrics works on broadcast and social video for sports; no in-game CV equivalent found in search"
+  willingness_to_pay: "3: Relo Metrics shows brands pay for sponsorship measurement in sports, with no price in the notes; speculative for games, est. per-campaign measurement fee"
+
+- id: adnet-17
+  title: "Pre-approval playable QA: bot plays each submitted playable 30 times on 12 device-OS combinations and fails it for crashes, dead CTAs and 8+ s black screens"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: automated-bot-or-agent-playthrough, signal-extracted: visual-errors-and-glitches, analysis-type: automated-test-generation, lifecycle-moment: ua-campaign-launch, delivery-form: issue-tracker-ticket, effort: S-weeks, buyer-org-type: ad-network-or-dsp, capture-trigger-and-sampling: scheduled-bot-playthrough}
+  object: "playable ad file submitted by an advertiser before campaign approval"
+  situation: "A playable passes manual review on one device but its CTA is off-screen on 20:9 phones and it freezes at second 8 on Android 10"
+  consequence: "A broken playable spends 3 days in market before a pause, and advertisers ask for refunds of about $1,200 on average (speculative); the network's manual playable review stays slow"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "competitor-and-ua.md section 3: 'Segwise ... describes ... playables being too slow to tag by hand so most teams skip them'; 'playables $3,000-$5,000 each externally (AppAgent) up to $30,000+ for complex ones'; market.md section 3: nunu.ai vision agent 'issuing taps, swipes' on a live device stream"
+  proposed: "Automatic pass/fail report with a clip per failure, returned to the advertiser within 30 minutes"
+  shallow: false
+  mechanism: "A vision-based agent plays the playable in a device farm 30 times, tracks frame state, dead taps and end card reach, and fails the file against rules"
+  example: "Advertiser submits a merge playable; the report says 'CTA unreachable on 20:9 devices, freeze at 8.2 s on Android 10, 6 of 30 runs'; advertiser fixes in an hour"
+  cost: M
+  depends_on: "device farm and an agent runtime (nunu.ai-style or in-house); the network's approval API"
+  buyer: "Creative approvals or playable-ads operations manager at an ad network"
+  input: "Submitted playable files executed by a bot on device-farm devices, screen video, rule set"
+  why_existing_tools_cannot: "market.md section 3: nunu.ai and modl.ai agents test games, not third-party playable ads submitted at scale; competitor-and-ua.md section 3: playables are skipped by hand tagging"
+  willingness_to_pay: "3: playable production costs $3,000-$5,000 each and failure refunds are a cost the network wants to avoid; GameDriver from $150/month is the QA anchor; est. $5-30 per playable checked"
+
+- id: adnet-18
+  title: "Store-handoff failure check: bot taps the CTA of 500 sampled ads a week and records the page that opens (wrong app, blank store, 404, region mismatch)"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: automated-bot-or-agent-playthrough, signal-extracted: ui-state-and-screen-flow, analysis-type: ad-verification-and-fraud, capture-trigger-and-sampling: scheduled-bot-playthrough, buyer-org-type: ad-network-or-dsp, delivery-form: weekly-digest-email, effort: S-weeks, lifecycle-moment: ua-campaign-launch}
+  object: "ad CTA tap and the resulting store page or browser view on a rented device"
+  situation: "An iOS ad for a puzzle game opens the store page of a different title for 3% of impressions in Brazil, because a redirect tracker is expired"
+  consequence: "Advertisers pay for clicks that cannot convert; the network learns from complaints 5 days later; a 3% mis-route on $400,000 monthly Brazil spend is $12,000"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none in the notes on click-through verification; competitor-and-ua.md section 2 notes AppLovin screenshots mislabel ads and that ad libraries expose creatives but not what happens after the click"
+  proposed: "Weekly digest of handoff failures by region, creative and redirect tracker with clips"
+  shallow: false
+  mechanism: "A bot taps the ad CTA on 500 sampled ads per week in 12 regions on geo-located devices; a classifier tags the landing screen and compares it to the advertiser's expected store page"
+  example: "Weekly digest says 'Region BR iOS, tracker T7 lands on the wrong app 3.1%'; the network pauses the tracker and recovers the spend"
+  cost: S
+  depends_on: "geo-located device farm; advertiser's expected store ids"
+  buyer: "Traffic quality analyst at an ad network"
+  input: "Bot-driven screen video of ad click-throughs on rented devices in target regions"
+  why_existing_tools_cannot: "competitor-and-ua.md section 2 INFERRED: 'Competitor ad libraries expose creatives but not what happens after install'; this check goes one step earlier (after click), which no note covers"
+  willingness_to_pay: "2: speculative; recoverable spend is a clear value but easy to build with generic scripts; commoditisation by a general video LLM and a cheap script is likely"
+
+- id: adnet-19
+  title: "Cross-network render benchmark: monthly clip-backed league table of ad fill, render success and close-button delay for 6 competing networks in 100 games"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: automated-bot-or-agent-playthrough, signal-extracted: ad-render-and-viewability, analysis-type: benchmark-vs-competitor, buyer-org-type: ad-network-or-dsp, delivery-form: dashboard, pricing-model: annual-enterprise-licence, value-lever-b2b: create-data-that-did-not-exist, capture-trigger-and-sampling: scheduled-bot-playthrough}
+  object: "rendered ad sessions from 6 networks across 100 games, measured by bot playthroughs"
+  situation: "A network's account director is told by a publisher that a rival 'renders faster'; she has no independent figure for fill, render success or close-button delay"
+  consequence: "The network loses 2 publisher accounts a quarter to claims it cannot refute; with a benchmark it either fixes the gap or rebuts it"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "competitor-and-ua.md section 8 INFERRED: competitive-intelligence subscriptions are priced at $30K-$115K per year and 'no source shows anyone selling analysis of recorded real-player device video to a competitor-intelligence buyer'"
+  proposed: "Monthly benchmark pack by network, geography and device class with a clip for each outlier"
+  shallow: false
+  mechanism: "Scheduled bots collect ad sessions from 6 networks in 100 games; the render classifier yields fill rate, render success, close delay and unplayed-audio share; results are published as a panel"
+  example: "Network A sees 'render success 94.2% versus 97.8% for B on Android 11'; fix is prioritised in the next SDK release"
+  cost: L
+  depends_on: "bot farm at scale; accounts in 100 games; permission from publishers"
+  buyer: "Head of product or strategy at an ad network, or a market-intel vendor reselling the panel"
+  input: "Bot-driven screen video across 100 games and multiple ad networks"
+  why_existing_tools_cannot: "competitor-and-ua.md section 1: Sensor Tower and GameRefinery are priced $29,500-$115,460/year and based on analysts, metadata and ad impressions, not rendered in-game ad sessions"
+  willingness_to_pay: "2: market-intel anchors exist ($75,000/year Sensor Tower median) but no note shows buyers asking for ad-render benchmarks; speculative and narrow"
+
+- id: adnet-20
+  title: "Verdict table in the warehouse: ad_session_verdicts keyed on impression_id with 9 columns (rendered, visible_s, accidental_click, bot_score, covers_ui, audio_overlap, close_delay_s, policy_flags, clip_url)"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: ad-render-and-viewability, analysis-type: ad-verification-and-fraud, delivery-form: warehouse-table-export, buyer-org-type: ad-network-or-dsp, companion-data: telemetry-events, constraint-to-overcome: joining-video-to-events, effort: XS-repackage-existing-user-test-product}
+  object: "impression_id in the network's data warehouse with 9 new video-derived columns"
+  situation: "The network's fraud and yield models use SDK events only; the ML team asks for 'visible seconds' and 'accidental click' as features rather than another dashboard"
+  consequence: "Without the table, the fraud model keeps a blind spot for rendered-but-unseen ads; the data team refuses new dashboards but accepts a table"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "B-perspectives in-house-analytics-head-build-vs-buy: 'refuses another dashboard; only accepts output as tables in the warehouse joined to their event IDs'; methods-churn-funnel.md section 3 INFERRED: video is an untested source of new model features"
+  proposed: "Nightly load of the verdict table with clip URLs for a 1-2% sample and model scores for the rest"
+  shallow: false
+  mechanism: "The existing ingestion and agent run per-session classifiers and write rows keyed on impression_id to the customer's warehouse (BYOC), so ML teams join them to billing, fraud and yield tables"
+  example: "A mediation network's fraud model adds 'visible_s' and 'bot_score' and cuts invalid-traffic false negatives by 15% in a test month"
+  cost: S
+  depends_on: "impression_id shared into the capture; customer warehouse access; the existing video ingestion"
+  buyer: "Head of data science or analytics at an ad network or mediation platform"
+  input: "Sampled ad-surface video, SDK event stream with impression_id, warehouse credentials"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 3: churn and fraud-style models in the literature are log-based, with video as an untested feature source; market.md section 2: replay tools output a viewer UI, not warehouse tables"
+  willingness_to_pay: "3: speculative; the buyer pays by data volume; a repackage of the existing product so cheap to try; est. $1-5k/month for a 1-2% sample"
+
+- id: adnet-21
+  title: "Licensed dataset of ad-viewing sessions: 100,000 hours of ad frames paired with touch traces and outcomes, sold to creative-model and fraud-model builders"
+  level: L3
+  cell: {buyer-role: data-buyer-training, video-source: ad-and-playable-ad-sessions, signal-extracted: bot-or-fraud-behaviour, analysis-type: training-dataset-export, delivery-form: licensed-dataset, pricing-model: data-licence-per-hour, constraint-to-overcome: privacy-and-consent, buyer-org-type: data-or-market-intel-buyer, value-lever-b2b: produce-a-sellable-asset}
+  object: "paired ad-surface video, touch coordinates and click outcome for each session"
+  situation: "An ad-model vendor wants labelled human versus bot ad sessions to train a classifier and the network sits on 1M sessions a day"
+  consequence: "The network could resell frames but would breach consent and publisher contracts; the licence is valuable only if minors and publisher games are excluded"
+  p_typical: 0.02
+  grounded: quote
+  evidence: "market.md section 4 and Signals of willingness to pay: Worldmodeldata licensed nearly 1M hours of game data, Origin Lab 500k+ hours from 250+ games, OpenAI reportedly offered $500M for Medal; Muse/Bleeding Edge EULA consent criticism"
+  proposed: "Consent-filtered, de-identified human-vs-bot labelled ad sessions licensed per hour"
+  shallow: false
+  mechanism: "Opt-in or contract-cleared ad sessions are packaged with labels from the network's confirmed-fraud list and licensed by the hour"
+  example: "A fraud-detection startup licenses 20,000 hours of labelled human-vs-bot ad sessions for a 12-month term"
+  cost: L
+  depends_on: "consent and contractual rights to the footage; de-identification; label set"
+  buyer: "ML lead at an ad-fraud or creative-model vendor"
+  input: "Opt-in ad-surface video plus touch traces plus the network's fraud labels"
+  why_existing_tools_cannot: "market.md section 4: the training-data buyers purchase game-world footage with inputs for world models, not ad-session data with fraud labels; no note shows a market for that"
+  willingness_to_pay: "2: world-model buyers pay for hours (Worldmodeldata about 1M hours licensed) but the notes show no price for ad-session data; legal exposure is high and the network's publishers may veto"
+
+- id: adnet-22
+  title: "REFUSE: face-cam attention score for advertisers, read during rewarded ads from the front camera"
+  level: L3
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: facecam-expression, analysis-type: creative-insight-for-ads, constraint-to-overcome: privacy-and-consent, companion-data: facecam, buyer-org-type: ad-network-or-dsp, game-platform-and-genre: mobile-casual-hypercasual, pricing-model: cpm-or-per-impression-verified}
+  object: "front-camera face stream during a rewarded video ad"
+  situation: "An advertiser wants a 'real attention and emotion' score per creative, so the network proposes reading faces while the player watches for 30 s"
+  consequence: "Apple's 2019 rule requires explicit consent and a visible indicator; EU AI Act Article 50(3) requires disclosure for emotion recognition; kids' games make it unsellable; publishers refuse to let the ad SDK open the camera"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 5 INFERRED: 'Face cam adds consent and biometric-law cost (section 7) for unclear lift' and gameplay features beat facial features for frustration; market.md section 7: Realeyes spun its ad-emotion business off as Adverteyes (Nov 2025) and Affectiva moved to automotive; Player Research: biometrics 'often oversold'"
+  proposed: "Do not build; use screen-only signals (dwell, taps, close timing) instead"
+  shallow: false
+  mechanism: "Front-camera expression recognition on the player's face during ads, aggregated per creative"
+  example: "A brand asks for 'joy during the 2nd second of the creative' for 200,000 views; the publisher refuses SDK camera access and the Apple review flags it"
+  cost: L
+  depends_on: "camera permission, explicit opt-in, legal review per region"
+  buyer: "Brand-side measurement lead (but the network would be the vendor)"
+  input: "Front-camera video plus ad frames"
+  why_existing_tools_cannot: "market.md section 7: Realeyes and Affectiva already sold ad-emotion and moved or spun it off, so the category is crowded and weak; and it is unsellable inside minors-heavy casual games"
+  willingness_to_pay: "1: Realeyes spun its ad-emotion business off and biometrics are 'often oversold' (market.md sections 1, 7); legal and store friction makes the price irrelevant"
+
+- id: adnet-23
+  title: "REFUSE: always-on full-session recording through the ad SDK in every publisher game"
+  level: L3
+  cell: {buyer-role: ad-network-ops, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: ad-verification-and-fraud, capture-trigger-and-sampling: always-on-ring-buffer, constraint-to-overcome: store-or-platform-policy, buyer-org-type: ad-network-or-dsp, game-platform-and-genre: mobile-casual-hypercasual, processing-location: vendor-cloud}
+  object: "continuous screen recording of the whole session through the mediation SDK that is already in 10,000 games"
+  situation: "The network's SDK is installed in thousands of games, so a product lead proposes turning on continuous capture everywhere for verification"
+  consequence: "Apple's 2019 Glassbox action required explicit consent and visible indication; a 30-minute session at 2 Mbps is about 450 MB of upload; publishers would remove the SDK, and the story would trigger player backlash"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: 'Apple, Feb 2019: told developers to remove or disclose screen-recording analytics (Glassbox)'; 'a 30-minute first session at 2 Mbps is about 450 MB of upload from the player's device'; PostHog Unity SDK is screenshot-based with no built-in masking (market.md section 2)"
+  proposed: "Do not build; use event-triggered or random 1-2% sampling with ad-surface-only capture and consent"
+  shallow: false
+  mechanism: "Full-session video capture in all publisher games through the network SDK"
+  example: "A security researcher posts that a mediation SDK records screens; three publishers remove the SDK within a week"
+  cost: L
+  depends_on: "publisher consent, platform approval, bandwidth"
+  buyer: "Network product lead (internal) - the publishers would be the veto"
+  input: "Continuous screen video from every session"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 7: Apple consent rule and bandwidth/upload constraints; Embrace and UXCam use opt-in and occlusion, so the market norm is sampling not always-on"
+  willingness_to_pay: "1: no buyer would accept it; Apple's 2019 action and the publisher veto make demand zero"
+
+- id: adnet-24
+  title: "REFUSE: kids-game ad capture for verification under COPPA and GDPR-K"
+  level: L3
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: ad-render-and-viewability, analysis-type: ad-verification-and-fraud, constraint-to-overcome: minors-coppa-gdpr-k, buyer-org-type: ad-network-or-dsp, game-platform-and-genre: mobile-casual-hypercasual, capture-trigger-and-sampling: random-sample}
+  object: "ad sessions inside games rated for children under 13"
+  situation: "The network's largest hyper-casual publishers have child-directed titles, and the product team wants the same sampling verification there"
+  consequence: "Screen capture of children's sessions is personal data under COPPA and GDPR-K; one breach could trigger a regulator's fine and loss of the publisher; sales would lose more than it gains"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7: 'Privacy hazards specific to game video' and consent floor on iOS; no note covers COPPA directly, so the reasoning is inferred from the constraint-to-overcome axis"
+  proposed: "Exclude child-directed titles; verify with bots only (scheduled-bot-playthrough) in those games"
+  shallow: false
+  mechanism: "Random sampling of real children's ad sessions for render and fraud verification"
+  example: "A publisher's 'kids puzzle' title is flagged child-directed; the SDK disables capture, and bots test its ad slots weekly"
+  cost: M
+  depends_on: "child-directed flag per game; legal counsel"
+  buyer: "Network trust and compliance lead (as veto)"
+  input: "Sampled sessions in child-directed apps"
+  why_existing_tools_cannot: "the notes contain no minors' capture product; this leaf follows from methods-churn-funnel.md section 7 on consent and from the constraint axis, not from a vendor"
+  willingness_to_pay: "1: the compliance cost exceeds the verification value; substitute bot-driven verification instead"
+
+- id: adnet-25
+  title: "Closed-loop ad suppression: skip the next interstitial when pixel-based arousal reads 'frustrated' for the last 20 s"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: own-players-consented-sdk, signal-extracted: emotion-arousal-from-pixels, analysis-type: real-time-in-session-intervention, automation-level: closed-loop-in-game-action, processing-location: on-device, constraint-to-overcome: accuracy-and-trust, buyer-org-type: ad-network-or-dsp, game-platform-and-genre: mobile-midcore-f2p}
+  object: "on-device arousal estimate from gameplay pixels 20 s before an ad call, used to hold or show the ad"
+  situation: "A player has failed a level 5 times in 3 minutes and the network SDK is about to show an interstitial"
+  consequence: "At 78% average accuracy for arousal (98% best case), roughly 1 in 5 decisions is wrong; revenue lost by skipping ads and players still annoyed by wrongly shown ads; the lift in D1 is unproven"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 5: Makantasis et al. ACII 2019, 'arousal predicted from gameplay video alone, over 78% accuracy on average and 98% at best'; section 3 INFERRED: video features are 'a research gap rather than a proven lift'"
+  proposed: "Do not ship closed-loop; log arousal as a feature in a shadow mode for 2 months and test with a holdout"
+  shallow: false
+  mechanism: "An on-device model reads gameplay frames, outputs an arousal and frustration score, and the SDK adjusts ad timing within a game that opts in"
+  example: "Match-3 game: after 5 fails the SDK delays an interstitial by one level; the A/B test shows +1.1 points D1 but -6% ad revenue per DAU"
+  cost: L
+  depends_on: "per-game arousal model; ground-truth labels; A/B infrastructure; publisher opt-in"
+  buyer: "Mediation platform product lead; publisher monetisation lead as the approver"
+  input: "On-device gameplay frames (never uploaded) and ad call events"
+  why_existing_tools_cannot: "methods-churn-funnel.md section 5: affect-from-pixels research is lab-scale (AGAIN dataset, 124 annotators), not shipped for ad timing; Halfbrick's Firebase in-game gifting (+5 pp D7) used event-based churn prediction, not pixels"
+  willingness_to_pay: "2: publishers want retention but cannot trust a 78% model with revenue; Firebase Predictions' reported recall of 275 of 145k churn instances shows how fast trust is lost"
+
+- id: adnet-26
+  title: "Duplicate-trajectory sweep across publishers: find human-run click-farm phones from 40 sessions with the same scroll cadence and 20 ms tap jitter"
+  level: L4
+  cell: {buyer-role: ad-network-ops, video-source: ad-and-playable-ad-sessions, signal-extracted: bot-or-fraud-behaviour, analysis-type: anomaly-alert, buyer-org-type: ad-network-or-dsp, capture-trigger-and-sampling: targeted-cohort, delivery-form: alert-or-slack, companion-data: touch-and-controller-input, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "tap timing and scroll cadence over the first 60 s of an ad session across a suspect device cohort"
+  situation: "Several dozen phones in a click-farm complete a playable at the same cadence (taps every 1.5 s +/-20 ms) but with real-looking screen content, passing emulator checks"
+  consequence: "Human click farms are not caught by emulator fingerprints; invalid installs are paid for until D7; each missed farm costs several thousand dollars"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 2: FACEIT's Human Input Detection judges inputs rather than signatures, launched Aug 2026; 'server-side LSTM reached 88.6% accuracy with 0.97% false-positive rate in one paper; authors stress false accusations as the key risk'"
+  proposed: "Targeted-cohort capture on devices flagged by a first-stage model, then timing-and-screen cluster check; human review before any clawback"
+  shallow: false
+  mechanism: "Touch timing distributions and visual trajectories of cohorts are clustered; clusters that are too regular for humans are flagged with sample clips"
+  example: "42 devices in one cohort complete 11 playables with matching 1.5 s cadence; the network claws back $3,800 of CPI after a human review"
+  cost: M
+  depends_on: "touch trace and frame capture; first-stage fraud scoring; clawback policy"
+  buyer: "Fraud analyst at an ad network or MMP"
+  input: "Targeted-cohort touch traces and screen video"
+  why_existing_tools_cannot: "adjacent-usecases.md section 2: anti-cheat in the notes is server-side input and timing models, with false accusations the key risk; no vendor found that uses on-screen footage to confirm a human-run farm"
+  willingness_to_pay: "2: speculative; invalid-traffic recovery is real money but is already attacked by first-stage models; a minor add-on"
