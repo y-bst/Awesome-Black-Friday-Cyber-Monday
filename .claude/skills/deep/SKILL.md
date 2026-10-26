@@ -19,6 +19,7 @@ Why this exists (one paragraph, so you follow the rules instead of your instinct
 
 - `--quick` (default if the argument string contains `--quick`): 4 generation perspectives (pick the 2 highest-signal primary and 2 tail), quota 15 leaves each, 1 audit loop, stages A–I only. Use this to test the engine.
 - `--full` (default otherwise): every perspective after critique, quota 30 each, up to 3 audit loops, stages A–L.
+- `--no-questions`: skip the Stage A0 pause and run on stated assumptions.
 
 ## Run directory
 
@@ -27,6 +28,8 @@ Create `deep-runs/<yyyy-mm-dd>-<topic-slug>/` under the project root. Every stag
 ## Stages
 
 Stages A, B, C are judgement stages; do them yourself, inline, with the artifacts read in full. Everything from D onward runs in spawned agents with fresh context, because isolation is what produces diversity and honest critique.
+
+**A0. Intake questions.** Read `prompts/A0-intake.md`. Read every artifact in full. Write `A0-questions.md`: at most 8 questions, each one tied to the axis, value range or perspective it would change, each with the assumption used if unanswered. Stop and ask the user unless `--no-questions` was given or the user already said to run without questions. When answers arrive, write them into a copy of the spec in the run directory under "Clarifications" and continue.
 
 **A. Frame.** Read `prompts/A-frame.md`. Read every artifact in full. Write `A-frame.yaml`.
 
@@ -56,7 +59,7 @@ Then tell the user: the path of `leaves.md`, the leaf count, the leaf rate (shar
 
 ## Hard rules for you, the orchestrator
 
-- Never skip D or H. They are the stages that catch what you would miss.
+- Never skip A0, D or H. They are the stages that catch what you would miss.
 - Never generate findings yourself. Your findings would share your framing's blind spots.
 - Never summarise agent output. Write it to the run directory and move on.
 - Never reduce a quota because the topic "seems small". Reduce the mode instead, and only if the user asked for `--quick`.
