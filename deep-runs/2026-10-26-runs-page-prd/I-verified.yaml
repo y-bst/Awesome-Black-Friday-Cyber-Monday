@@ -1,0 +1,1127 @@
+- id: qa-lead-1
+  title: "Runs table, 5 files in one submit, 2 reach Failed and 3 reach Done: no batch row, no 'partial (3/5)' summary, rows are indistinguishable from unrelated runs"
+  level: L3
+  cell: {surface: runs-table, batch-size: exactly-5-files, status-mix: some-done-some-failed, action: open}
+  object: "Submit dialog sentence 'One run is created per file.' and Runs table columns 'thumbnail, title, status, submitted at, duration, actions'"
+  situation: "User submits 5 files at once; processing service fails 2 of them and completes 3"
+  consequence: "There is no column, grouping or aggregate state that answers 'how did my submit of 5 go'; the user must scan 5 rows and count; a QA test cannot assert any batch-level outcome because none exists"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "One run is created per file."
+  already_specified: false
+  proposed: "Either state explicitly 'no batch entity; each row is independent' or add a batch id and a summary line 'Submitted 5: 3 Done, 2 Failed'"
+  shallow: false
+  also_from: [partial-failure-21]
+- id: qa-lead-2
+  title: "In-app notification fires only on Done: a 5-file submit with 3 Done and 2 Failed yields 3 notifications and 0 notifications about the 2 failures"
+  level: L4
+  cell: {surface: in-app-notification, batch-size: exactly-5-files, status-mix: some-done-some-failed, notification-state: burst-of-5-in-one-minute}
+  object: "Notifications section 'When a run reaches Done, the user receives an in-app notification.'"
+  situation: "User submits 5, leaves the Runs page, waits for notifications; 2 runs go Processing -> Failed"
+  consequence: "Test assertion: notification count = 3, not 5; user who relies on notifications believes the batch is still running or forgets the 2 failed files indefinitely"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  already_specified: false
+  proposed: "Add 'When a run reaches Failed, the user receives an in-app notification with the file name and error' or state failures are intentionally silent"
+  shallow: false
+  also_from: [support-agent-7, flat-frame-25, partial-failure-20]
+- id: qa-lead-4
+  title: "Submit dialog with 5 files where file 4 is 2.3 GB or .avi: PRD does not say if Submit is disabled for all 5, or 4 runs are created and 1 rejected"
+  level: L3
+  cell: {surface: submit-dialog, batch-size: 5-files-with-1-invalid, failure-point: client-validation, action: submit}
+  object: "Submit dialog limits '1 to 5 video files (mp4, mov; max 2 GB each)'"
+  situation: "User multi-selects 5 files; one violates the type or size limit"
+  consequence: "No expected result for the test; if 4 runs are created silently the user sees 4 new Queued rows and may not notice the 5th file never became a run, since a rejected file produces no row and no Failed status"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "The user picks 1 to 5 video files (mp4, mov; max 2 GB each) and clicks Submit."
+  already_specified: false
+  proposed: "Specify per-file validation message in the dialog and whether Submit is blocked until the invalid file is removed"
+  shallow: false
+  also_from: [flat-frame-12, support-agent-22]
+- id: qa-lead-5
+  title: "5 rows with identical submitted-at to the second: sort order 'submitted-at descending' has no tie-breaker, so row order can change between refreshes"
+  level: L4
+  cell: {surface: runs-table, batch-size: 5-files-same-submitted-at-second, action: refresh-or-back}
+  object: "Runs table rule 'Rows are sorted by submitted-at descending.'"
+  situation: "One submit creates 5 runs stamped in the same second; user reloads the page 10 times"
+  consequence: "Assertion 'row order stable across reloads' is unspecified; the order may also not match the order files were picked in the dialog, so the user cannot map row 3 to file 3"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Rows are sorted by submitted-at descending."
+  already_specified: false
+  proposed: "Add secondary sort key (file pick order or run id) and state the expected order of a batch"
+  shallow: false
+  also_from: [support-agent-11, flat-frame-19]
+- id: qa-lead-6
+  title: "Table holds exactly 26 runs, user deletes one row on page 1: PRD does not say whether run 26 moves onto page 1 immediately or page 2 becomes empty"
+  level: L4
+  cell: {surface: pagination-control, batch-size: 26-rows-then-delete-one-on-page-1, action: delete}
+  object: "Runs table 'Page size is 25.' and action 'Delete'"
+  situation: "26 runs, user on page 1 clicks Delete on any row"
+  consequence: "Expected after-delete state is undefined: page 1 shows 24 or 25 rows; page 2 control may still be shown with 0 rows; a stale page 2 link opens an empty table"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Page size is 25."
+  already_specified: false
+  proposed: "Specify that delete refetches the current page and the pagination control hides page 2 when total <= 25"
+  shallow: false
+- id: qa-lead-7
+  title: "User is on page 2 when 5 new runs are submitted: rows 'appear at the top of the table' shifts every page by 5, so paging forward shows 5 duplicated rows"
+  level: L4
+  cell: {surface: pagination-control, batch-size: table-26-plus-rows-multiple-pages, action: paginate, time-and-connection: page-open-for-hours-stale}
+  object: "Submit dialog 'the new rows appear at the top of the table' combined with 'Page size is 25' (offset pagination implied)"
+  situation: "Table has 60 runs; user is viewing page 2 in one tab, submits 5 in another tab (or a teammate submits, seen by admin), then clicks page 3"
+  consequence: "Rows 46-50 of the old ordering reappear on page 3; test assertion 'no run appears on two pages' fails"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"the new rows appear at the top of the table with status Queued\" -- inferred: offset-style paging that shifts later pages is implied by newest-first sorting plus a fixed page size of 25, but no paging mechanism is stated"
+  already_specified: false
+  proposed: "Specify cursor-based pagination keyed on submitted-at + id, or state that new rows only appear on page 1 after reload"
+  shallow: false
+- id: qa-lead-8
+  title: "Failed rows from a 5-file submit fall onto page 2 or later: no status filter and no Failed count, so failures are invisible from page 1"
+  level: L3
+  cell: {surface: runs-table, batch-size: table-26-plus-rows-multiple-pages, status-mix: failures-only-on-page-2, action: change-sort-or-filter}
+  object: "Runs table columns and 'Rows are sorted by submitted-at descending. Page size is 25.' (no filter specified)"
+  situation: "User submits 5 (2 fail), then submits 21 more over the day; the 2 Failed rows are now rows 26-30"
+  consequence: "Page 1 shows only Queued/Processing/Done; user has no signal that 2 runs failed unless they paginate; with 1000+ rows (40 pages) a Failed run is effectively lost"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Rows are sorted by submitted-at descending. Page size is 25."
+  already_specified: false
+  proposed: "Add a status filter (at minimum 'Failed') or a header count 'N failed' on page 1"
+  shallow: false
+  also_from: [support-agent-17]
+- id: qa-lead-11
+  title: "Open on a Queued, Processing or Failed row: Run detail page 'Shows the output video player' but no output exists, and the PRD gives no state for the player or suggestion list"
+  level: L3
+  cell: {surface: run-detail, status-mix: all-queued, action: open}
+  object: "Run detail page 'Shows the output video player, a list of suggestions (text, each with Accept / Dismiss), and the run's metadata.'"
+  situation: "User clicks Open (or the thumbnail) on any of the 5 new rows while they are still Queued"
+  consequence: "Player renders with no source (black box, spinner forever, or browser error); suggestion list shows empty with no copy saying 'available when Done'; test has no expected render per status"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "Shows the output video player, a list of suggestions (text, each with Accept / Dismiss), and the run's metadata."
+  already_specified: false
+  proposed: "Add a per-status table for Run detail: Queued/Processing = progress placeholder, Failed = error message, no player; Done = player + suggestions"
+  shallow: false
+- id: qa-lead-12
+  title: "Failed row thumbnail: 'first frame of the uploaded video with a white play icon' implies a playable output on a run that has none"
+  level: L4
+  cell: {surface: runs-table, status-mix: some-done-some-failed, failure-point: processing-crash, action: open}
+  object: "Runs table 'The thumbnail shows the first frame of the uploaded video with a white play icon centred on it. Clicking the thumbnail opens the run.'"
+  situation: "2 of 5 rows are Failed; their thumbnails look identical in style to the 3 Done rows"
+  consequence: "User clicks the play icon on a Failed row expecting playback, lands on a detail page with no video; visual regression test cannot distinguish Failed from Done thumbnails"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "The thumbnail shows the first frame of the uploaded video with a white play icon centred on it."
+  already_specified: false
+  proposed: "Specify that the play icon renders only for Done rows; Failed rows show a failed-state overlay"
+  shallow: false
+  also_from: [flat-frame-9]
+- id: qa-lead-13
+  title: "Failed file is corrupt or has 0 seconds of video: no first frame exists, so the thumbnail and duration column have no defined content"
+  level: L4
+  cell: {surface: runs-table, failure-point: processing-crash, media-content: no-video-track-or-0-seconds, status-mix: some-done-some-failed}
+  object: "Runs table columns 'thumbnail' and 'duration' and thumbnail rule 'first frame of the uploaded video'"
+  situation: "1 of 5 files is a .mp4 with a valid extension but a corrupt or missing video track; it fails in processing"
+  consequence: "Thumbnail cell shows a broken image icon or the white play icon on a blank tile; duration shows 0:00, blank or NaN; no expected value to assert"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "\"The thumbnail shows the first frame of the uploaded video with a white play icon centred on it.\" -- inferred: a corrupt or empty mp4 is allowed by the dialog and can reach Failed, but the thumbnail rule assumes a first frame exists"
+  already_specified: false
+  proposed: "Define placeholder thumbnail and duration value '--' when the first frame or length cannot be read"
+  shallow: false
+  also_from: [flat-frame-23, partial-failure-24]
+- id: qa-lead-14
+  title: "No Retry action for Failed rows: recovering 2 failed files out of 5 requires re-uploading up to 2 x 2 GB through the Submit dialog"
+  level: L4
+  cell: {surface: runs-table, status-mix: some-done-some-failed, action: retry-not-in-prd, batch-size: exactly-5-files}
+  object: "Runs table 'Actions: Open, Delete.' and transitions list with no edge out of Failed"
+  situation: "2 of 5 runs fail with a transient service error"
+  consequence: "Assertion 'Failed row action set == {Open, Delete}'; the user must locate the original files locally and resubmit, creating 2 new rows and leaving 2 Failed rows behind unless deleted one by one"
+  p_typical: 0.20
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  already_specified: false
+  proposed: "Add Retry on Failed rows (reuses stored upload, transitions Failed -> Queued) or state retry is a non-goal"
+  shallow: false
+  also_from: [support-agent-34, partial-failure-7]
+- id: qa-lead-15
+  title: "Status transitions omit Queued -> Failed: a run never picked up from the queue (or rejected before processing) has no path to Failed and stays Queued indefinitely"
+  level: L3
+  cell: {surface: runs-table, status-mix: stuck-queued-over-1h, failure-point: queue-timeout-never-picked-up}
+  object: "Status transitions 'Queued -> Processing -> Done' and 'Queued -> Processing -> Failed'"
+  situation: "During a service incident, 5 runs sit in Queued for over 1 hour"
+  consequence: "No timeout, no Failed state, no error message; the user cannot tell 'slow' from 'lost'; QA cannot write a test for queue timeout because the PRD forbids the transition"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Queued -> Processing -> Failed"
+  already_specified: false
+  proposed: "Add 'Queued -> Failed after N minutes (e.g. 60) with message \"Run could not be started\"' and the same timeout for Processing"
+  shallow: false
+- id: qa-lead-16
+  title: "Rows appear as Queued when 'the dialog closes', but 5 x 2 GB uploads take minutes: no Uploading state and no row state for an upload that fails on file 3 of 5"
+  level: L3
+  cell: {surface: submit-dialog, status-mix: uploading-pre-queued, failure-point: upload-transfer, batch-size: exactly-5-files}
+  object: "Submit dialog 'The dialog closes and the new rows appear at the top of the table with status Queued.' and the 4 statuses"
+  situation: "User submits 5 files of 1.8 GB each on a 50 Mbps uplink (about 24 minutes total); upload of file 3 aborts"
+  consequence: "Either the dialog blocks for ~24 minutes with no progress spec, or rows show Queued while bytes are still uploading and file 3's row has no status to move to (Failed requires Processing first)"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "The dialog closes and the new rows appear at the top of the table with status Queued."
+  already_specified: false
+  proposed: "Add an Uploading status with per-file progress and an Upload failed terminal state, or specify the dialog stays open with per-file progress bars"
+  shallow: false
+  also_from: [support-agent-18, partial-failure-15]
+- id: qa-lead-17
+  title: "Browser goes offline after files 1-3 of 5 have uploaded: PRD does not say whether 3 rows exist, 5 rows exist, or none"
+  level: L4
+  cell: {surface: submit-dialog, batch-size: exactly-5-files, time-and-connection: offline-mid-upload, status-mix: uploading-pre-queued}
+  object: "Submit dialog 'One run is created per file.'"
+  situation: "Network drops for 2 minutes during upload of file 4"
+  consequence: "Expected row count after reconnect is undefined (3 or 5 or 0); a retry from the dialog may create duplicate runs for files 1-3"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "\"One run is created per file.\" -- inferred: a multi-file upload can be interrupted partway, but the PRD says nothing about connectivity or partial submits"
+  already_specified: false
+  proposed: "Specify that each file's run is created only after its upload completes and that partial submits report 'Submitted 3 of 5'"
+  shallow: false
+- id: qa-lead-20
+  title: "6 or more files picked: PRD caps at 5 but gives no behaviour for file 6 (picker blocks, first 5 kept, or Submit disabled) and no copy"
+  level: L4
+  cell: {surface: submit-dialog, batch-size: 6+-files-attempted, failure-point: client-validation, action: submit}
+  object: "Submit dialog 'The user picks 1 to 5 video files'"
+  situation: "User drags 8 files from a folder into the dialog"
+  consequence: "No expected result to assert; if the first 5 are silently kept, 3 files are never submitted and no row or message records them"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "The user picks 1 to 5 video files"
+  already_specified: false
+  proposed: "Specify: dialog accepts 8, marks files 6-8 'limit 5 per submit', Submit disabled until <= 5 remain"
+  shallow: false
+- id: qa-lead-21
+  title: "Runs table freshness unspecified: with the page open, does a row change from Processing to Failed without reload, and within how many seconds"
+  level: L4
+  cell: {surface: runs-table, status-mix: some-processing-some-failed, time-and-connection: page-open-for-hours-stale, action: refresh-or-back}
+  object: "Summary 'watch their progress' and Runs table status column"
+  situation: "User keeps the Runs table open after submitting 5; 2 rows fail 10 minutes later"
+  consequence: "No polling interval or push rule means no pass/fail threshold; user may stare at 'Processing' for hours while the run is already Failed"
+  p_typical: 0.14
+  grounded: quote
+  evidence: "watch their progress"
+  already_specified: false
+  proposed: "Specify status updates appear without reload within 10 s (push or polling) while the tab is visible"
+  shallow: false
+- id: qa-lead-22
+  title: "Run detail open on a Processing run that flips to Failed: 'Status badge in the header mirrors the table' does not say whether the error message and badge update live"
+  level: L4
+  cell: {surface: run-detail, status-mix: some-processing-some-failed, notification-state: arrives-while-viewing-that-run}
+  object: "Run detail 'Status badge in the header mirrors the table.' and 'A Failed run shows an error message from the processing service in the detail page.'"
+  situation: "User opens 1 of 5 rows while Processing and keeps the detail page open until it fails"
+  consequence: "Badge may read Processing while the table (in another tab) reads Failed; error message absent until reload; test cannot assert 'mirrors' without a timing bound"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Status badge in the header mirrors the table."
+  already_specified: false
+  proposed: "Specify detail page subscribes to the same status updates as the table, with the error message rendered on transition"
+  shallow: false
+- id: qa-lead-23
+  title: "Failure reason is only on the Run detail page: to learn why 2 of 5 failed the user opens each Failed row; table row shows no reason, and the service message content is unconstrained"
+  level: L3
+  cell: {surface: run-detail, status-mix: some-done-some-failed, failure-point: processing-crash, action: open}
+  object: "Status transitions 'A Failed run shows an error message from the processing service in the detail page.'"
+  situation: "Service returns an empty string, a stack trace, or an internal code like 'ERR_ENC_137' for 2 failed runs"
+  consequence: "User sees raw internal text or a blank error area; no rule says whether the message is user-safe, maximum length, or actionable ('file codec unsupported, re-export as H.264')"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  already_specified: false
+  proposed: "Map service error codes to a fixed list of user-facing messages; show a short reason in the table status cell tooltip"
+  shallow: false
+  also_from: [support-agent-3, support-agent-4]
+- id: qa-lead-24
+  title: "Cleaning up 5 Failed rows requires 5 separate Delete clicks: no multi-select, and no confirm-dialog spec for Delete at all"
+  level: L4
+  cell: {surface: delete-confirm-dialog, batch-size: exactly-5-files, status-mix: all-failed, action: bulk-select-delete}
+  object: "Runs table 'Actions: Open, Delete.'"
+  situation: "Whole submit of 5 fails (e.g. during a service incident) and the user wants them gone"
+  consequence: "5 delete round-trips; whether each shows a confirm dialog, and whether Delete is undoable, is unspecified; misclick on the adjacent Done row deletes a good output irreversibly"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  already_specified: false
+  proposed: "Specify Delete confirm copy, undo window (e.g. 10 s toast), and whether row checkboxes allow bulk delete"
+  shallow: false
+- id: qa-lead-25
+  title: "Team admin sees a creator's 5-file batch with 2 Failed: PRD does not say whether admin can Delete, Accept or Dismiss on another creator's run, or who gets the Done notification"
+  level: L3
+  cell: {actor: team-admin, surface: runs-table, status-mix: some-done-some-failed, action: delete}
+  object: "Users 'Team admin: sees all runs for the workspace.' and Runs table 'Actions: Open, Delete.'"
+  situation: "Admin views the workspace table where creator A's 5 runs are interleaved with creator B's runs by submitted-at"
+  consequence: "No owner column, so admin cannot tell which rows belong to which creator; permission tests for Delete/Accept/Dismiss on others' runs have no expected result"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "Team admin: sees all runs for the workspace."
+  already_specified: false
+  proposed: "Add an owner column for admins and a permission matrix: role x action (Open, Delete, Accept, Dismiss)"
+  shallow: false
+- id: qa-lead-26
+  title: "Done run with 0 suggestions: Run detail suggestion list has no empty-state copy, so 'Done with nothing to suggest' looks identical to a failed suggestion step"
+  level: L4
+  cell: {surface: run-detail, status-mix: done-with-zero-suggestions, suggestion-state: 0-suggestions, failure-point: suggestion-generation-only}
+  object: "Run detail 'a list of suggestions (text, each with Accept / Dismiss)'"
+  situation: "1 of 5 runs completes video output but suggestion generation returns 0 items or errors silently"
+  consequence: "User sees an empty list with no explanation; QA cannot distinguish expected-zero from a bug; the run still sends a Done notification"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "\"a list of suggestions (text, each with Accept / Dismiss)\" -- inferred: a list can be empty, so zero suggestions is implied, but no empty state is stated"
+  already_specified: false
+  proposed: "Specify empty-state copy 'No suggestions for this video' and a separate state when suggestion generation failed"
+  shallow: false
+  also_from: [support-agent-10, partial-failure-2]
+- id: qa-lead-27
+  title: "Status value outside the 4 listed (e.g. 'Cancelled', 'Uploading', null) returned by backend: Runs table and badge rendering undefined"
+  level: L4
+  cell: {surface: runs-table, status-mix: unknown-status-string-from-backend, time-and-connection: during-deploy-version-skew}
+  object: "Runs table 'Statuses: Queued, Processing, Done, Failed.'"
+  situation: "Backend deploys a new status before the frontend; 1 of 5 rows returns 'Cancelled'"
+  consequence: "Cell shows a raw string, an empty badge, or crashes the table render for all 25 rows on the page"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"Statuses: Queued, Processing, Done, Failed.\" -- inferred: the status set is closed at four values; a backend value outside it arises from deploy skew, which the PRD does not mention"
+  already_specified: false
+  proposed: "Specify a fallback badge 'Unknown' and that one bad row never blocks rendering of the other 24"
+  shallow: false
+  also_from: [support-agent-24, partial-failure-18]
+- id: qa-lead-30
+  title: "No deterministic way to force a specific run to Failed: PRD has no test hook, so 'some of 5 fail' acceptance criteria cannot be executed reliably"
+  level: L3
+  cell: {actor: background-processing-service, failure-point: processing-crash, batch-size: exactly-5-files, status-mix: some-done-some-failed}
+  object: "Status transitions 'Queued -> Processing -> Failed' (no failure trigger described)"
+  situation: "QA needs a 5-file submit where exactly files 2 and 4 fail, for every release"
+  consequence: "Partial-failure paths (qa-lead-1, -2, -12, -14) are tested only by chance or with hand-made corrupt files whose failure point varies by service version"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "\"Queued -> Processing -> Failed\" -- inferred: Failed is a reachable state, so QA needs to produce it, but the PRD implies nothing about a way to trigger it"
+  already_specified: false
+  proposed: "Add an acceptance-test fixture set: named files that fail at upload, at processing and at suggestion generation"
+  shallow: false
+- id: support-agent-1
+  title: "Run stays Processing for over 1 hour with no timeout, no stuck indicator, no user action"
+  level: L4
+  cell: {surface: runs-table, status-mix: stuck-processing-over-1h, failure-point: processing-crash, actor: creator-owner}
+  object: "Runs table status column; 'Queued -> Processing -> Done' / 'Queued -> Processing -> Failed' transitions"
+  situation: "A worker dies mid-run. The row has read 'Processing' for 61 minutes and the only transitions the PRD lists end in Done or Failed."
+  consequence: "The user opens a ticket saying 'stuck in Processing for an hour'. Support cannot tell a slow 3-hour video from a dead worker, and the user's only action is Delete."
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Statuses: Queued, Processing, Done, Failed."
+  already_specified: false
+  proposed: "State a maximum Processing duration (for example 60 minutes) after which the run moves to Failed with a timeout message."
+  shallow: false
+  also_from: [partial-failure-14]
+- id: support-agent-2
+  title: "Run stays Queued with no pick-up deadline and no cancel action"
+  level: L3
+  cell: {surface: runs-table, status-mix: stuck-queued-over-1h, failure-point: queue-timeout-never-picked-up, action: cancel-queued-run}
+  object: "Runs table 'Queued' status; Actions column limited to 'Open, Delete'"
+  situation: "5 files submitted, the queue is backed up, and 2 rows have read Queued for 90 minutes."
+  consequence: "Users cannot tell waiting from lost. Deleting a Queued row may or may not remove it from the queue, and the PRD does not say."
+  p_typical: 0.1
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  already_specified: false
+  proposed: "Define the behaviour of Delete on a Queued row and show a queue position or an 'expected wait' line."
+  shallow: false
+- id: support-agent-5
+  title: "No rule on who may delete a run, and no signal to the owner when a teammate deletes theirs"
+  level: L3
+  cell: {surface: runs-table, actor: team-admin, action: delete, owner-lifecycle: owner-active, status-mix: deleted-while-processing}
+  object: "Users section ('Team admin: sees all runs for the workspace') and 'Actions: Open, Delete'"
+  situation: "An admin or another creator in the same workspace deletes a creator's Processing run. The creator's row disappears on the next refresh."
+  consequence: "Ticket: 'my video is gone'. The PRD has no word for deleted-by-someone-else: no who-deleted-it record, no notice to the owner, no restore."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "\"Team admin: sees all runs for the workspace.\" -- inferred: admins see others' runs and Delete exists, so deleting a teammate's run is implied; who may delete is not stated"
+  already_specified: false
+  proposed: "State delete permissions per role and add a 'deleted by <name> on <date>' entry visible to the owner for a stated retention period."
+  shallow: false
+- id: support-agent-6
+  title: "Clicking the Done notification after the run was deleted lands on an unspecified screen"
+  level: L4
+  cell: {surface: in-app-notification, notification-state: clicked-after-run-deleted, action: notification-click, time-and-connection: steady-state}
+  object: "'When a run reaches Done, the user receives an in-app notification.' and the Run detail page"
+  situation: "A notification sits unread for 3 days. The run is deleted on day 2. The user clicks the notification on day 3."
+  consequence: "The notification leads nowhere: a blank detail page, a raw 404, or a spinner. The PRD gives no copy for a deleted or missing run, and the notification itself is not removed on delete."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "\"When a run reaches Done, the user receives an in-app notification.\" -- inferred: a notification that points at a run which can later be removed with Delete is implied; click-through behaviour is not stated"
+  already_specified: false
+  proposed: "On delete, remove or grey the notification; on click of a missing run show 'This run was deleted' and a link back to the Runs table."
+  shallow: false
+  also_from: [qa-lead-10]
+- id: support-agent-15
+  title: "Duration column has no value for Queued, Processing, Failed or 0-second runs, and does not say input or output length"
+  level: L3
+  cell: {surface: runs-table, status-mix: all-processing, media-content: no-video-track-or-0-seconds}
+  object: "Runs table 'duration' column"
+  situation: "A row is Queued or Failed, or the uploaded file has no video track and reports 0:00."
+  consequence: "Cells show blank, '0:00' or 'NaN'. After processing, the user sees a duration that differs from their file and files a 'video got shortened' ticket."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Columns: thumbnail, title, status, submitted at, duration, actions."
+  already_specified: false
+  proposed: "State the duration source (input or output), the placeholder before it is known (for example an em dash), and the 0-second rule."
+  shallow: false
+  also_from: [qa-lead-29, flat-frame-13, partial-failure-25]
+- id: support-agent-16
+  title: "Submitted-at shows no timezone rule, so travel or a timezone change reorders what the user remembers"
+  level: L4
+  cell: {surface: runs-table, time-and-connection: timezone-change-or-travel, actor: creator-owner}
+  object: "Runs table 'submitted at' column"
+  situation: "A user submits at 23:30 in London, flies to New York, and reads the table at 08:00 local."
+  consequence: "The row reads a different clock time or date than when the user remembers submitting, and the admin in another timezone sees a third value. Ticket: 'wrong date on my run'."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"Columns: thumbnail, title, status, submitted at, duration, actions.\" -- inferred: a 'submitted at' column implies a displayed timestamp, but no timezone rule is stated"
+  already_specified: false
+  proposed: "Specify display in the viewer's local timezone with the zone abbreviation on hover, stored in UTC."
+  shallow: false
+- id: support-agent-19
+  title: "Session expiry at 90% of a large upload gives no message and no saved state"
+  level: L3
+  cell: {surface: error-toast-or-banner, time-and-connection: session-expired-mid-upload, failure-point: upload-transfer, media-content: exactly-2gb-or-over}
+  object: "Submit dialog 'max 2 GB each'"
+  situation: "A 1.9 GB upload takes 25 minutes and the login session expires at minute 22."
+  consequence: "The upload is rejected with a 401, the row is missing or stuck, and the user loses 22 minutes. Whether a banner appears, the file is kept, or the user is redirected to login is not stated."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"max 2 GB each\" -- inferred: files up to 2 GB take long to upload, so a session can expire mid-upload; the PRD says nothing about auth or sessions"
+  already_specified: false
+  proposed: "State the expiry behaviour for uploads in flight (token refresh, or a banner with 'Sign in and resubmit')."
+  shallow: false
+- id: support-agent-25
+  title: "Run detail 'metadata' lists no run ID, so support cannot locate a run from a ticket"
+  level: L3
+  cell: {surface: run-detail, actor: support-staff-impersonating, action: copy-run-link}
+  object: "Run detail page 'the run's metadata'"
+  situation: "A user writes 'my video from yesterday is stuck' and attaches nothing but a screenshot."
+  consequence: "With titles that can repeat and no visible run ID or copy-link control, support must scan the workspace by timestamp. The PRD does not list which metadata fields appear."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "the run's metadata"
+  already_specified: false
+  proposed: "List the metadata fields (run ID, original filename, size, submitted at, finished at) and add a copy-ID or copy-link action."
+  shallow: false
+  also_from: [partial-failure-31]
+- id: support-agent-27
+  title: "Browser Back after delete on the detail page re-shows the deleted run from cache"
+  level: L4
+  cell: {surface: expired-or-deleted-run-url, time-and-connection: browser-back-after-delete, action: refresh-or-back}
+  object: "Run detail page and Delete action"
+  situation: "The user opens a run, deletes it, lands on the Runs table, then presses Back."
+  consequence: "The cached detail page shows the player and Accept / Dismiss for a deleted run, and actions then fail with an unspecified error."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"Actions: Open, Delete.\" -- inferred: Delete and a separate detail page both exist, so Back after delete can show a stale page; caching and deleted-run URLs are not mentioned"
+  already_specified: false
+  proposed: "Specify that a detail URL for a deleted run shows 'This run was deleted' and that cached pages revalidate on Back."
+  shallow: false
+- id: support-agent-28
+  title: "Detail page left open for hours still shows Processing after the Done notification arrived"
+  level: L4
+  cell: {surface: run-detail, time-and-connection: page-open-for-hours-stale, notification-state: arrives-while-viewing-that-run}
+  object: "'Status badge in the header mirrors the table.' and the Done notification"
+  situation: "The user watches a run at Processing; the run reaches Done and a notification appears while the detail page is open for 3 hours."
+  consequence: "The notification says Done while the header badge and empty player still say Processing. The PRD gives no refresh interval or live update rule."
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Status badge in the header mirrors the table."
+  already_specified: false
+  proposed: "State a poll or push update interval (for example 10 seconds) for the badge and player, and mark the notification read when its run is already open."
+  shallow: false
+  also_from: [qa-lead-32]
+- id: support-agent-29
+  title: "5 runs finishing within 1 minute produce 5 separate notifications with no grouping or cap"
+  level: L4
+  cell: {surface: in-app-notification, notification-state: burst-of-5-in-one-minute, batch-size: exactly-5-files, action: mark-notification-read}
+  object: "'When a run reaches Done, the user receives an in-app notification.'"
+  situation: "A 5-file Submit finishes within 60 seconds."
+  consequence: "5 stacked notifications, each linking to a run; a user with 20 unread after a weekend has no 'mark all read'. Count, grouping and expiry are not stated."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  already_specified: false
+  proposed: "Specify grouping ('5 runs finished') above a threshold of 3 per minute, and whether a mark-all-read action exists."
+  shallow: false
+  also_from: [qa-lead-3]
+- id: support-agent-30
+  title: "Accept or Dismiss has no visible result state, no undo, and no rule when a teammate already acted"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: accept-then-dismiss-same-item, action: accept-suggestion, actor: other-creator-same-workspace}
+  object: "Run detail 'suggestions (text, each with Accept / Dismiss)'"
+  situation: "The user clicks Accept, then Dismiss, on the same suggestion, or a teammate in the same workspace has already clicked Dismiss on it."
+  consequence: "The PRD does not say what Accept does, whether the row changes, or whether the last click wins. The user reports 'my accepted suggestion came back'."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "each with Accept / Dismiss"
+  already_specified: false
+  proposed: "Define a per-suggestion state (Pending, Accepted, Dismissed), that it persists on reload, and whether the state is per user or per workspace."
+  shallow: false
+- id: support-agent-31
+  title: "Creator removed from the workspace: their runs, the admin's view and re-join behaviour are unspecified"
+  level: L3
+  cell: {surface: runs-table, actor: owner-removed-from-workspace, owner-lifecycle: owner-removed-from-workspace, notification-state: app-closed-when-fired}
+  object: "Users section: 'Team admin: sees all runs for the workspace.'"
+  situation: "A creator with 40 runs is removed from the workspace on Monday. Run 41 reaches Done on Tuesday."
+  consequence: "Unclear whether the admin still sees the 40 runs, whether the removed user can open a stale link, and whether the Done notification is sent. The creator reports 'my videos vanished' and the admin sees orphan rows."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"Team admin: sees all runs for the workspace.\" -- inferred: workspace membership implies users can be removed, but the PRD never mentions removal"
+  already_specified: false
+  proposed: "State ownership transfer or retention for removed users and cancel notifications to non-members."
+  shallow: false
+- id: support-agent-32
+  title: "Runs table with 0 rows on first use has no empty-state copy or Submit prompt"
+  level: L3
+  cell: {surface: empty-state, time-and-connection: first-ever-use, batch-size: 0-files}
+  object: "Runs table (no empty state listed) and Submit dialog entry point"
+  situation: "A new user opens the Runs page with 0 runs, and later deletes their last run."
+  consequence: "A header row over nothing, with no guidance on how to submit. The same blank table shows during a load failure, so users cannot tell no runs from a failed load."
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "\"Columns: thumbnail, title, status, submitted at, duration, actions.\" -- inferred: a table with columns implies an empty table when there are no runs, but no empty state is stated"
+  already_specified: false
+  proposed: "Specify empty-state copy with a Submit call to action, distinct from the load error banner."
+  shallow: false
+  also_from: [qa-lead-31]
+- id: support-agent-33
+  title: "Delete has no stated confirmation, undo or retention, so 'deleted by mistake' tickets have no recovery path"
+  level: L3
+  cell: {surface: delete-confirm-dialog, action: undo-delete, status-mix: all-done}
+  object: "Runs table 'Actions: Open, Delete'"
+  situation: "A user clicks Delete on a Done run next to Open and 30 seconds later wants it back."
+  consequence: "The PRD does not say if a confirm dialog appears, if the output video is permanently erased or soft-deleted, or for how long. Support cannot answer 'can you restore it'."
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  already_specified: false
+  proposed: "State a confirm dialog naming the run title, and a retention window (for example 30 days) or permanent deletion."
+  shallow: false
+- id: flat-frame-1
+  title: White play icon is invisible on a solid-white first frame, so the thumbnail reads as a blank square
+  level: L4
+  cell: {surface: runs-table, media-content: first-frame-flat-white-or-near-white, action: open}
+  object: "Runs table, thumbnail column: 'a white play icon centred on it'"
+  situation: Creator uploads a video that opens on a solid white title card (#FFFFFF); the table renders white icon on white frame
+  consequence: Row shows an empty white box with no visible play affordance; creator cannot tell the thumbnail is clickable or whether it failed to load
+  p_typical: 0.22
+  grounded: quote
+  evidence: "The thumbnail shows the first frame of the uploaded video with a white play icon centred on it."
+  already_specified: false
+  proposed: "Acceptance criterion: play icon has a dark scrim or 1px outline so contrast against any frame is at least 3:1 (checked on #FFFFFF, #F5F5F5, #000000 frames)"
+  shallow: false
+  also_from: [support-agent-14]
+- id: flat-frame-2
+  title: Solid-black first frame gives a thumbnail indistinguishable from a failed-to-load placeholder
+  level: L3
+  cell: {surface: runs-table, media-content: first-frame-flat-black, status-mix: all-done}
+  object: "Runs table thumbnail column, first-frame thumbnail"
+  situation: Creator's videos all start on a black title card; thumbnail is a black rectangle with a white icon
+  consequence: Row looks broken or still loading next to rows with real images; creator reloads the page or files a bug although nothing is wrong
+  p_typical: 0.07
+  grounded: quote
+  evidence: "The thumbnail shows the first frame of the uploaded video with a white play icon centred on it."
+  already_specified: false
+  proposed: "Spec states whether the thumbnail samples frame 0 or a later frame (e.g. 1.0 s) when frame 0 is a single flat color"
+  shallow: false
+- id: flat-frame-3
+  title: Five logo-on-plain-background videos in one submit produce five identical-looking rows
+  level: L3
+  cell: {surface: runs-table, batch-size: exactly-5-files, media-content: logo-on-plain-background}
+  object: "Runs table, thumbnail and title columns; Submit dialog 'One run is created per file'"
+  situation: Creator submits 5 files that all open on the same logo card; thumbnails match and, because the title source is unspecified, titles may also match
+  consequence: Creator cannot tell which row is which file while all 5 are Queued; picks the wrong row to open or delete
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "\"Columns: thumbnail, title, status, submitted at, duration, actions.\" -- inferred: one run per file allows 5 files with the same opening frame, and the title source is not stated"
+  already_specified: false
+  proposed: "Spec the title default (original filename without extension) and show it untruncated on hover"
+  shallow: false
+- id: flat-frame-4
+  title: Thumbnail with a white background has no visible edge against a white table row
+  level: L3
+  cell: {surface: runs-table, media-content: logo-on-plain-background, time-and-connection: steady-state}
+  object: "Runs table, thumbnail column"
+  situation: Logo card on a #FFFFFF background displayed in a table row whose background is also white; no border or radius specified for the thumbnail
+  consequence: Thumbnail floats without bounds, row looks like it has a missing image and the column misaligns visually with dark-frame rows
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: "Specify a 1px border (e.g. 1px solid at 12% opacity) and fixed thumbnail size on the thumbnail container"
+  shallow: false
+- id: flat-frame-5
+  title: Source video that already shows a play icon or text in frame 0 gets a second play icon stacked on it
+  level: L3
+  cell: {surface: runs-table, media-content: first-frame-already-contains-a-play-icon-or-text}
+  object: "Runs table thumbnail: 'white play icon centred on it'"
+  situation: Screen recording of a video player or a title card containing a triangle play glyph and large centred text
+  consequence: Two play icons overlap, or the overlay covers the title card text; creator reads it as a rendering bug
+  p_typical: 0.04
+  grounded: quote
+  evidence: "a white play icon centred on it"
+  already_specified: false
+  proposed: "Accept as unspecified or reduce icon opacity to 80% and size to 32 px so underlying text stays readable"
+  shallow: false
+- id: flat-frame-6
+  title: Portrait 9:16 phone clip has no specified thumbnail crop, so the centred icon and title card are cut or letterboxed
+  level: L3
+  cell: {surface: runs-table, media-content: portrait-or-square-aspect, actor: creator-owner}
+  object: "Runs table thumbnail column (aspect ratio not stated)"
+  situation: Creator uploads a 1080x1920 phone clip; table thumbnail slot is landscape
+  consequence: Either the frame is center-cropped (title card text cut at the edges) or pillarboxed with bars; the 'centred' play icon sits over the bars or off the subject
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "\"The thumbnail shows the first frame of the uploaded video\" -- inferred: any video file is accepted with no aspect-ratio limit, so portrait clips are implied; thumbnail box shape and crop are never stated"
+  already_specified: false
+  proposed: "Spec thumbnail box as 16:9 with object-fit contain (pillarbox) for non-16:9 sources"
+  shallow: false
+- id: flat-frame-7
+  title: Phone clip with rotation metadata shows a sideways thumbnail while the Run detail player shows it upright (or the reverse)
+  level: L4
+  cell: {surface: run-detail, media-content: portrait-or-square-aspect, failure-point: output-encoding}
+  object: "Runs table thumbnail vs Run detail page 'output video player'"
+  situation: iPhone .mov stored as 1920x1080 with a 90-degree rotation tag; thumbnail is extracted by a tool that ignores the tag
+  consequence: Thumbnail is rotated 90 degrees; opening the run shows a portrait video; creator believes the wrong file was uploaded
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: "Acceptance test: upload a .mov with rotation=90; thumbnail and player both report 1080x1920 orientation"
+  shallow: false
+- id: flat-frame-8
+  title: Queued and Processing rows have no specified thumbnail, and the play icon implies a playable video that does not exist yet
+  level: L3
+  cell: {surface: runs-table, status-mix: all-queued, action: open}
+  object: "Runs table, rows with status Queued/Processing; 'Clicking the thumbnail opens the run.'"
+  situation: Creator submits 1 file; new row appears at top with Queued; thumbnail extraction may not have finished and no output video exists
+  consequence: Row shows a play icon over a blank or spinner thumbnail; clicking opens a Run detail page whose player has nothing to play
+  p_typical: 0.14
+  grounded: quote
+  evidence: "the new rows appear at the top of the table with status Queued."
+  already_specified: false
+  proposed: "Spec: play icon shown only when status is Done; otherwise show a status-colored placeholder and keep the click target"
+  shallow: false
+- id: flat-frame-11
+  title: Failed run has no Retry action and no pointer to supported formats, so the creator must re-export and resubmit blind
+  level: L3
+  cell: {surface: run-detail, status-mix: failed-after-retry, action: retry-not-in-prd}
+  object: "Runs table 'Actions: Open, Delete'; Run detail error message"
+  situation: Creator's odd-container file fails; the only actions are Open and Delete
+  consequence: Creator deletes the row and resubmits the same file, producing the same failure; no count of attempts is kept
+  p_typical: 0.13
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  already_specified: false
+  proposed: "Add a spec line stating Retry is out of scope for v0.4, or add Retry on Failed rows only"
+  shallow: false
+- id: flat-frame-14
+  title: Duration format for a 3-hour file is unspecified (180:00 vs 3:00:00) and which video it measures (uploaded or output) is not stated
+  level: L4
+  cell: {surface: runs-table, media-content: 3-hour-video}
+  object: "Runs table 'duration' column"
+  situation: Creator uploads a 3 h 02 min screen recording (under 2 GB at low bitrate); output may be shorter than input
+  consequence: Column shows '182:00' or '3:02:00' inconsistently with Run detail metadata; creator compares input length with output and sees a mismatch
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "\"Columns: thumbnail, title, status, submitted at, duration, actions.\" -- inferred: a duration column implies a duration format and source, neither stated; long files are allowed by the 2 GB cap"
+  already_specified: false
+  proposed: "Acceptance: duration is of the output video, formatted h:mm:ss at or above 3600 s and m:ss below"
+  shallow: false
+- id: flat-frame-15
+  title: Thumbnail source is the uploaded video, but a title-card creator whose output trims the card sees a thumbnail that matches nothing in the output
+  level: L3
+  cell: {surface: runs-table, media-content: logo-on-plain-background, status-mix: all-done}
+  object: "Runs table thumbnail ('first frame of the uploaded video') vs Run detail 'output video player'"
+  situation: Processing cuts the first 3 s title card; Done row still shows the title card as thumbnail
+  consequence: Opening the run shows a different first frame than the table; creator suspects the wrong run opened
+  p_typical: 0.05
+  grounded: quote
+  evidence: "The thumbnail shows the first frame of the uploaded video"
+  already_specified: true
+  already_specified_by: "Runs table: \"The thumbnail shows the first frame of the uploaded video\" (thumbnail source is the uploaded video, so a Done row keeps the uploaded video's first frame)"
+  proposed: "Spec whether the thumbnail of a Done run is regenerated from the output video"
+  shallow: false
+- id: flat-frame-17
+  title: Screen recording with no audio track reaches Done with 0 suggestions and the suggestions list area has no empty state
+  level: L3
+  cell: {surface: run-detail, media-content: video-with-no-audio-track, suggestion-state: 0-suggestions, status-mix: done-with-zero-suggestions}
+  object: "Run detail 'a list of suggestions (text, each with Accept / Dismiss)'"
+  situation: Silent screen capture (no audio stream) is processed successfully; zero suggestions are produced
+  consequence: Suggestions section renders blank under the player; creator cannot tell whether processing found nothing or the list failed to load
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "\"a list of suggestions (text, each with Accept / Dismiss)\" -- inferred: a list can be empty, so zero suggestions is implied, but no empty state is stated"
+  already_specified: false
+  proposed: "Spec empty-state copy: 'No suggestions for this video' with the reason when no audio track was detected"
+  shallow: false
+- id: flat-frame-18
+  title: Files with multiple audio tracks have no stated rule for which track is processed or played
+  level: L3
+  cell: {surface: run-detail, media-content: multiple-audio-tracks, failure-point: suggestion-generation-only}
+  object: "Run detail 'output video player' and suggestions list"
+  situation: Screen recording with 2 audio streams (system audio + microphone) from a capture tool
+  consequence: Suggestions derive from one track and the player plays another; creator sees suggestions that do not match what they hear
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: "Spec: first audio stream is processed and kept in output; other streams dropped"
+  shallow: false
+- id: flat-frame-20
+  title: A 2 GB limit has no stated byte count, and a 4K screen recording near the limit is accepted or refused differently by browser and server
+  level: L4
+  cell: {surface: submit-dialog, media-content: exactly-2gb-or-over, failure-point: client-validation}
+  object: "Submit dialog 'max 2 GB each'"
+  situation: File is 2,000,000,000 bytes vs 2,147,483,648 bytes vs 2,147,483,649 bytes
+  consequence: Client check passes a file the server rejects (or the reverse); the row either never appears or goes Failed after a long upload
+  p_typical: 0.08
+  grounded: quote
+  evidence: "max 2 GB each"
+  already_specified: false
+  proposed: "Acceptance: 2 GB = 2,147,483,648 bytes; file at that size accepted, +1 byte rejected in dialog with the file name and its size"
+  shallow: false
+  also_from: [support-agent-20]
+- id: flat-frame-21
+  title: Filename of 255 characters, emoji, or no extension has no stated title rule or truncation in the title column
+  level: L3
+  cell: {surface: runs-table, media-content: filename-255-chars-or-emoji-or-no-extension}
+  object: "Runs table 'title' column; Submit dialog 'mp4, mov'"
+  situation: Phone export named 'IMG_0042' with no extension, or a 255-character screen-recorder timestamp name, or a name with emoji
+  consequence: Extension-less file may be refused as not mp4/mov though the container is valid; long name pushes the status and actions columns off screen; emoji may render as boxes
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"Columns: thumbnail, title, status, submitted at, duration, actions.\" -- inferred: a title column implies titles of arbitrary length and characters, but no title source or truncation is stated"
+  already_specified: false
+  proposed: "Spec: title truncates at 60 characters with ellipsis and full name on hover; type check uses container sniffing, not extension"
+  shallow: false
+  also_from: [support-agent-13]
+- id: flat-frame-24
+  title: Done notification carries no thumbnail or title, so five Done notifications from title-card videos cannot be told apart
+  level: L3
+  cell: {surface: in-app-notification, notification-state: burst-of-5-in-one-minute, media-content: first-frame-flat-white-or-near-white}
+  object: "Notifications: 'When a run reaches Done, the user receives an in-app notification.'"
+  situation: 5 runs from one submit reach Done within 60 s; notification text is unspecified
+  consequence: Five identical-looking notifications, each opening a run whose thumbnail is a white square; creator opens them one by one to find which is which
+  p_typical: 0.08
+  grounded: quote
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  already_specified: false
+  proposed: "Spec notification copy: '<title> is ready' with 40 px thumbnail, grouped as '5 runs finished' when 3 or more arrive within 60 s"
+  shallow: false
+- id: flat-frame-26
+  title: Browser tab title on Run detail is unspecified, so several open runs from identical title-card videos share one tab label
+  level: L3
+  cell: {surface: browser-tab-title, media-content: logo-on-plain-background, action: open}
+  object: "Run detail page (no tab title specified)"
+  situation: Creator opens 3 runs in separate tabs via middle-click on the thumbnail
+  consequence: All 3 tabs read 'Runs' or the app name; creator closes the wrong tab
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: "Spec document title as '<run title> - Runs'"
+  shallow: false
+- id: flat-frame-27
+  title: Thumbnail and play icon have no stated accessible name or keyboard focus behavior, and duplicate the Open action
+  level: L4
+  cell: {surface: runs-table, actor: creator-owner, action: open}
+  object: "Runs table thumbnail: 'Clicking the thumbnail opens the run.' and Actions: Open"
+  situation: Creator navigates the table with a keyboard or screen reader; thumbnail is an image with an overlaid icon
+  consequence: Thumbnail announced as 'image' with no destination; Tab stops twice per row (thumbnail and Open) on 25 rows
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"Clicking the thumbnail opens the run.\" -- inferred: the thumbnail is a click target duplicating the Open action, so its keyboard and screen-reader behaviour matters; accessibility is not mentioned"
+  already_specified: false
+  proposed: "Acceptance: thumbnail link has aria-label 'Open <title>'; Tab order has one stop per row for opening"
+  shallow: false
+- id: flat-frame-28
+  title: A 4K HDR 10-bit phone clip yields a washed-out or gray thumbnail that differs from the player's colors
+  level: L3
+  cell: {surface: runs-table, media-content: 4k-hdr-10bit, failure-point: output-encoding}
+  object: "Runs table thumbnail vs Run detail 'output video player'"
+  situation: iPhone HLG HEVC clip with BT.2020 color; thumbnail extractor converts without tone mapping
+  consequence: Thumbnail appears gray and low contrast; a near-white title card becomes light gray so the white icon contrast drops further
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: "Accept-as-unspecified, or spec tone-mapped thumbnail extraction to sRGB"
+  shallow: false
+- id: flat-frame-29
+  title: Variable-frame-rate screen recording shows a duration in the table that differs from the player's end time
+  level: L4
+  cell: {surface: runs-table, media-content: variable-frame-rate, status-mix: all-done}
+  object: "Runs table 'duration' column vs Run detail player"
+  situation: Screen recorder produces VFR .mp4 where container duration says 10:00 but the last frame lands at 9:52
+  consequence: Table reads 10:00, player ends at 9:52; creator thinks the output was cut
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: "Acceptance: duration column equals the player's reported duration within 1 s"
+  shallow: false
+- id: flat-frame-30
+  title: Run detail player has no stated aspect ratio, so portrait output is shrunk into a landscape box next to the suggestions list
+  level: L3
+  cell: {surface: run-detail, media-content: portrait-or-square-aspect, status-mix: all-done}
+  object: "Run detail page 'output video player'"
+  situation: 1080x1920 output opened on a 1440 px wide window
+  consequence: Player either stretches to full height and pushes suggestions below the fold, or shows as a narrow strip with large empty bars
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "\"Shows the output video player, a list of suggestions\" -- inferred: a player is implied to render outputs of any shape, but its size and aspect handling are not stated"
+  already_specified: false
+  proposed: "Spec: player max height 70 vh, preserving aspect ratio, centered"
+  shallow: false
+- id: partial-failure-1
+  title: "Output video encoded but suggestion generation failed: none of Queued/Processing/Done/Failed describes the run"
+  level: L3
+  cell: {status-mix: some-done-some-failed, failure-point: suggestion-generation-only, surface: run-detail}
+  object: "Statuses: Queued, Processing, Done, Failed. / Run detail page: output video player + list of suggestions"
+  situation: "Encode step writes a playable output; the suggestion step then throws (model timeout, 5xx from the model service). The run has a usable output and 0 suggestions."
+  consequence: "Marking it Failed hides a usable output video behind an error; marking it Done shows an empty suggestions list with no explanation. Either way the creator cannot tell what they got."
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "\"Shows the output video player, a list of suggestions (text, each with Accept / Dismiss), and the run's metadata.\" -- inferred: output video and suggestions are separate artefacts that could succeed or fail independently, while the PRD has only Done and Failed"
+  already_specified: false
+  proposed: "Add a per-step status (output_status, suggestions_status) and a table label 'Done - suggestions unavailable' with a 'Retry suggestions' action on the detail page."
+  shallow: false
+- id: partial-failure-3
+  title: "Failed has one label for 6 failure stages that need 6 different user remedies"
+  level: L3
+  cell: {failure-point: processing-crash, status-mix: all-failed, surface: runs-table}
+  object: "Status 'Failed' in the Runs table and 'A Failed run shows an error message from the processing service in the detail page.'"
+  situation: "Runs fail at: upload transfer, queue timeout, probe/unsupported codec, encode crash, suggestion generation, output storage. Remedies differ: re-upload, wait and retry, re-export the file, retry, retry suggestions only, contact support."
+  consequence: "Table shows the same red 'Failed' for all 6; the user must open each run to learn whether re-trying can help or the file itself is the problem."
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Statuses: Queued, Processing, Done, Failed."
+  already_specified: false
+  proposed: "Define a failure_stage enum (6 values) and a failure_code; map each to user copy and a remedy action; show a short reason under 'Failed' in the status column."
+  shallow: false
+- id: partial-failure-4
+  title: "'Error message from the processing service' may be raw ffmpeg stderr or a stack trace with internal hostnames and storage keys"
+  level: L4
+  cell: {failure-point: output-encoding, surface: run-detail, actor: creator-owner}
+  object: "PRD sentence: 'A Failed run shows an error message from the processing service in the detail page.'"
+  situation: "Encode worker fails; the service's error field holds e.g. 'Error while decoding stream #0:1 ... s3://prod-media-internal/ws_123/...' or a Python traceback."
+  consequence: "Creators see unreadable text; internal bucket names, worker hostnames and other workspace ids leak to customers."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  already_specified: false
+  proposed: "Detail page shows mapped user copy keyed by failure_code; raw service error stored server-side only, viewable by support staff, plus a run id for tickets."
+  shallow: false
+- id: partial-failure-5
+  title: "Raw service error text has no length cap; ffmpeg stderr for a 3-hour file can exceed 50 KB"
+  level: L4
+  cell: {media-content: 3-hour-video, failure-point: output-encoding, surface: run-detail}
+  object: "Run detail page error message area (implied by 'shows an error message from the processing service')"
+  situation: "A long or damaged input makes ffmpeg emit thousands of warning lines before failing; the whole buffer is passed through as the message."
+  consequence: "Detail page renders a multi-screen wall of text above the (empty) player; DB row for the run grows by tens of KB."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"A Failed run shows an error message from the processing service in the detail page.\" -- inferred: the message is passed through from the service, so its size is implied to be unbounded; no length limit is stated"
+  already_specified: false
+  proposed: "Cap stored user-facing message at 500 characters; keep full log in object storage for 30 days referenced by run id."
+  shallow: false
+- id: partial-failure-6
+  title: "Failures not produced by the processing service (upload abort, queue timeout, reaper) have no error message to show"
+  level: L3
+  cell: {failure-point: queue-timeout-never-picked-up, status-mix: stuck-queued-over-1h, surface: run-detail}
+  object: "PRD sentence: 'A Failed run shows an error message from the processing service'"
+  situation: "A run never reaches a worker (queue backlog, upload never completed) and a timeout job flips it to Failed; the processing service never saw it."
+  consequence: "Detail page shows 'Failed' with a blank error area, or 'null'; the user has nothing to act on."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  already_specified: false
+  proposed: "Every Failed transition must carry a failure_code from a single enum regardless of which component wrote it; blank message is a test failure."
+  shallow: false
+- id: partial-failure-8
+  title: "Source file retention after Failed is unspecified, so a Retry button cannot know whether the input still exists"
+  level: L3
+  cell: {action: retry-not-in-prd, status-mix: failed-after-retry, time-and-connection: page-open-for-hours-stale}
+  object: "Submit dialog 'max 2 GB each' uploads; Failed status"
+  situation: "Storage lifecycle deletes source uploads after N days to save cost; user clicks a Failed run 10 days later to retry."
+  consequence: "Retry fails a second time with a missing-input error, or the team keeps 2 GB per failed run forever."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"The user picks 1 to 5 video files (mp4, mov; max 2 GB each)\" -- inferred: uploaded sources must be stored for processing, so how long they are kept after Failed is implied but not stated"
+  already_specified: false
+  proposed: "State source retention (e.g. 7 days after terminal status); show 'Source expired, re-upload to retry' after that."
+  shallow: false
+- id: partial-failure-9
+  title: "Automatic retries of transient failures need a state the PRD's linear transitions do not allow (Processing -> Queued)"
+  level: L3
+  cell: {status-mix: failed-after-retry, failure-point: processing-crash, surface: runs-table}
+  object: "Status transitions: 'Queued -> Processing -> Done / Queued -> Processing -> Failed'"
+  situation: "Worker is OOM-killed on a 4K HDR file; the queue redelivers the job and it goes back to waiting."
+  consequence: "Either the table shows Processing during a 20-minute wait for a free worker (wrong) or flips back to Queued (a transition the PRD forbids); users see a run 'go backwards'."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "\"Queued -> Processing -> Done\" -- inferred: automatic retry would need a backward transition the linear flow does not allow; retries themselves are not mentioned"
+  already_specified: false
+  proposed: "Specify max automatic attempts (e.g. 3), whether Processing -> Queued is allowed, and show 'Retrying (2/3)' in the status column."
+  shallow: false
+- id: partial-failure-10
+  title: "After 3 automatic attempts, detail page shows only one error message; earlier attempts' different errors are lost"
+  level: L4
+  cell: {status-mix: failed-after-retry, surface: run-detail, actor: support-staff-impersonating}
+  object: "Run detail page error message; run's metadata"
+  situation: "Attempt 1 fails on worker OOM, attempt 2 on storage timeout, attempt 3 on encode error; only the last is stored."
+  consequence: "Support diagnoses the wrong root cause; metadata has no attempt count to show the run was retried at all."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"A Failed run shows an error message from the processing service in the detail page.\" -- inferred: a single error message is shown, implying only one failure is kept; attempts are not mentioned"
+  already_specified: false
+  proposed: "Store an attempts list (started_at, ended_at, failure_code) per run; metadata shows 'Attempts: 3'."
+  shallow: false
+- id: partial-failure-11
+  title: "Double-click on Submit with 5 files creates 10 runs; no idempotency key per submit"
+  level: L4
+  cell: {action: double-click-submit, batch-size: exactly-5-files, surface: submit-dialog}
+  object: "Submit dialog: 'One run is created per file. The dialog closes and the new rows appear at the top of the table'"
+  situation: "User double-clicks Submit, or the create request times out at 30 s and the client retries."
+  consequence: "10 rows appear, 10 jobs consume processing capacity, user deletes 5 by hand (no bulk delete)."
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "\"One run is created per file.\" -- inferred: one run is created per file on Submit, so a repeated Submit implies duplicate runs; idempotency is not stated"
+  already_specified: false
+  proposed: "Client sends an idempotency key per (submit, file index); server returns the existing run for a repeated key within 24 h; Submit disabled after first click."
+  shallow: false
+  also_from: [qa-lead-18, support-agent-23]
+- id: partial-failure-12
+  title: "At-least-once job delivery fires the Done in-app notification twice for one run"
+  level: L4
+  cell: {notification-state: burst-of-5-in-one-minute, actor: background-processing-service, status-mix: all-done}
+  object: "Notifications: 'When a run reaches Done, the user receives an in-app notification.'"
+  situation: "Worker writes Done, then its ack to the queue times out; the job is redelivered, finishes again and emits a second Done event."
+  consequence: "User gets duplicate notifications; a 5-file submit can produce 10; suggestions may be written twice (duplicate rows in the list)."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"When a run reaches Done, the user receives an in-app notification.\" -- inferred: a Done event triggers a notification, so a duplicate Done event implies a duplicate notification; delivery semantics are not mentioned"
+  already_specified: false
+  proposed: "Notification keyed on (run_id, terminal_status) with unique constraint; status write is compare-and-set from Processing; suggestions replaced, not appended, per attempt."
+  shallow: false
+- id: partial-failure-13
+  title: "Late or out-of-order status events can regress a Done row back to Processing"
+  level: L4
+  cell: {status-mix: all-processing, actor: background-processing-service, time-and-connection: during-service-incident}
+  object: "Runs table status column; 'Status badge in the header mirrors the table.'"
+  situation: "A delayed 'Processing' heartbeat from the encode step is applied after the 'Done' event from the suggestion step."
+  consequence: "Row flips Done -> Processing; Open shows a run with output but a Processing badge; notification already fired."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"Queued -> Processing -> Done\" -- inferred: status moves are shown only as a forward sequence, so late or out-of-order updates are implied but not addressed"
+  already_specified: false
+  proposed: "Terminal statuses are final; status updates carry a monotonic sequence number and older updates are dropped."
+  shallow: false
+- id: partial-failure-16
+  title: "Delete on a Processing run: worker keeps encoding and later writes output and suggestions for a deleted run"
+  level: L3
+  cell: {status-mix: deleted-while-processing, action: delete, actor: background-processing-service}
+  object: "Runs table action 'Delete'"
+  situation: "User deletes a run 10 minutes into a 3-hour encode."
+  consequence: "Compute keeps running for the remaining time; on finish the worker writes a Done event and the user gets a notification for a run that no longer exists; the output blob is orphaned."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  already_specified: false
+  proposed: "Delete sets a cancel flag the worker checks between steps (and every 60 s during encode); status writes against a deleted run are rejected; no notification for deleted runs."
+  shallow: false
+  also_from: [qa-lead-9, support-agent-8]
+- id: partial-failure-17
+  title: "Delete removes the row but storage deletion of source and output fails, leaving up to 2 GB of the user's video in storage"
+  level: L3
+  cell: {failure-point: delete-failed, action: confirm-delete-dialog, owner-lifecycle: owner-active}
+  object: "Runs table action 'Delete'"
+  situation: "Row delete commits; the async blob delete for source + output returns 503 and is not retried."
+  consequence: "User believes the video is gone; it is not; storage cost accrues; a privacy request later finds the file."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"Actions: Open, Delete.\" -- inferred: Delete implies removing stored video as well as the row; how storage removal failures are handled is not stated"
+  already_specified: false
+  proposed: "Soft-delete the row, enqueue blob deletion with retries until success, alert on deletions pending over 24 h."
+  shallow: false
+- id: partial-failure-19
+  title: "When does Done fire: after encode, or after suggestions? Notification may send before suggestions exist"
+  level: L3
+  cell: {notification-state: arrives-while-viewing-that-run, failure-point: suggestion-generation-only, surface: in-app-notification}
+  object: "'When a run reaches Done, the user receives an in-app notification.' / Run detail page suggestions list"
+  situation: "Encode finishes at minute 12; suggestion step runs until minute 15."
+  consequence: "If Done means output ready, the notification click opens a page with an empty suggestions list for 3 minutes; if Done waits for suggestions, a suggestion outage blocks delivery of a finished video."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  already_specified: false
+  proposed: "Define Done = output stored AND suggestions_status terminal; or show 'Generating suggestions' in the list while output is already playable."
+  shallow: false
+- id: partial-failure-22
+  title: "Valid .mp4/.mov with an unsupported codec passes the Submit dialog and fails at probe; the user's remedy is to re-export, not retry"
+  level: L3
+  cell: {media-content: unsupported-codec-in-valid-container, failure-point: processing-crash, action: retry-not-in-prd}
+  object: "Submit dialog 'mp4, mov; max 2 GB each'"
+  situation: "User uploads a ProRes 4444 .mov or an AV1 .mp4; extension check passes; the probe step rejects the stream after the full 2 GB upload."
+  consequence: "User waits for upload and queueing to learn the file was never processable; a generic Failed message leads them to resubmit the same file."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "mp4, mov; max 2 GB each"
+  already_specified: false
+  proposed: "List supported codecs in the dialog; probe the first 10 MB server-side right after upload start; failure_code=unsupported_codec with copy naming the detected codec."
+  shallow: false
+  also_from: [support-agent-21, flat-frame-10]
+- id: partial-failure-23
+  title: "Run reaches Done but output is unplayable in the browser player (HEVC output, moov atom at end, missing blob)"
+  level: L4
+  cell: {failure-point: output-stored-but-unplayable, status-mix: done-but-output-missing, surface: run-detail}
+  object: "Run detail page 'output video player'; status Done"
+  situation: "Encode wrote a file that Firefox cannot decode, or the output blob was removed by a lifecycle rule after Done."
+  consequence: "Badge says Done, player shows a black box or a 404; there is no state to move the run to, since Done -> Failed is not a transition."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"Shows the output video player\" -- inferred: a Done run is expected to have a playable output; an output that cannot be played is implied but not covered"
+  already_specified: false
+  proposed: "Post-encode validation step (decode first and last 2 s, check faststart) before Done; detail page shows 'Output unavailable' copy when the blob fetch returns 404."
+  shallow: false
+  also_from: [support-agent-9, flat-frame-16]
+- id: partial-failure-26
+  title: "Server does not re-check the 2 GB / 1-5 file / mp4-mov limits, so an API caller bypasses the client-side validation"
+  level: L4
+  cell: {actor: api-or-automation-caller, failure-point: client-validation, batch-size: 6+-files-attempted}
+  object: "Submit dialog limits '1 to 5 video files (mp4, mov; max 2 GB each)'"
+  situation: "A script posts 12 files, one of 6 GB, to the run-create endpoint."
+  consequence: "12 runs are created and the 6 GB file fails deep in encode (or exhausts worker disk), instead of being rejected at create with a 4xx."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "\"The user picks 1 to 5 video files (mp4, mov; max 2 GB each)\" -- inferred: limits are stated for the dialog only; whether the server enforces them for other callers is not stated"
+  already_specified: false
+  proposed: "Create endpoint returns 413 for >2 GB, 400 for >5 files or other extensions; acceptance test with a 2,147,483,649-byte file."
+  shallow: false
+- id: partial-failure-27
+  title: "Retrying suggestions regenerates the list and orphans the user's prior Accept / Dismiss decisions"
+  level: L3
+  cell: {suggestion-state: mixed, action: retry-not-in-prd, surface: run-detail}
+  object: "Run detail page suggestions 'each with Accept / Dismiss'"
+  situation: "Run had 50 suggestions, user accepted 12 and dismissed 8; a later retry (or redelivered job) re-runs the suggestion step."
+  consequence: "New suggestion ids replace the old ones; 20 decisions vanish or point to rows that no longer exist."
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "\"a list of suggestions (text, each with Accept / Dismiss)\" -- inferred: suggestions carry Accept / Dismiss state, so regenerating the list implies losing it; retry is not mentioned"
+  already_specified: false
+  proposed: "Suggestion retry allowed only when suggestions_status=failed; once any Accept/Dismiss exists, the list is immutable."
+  shallow: false
+- id: partial-failure-28
+  title: "Suggestion step crashes after persisting 150 of 400 suggestions; run shows Done with a truncated list"
+  level: L4
+  cell: {suggestion-state: 400-plus, failure-point: suggestion-generation-only, status-mix: done-with-zero-suggestions}
+  object: "Run detail page list of suggestions"
+  situation: "Suggestions are written in batches of 50; worker dies after the third batch; a reaper or retry marks the run Done."
+  consequence: "User acts on 150 suggestions believing the list is complete; a retry may append 400 more, giving 550 with duplicates."
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "\"a list of suggestions (text, each with Accept / Dismiss)\" -- inferred: a list implies suggestions persisted as a set, so a partial list is implied possible; completeness is not stated"
+  already_specified: false
+  proposed: "Write suggestions in one transaction or behind a 'committed' flag; list is visible only when suggestions_status=generated."
+  shallow: false
+- id: partial-failure-29
+  title: "Service incident fails 200 runs at once; each row shows Failed with no banner, and users' manual resubmits double the backlog"
+  level: L3
+  cell: {time-and-connection: during-service-incident, status-mix: all-failed, surface: error-toast-or-banner}
+  object: "Runs table status 'Failed'; Submit dialog"
+  situation: "Encode cluster is down for 45 minutes; every run in flight fails with the same error."
+  consequence: "Users see their own runs fail with no sign it is system-wide; resubmitting 2 GB files during the incident adds load and storage."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"Queued -> Processing -> Failed\" -- inferred: many runs can reach Failed at once, but nothing in the PRD addresses system-wide failure"
+  already_specified: false
+  proposed: "Mark incident failures failure_code=service_unavailable, auto-requeue them when the service recovers, and show a page banner while an incident flag is set."
+  shallow: false
+- id: partial-failure-30
+  title: "Deploy kills in-flight workers: runs fail with 'SIGTERM' or stay Processing instead of resuming"
+  level: L3
+  cell: {time-and-connection: during-deploy-version-skew, failure-point: processing-crash, actor: background-processing-service}
+  object: "Status 'Processing' and the detail page error message"
+  situation: "A rolling deploy terminates encode workers with a 30 s grace period while 3-hour videos are mid-encode."
+  consequence: "Every deploy fails or strands the longest runs; detail page shows 'terminated by signal 15'."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"Queued -> Processing -> Failed\" -- inferred: Processing runs can end in Failed for system reasons, but deploys are not mentioned"
+  already_specified: false
+  proposed: "Workers stop taking new jobs on SIGTERM and requeue the current job without counting an attempt; deploy-caused failures are not user-visible."
+  shallow: false
+- id: partial-failure-32
+  title: "Same file twice in one submit, or a file identical to an existing run, is processed again at full cost"
+  level: L3
+  cell: {batch-size: same-file-twice-in-one-submit, media-content: file-identical-to-existing-run, action: submit}
+  object: "Submit dialog 'One run is created per file.'"
+  situation: "User picks the same 1.8 GB file twice, or re-submits a file after an earlier run was Done."
+  consequence: "Two identical encodes and suggestion runs; possibly different suggestion lists for the same video, confusing the user."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "One run is created per file."
+  already_specified: false
+  proposed: "Hash content on upload; warn in the dialog 'This file is already in run X' and allow continue; dedupe duplicates within one submit."
+  shallow: false
+  also_from: [qa-lead-19, support-agent-12, flat-frame-22]
+- id: partial-failure-33
+  title: "No stage progress inside Processing: a 3-hour video sits in Processing for 90 minutes with no sign of which step is running"
+  level: L4
+  cell: {media-content: 3-hour-video, status-mix: all-processing, surface: run-detail}
+  object: "Status 'Processing'; 'Status badge in the header mirrors the table.'"
+  situation: "Encode takes 70 minutes, suggestions 20 minutes."
+  consequence: "User cannot tell a slow run from a stuck one, and cannot tell whether a later failure was in encode or suggestions."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "Statuses: Queued, Processing, Done, Failed."
+  already_specified: false
+  proposed: "Expose current step and percentage: 'Processing - encoding 45%' / 'Processing - generating suggestions'."
+  shallow: false
+- id: partial-failure-34
+  title: "Mid-batch quota exhaustion: runs 1-3 of a 5-file submit are created, runs 4-5 rejected after the dialog has already closed"
+  level: L3
+  cell: {time-and-connection: quota-exhausted-mid-batch, batch-size: exactly-5-files, owner-lifecycle: workspace-plan-downgraded-or-over-quota}
+  object: "Submit dialog: 'One run is created per file. The dialog closes and the new rows appear at the top of the table with status Queued.'"
+  situation: "Workspace has 3 runs of processing quota left; user submits 5 files."
+  consequence: "Only 3 rows appear and the user is not told 2 files were dropped, or 5 rows appear and 2 fail later with a quota message from a non-processing component."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: "Create is all-or-nothing per submit with a quota check before the dialog closes; dialog shows 'Quota allows 3 of 5 files'."
+  shallow: false
+  also_from: [qa-lead-28]
+
+# uncategorised / off-grid
+- id: support-agent-26
+  title: "Support staff impersonating a user who deletes or accepts items: actor, audit and notification read-state are unspecified"
+  level: L3
+  cell: {surface: delete-confirm-dialog, actor: support-staff-impersonating, action: delete, notification-state: mark-notification-read}
+  object: "Actions 'Open, Delete' and 'Accept / Dismiss'; Notifications rule"
+  situation: "A support agent opens a user's Runs table to diagnose a stuck run and clicks the notification, which marks it read for the real user."
+  consequence: "The user later sees the notification as already read, or a run is deleted in their name. The PRD names only Creator and Team admin, so impersonation has no actor label."
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: "State that impersonation sessions are read-only and do not alter notification read-state."
+  shallow: false
+
+# VERIFICATION COUNTS
+# grounded: quote=41 inferred=35 speculative=8 (total 84)
+# already_specified true=1: flat-frame-15
