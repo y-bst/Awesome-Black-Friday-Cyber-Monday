@@ -1,0 +1,216 @@
+- id: accept-impl-1
+  title: "Accept has no defined product: the output video cannot change, so the PRD never says what record, export or side effect an Accepted suggestion creates"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: none-acted-on, action: accept-suggestion}
+  object: "Run detail page: 'a list of suggestions (text, each with Accept / Dismiss)' vs Non-goals: 'Editing the output video.'"
+  situation: "Engineer implementing the Accept button on a Done run with 10 untouched suggestions needs a write target; the only artifact on the page (the output video) is out of scope for edits"
+  consequence: "Each engineer picks a different meaning (boolean flag on the suggestion row, copy text to clipboard, add to an export list); QA has no acceptance criterion and the button may ship as a no-op that only changes its own color"
+  p_typical: 0.18
+  grounded: quote
+  evidence: "Shows the output video player, a list of suggestions (text, each with Accept / Dismiss) ... Non-goals: Editing the output video."
+  proposed: "Spec line: 'Accept sets suggestion.state=accepted, accepted_at, accepted_by; accepted items appear in a downloadable .txt/.csv list; the output video is never modified.'"
+  shallow: false
+- id: accept-impl-2
+  title: "After accepting all suggestions, the player still plays the unchanged output, and no copy tells the creator Accept does not edit the video"
+  level: L4
+  cell: {surface: run-detail, suggestion-state: all-accepted, action: accept-suggestion}
+  object: "Run detail page output video player, positioned on the same page as the Accept buttons"
+  situation: "Creator accepts all 8 suggestions (for example 'Trim the first 4 seconds of silence'), then presses play on the output video player"
+  consequence: "Video still contains the 4 seconds of silence; creator concludes Accept is broken and files a bug or re-submits the same file as a new run, consuming another processing slot"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Non-goals: Editing the output video."
+  proposed: "Acceptance criterion: helper text above the list reads 'Accepting saves the suggestion to your list. It does not change this video.' visible whenever suggestion count is at least 1"
+  shallow: false
+- id: accept-impl-3
+  title: "All suggestions dismissed leaves an empty list that is visually identical to a Done run with 0 suggestions"
+  level: L4
+  cell: {surface: run-detail, suggestion-state: all-dismissed, action: dismiss-suggestion}
+  object: "Run detail page suggestions list; Dismiss action"
+  situation: "Creator dismisses all 6 suggestions and dismissed items are removed from the list (behaviour after Dismiss is unspecified: remove, collapse, or strike through)"
+  consequence: "Panel shows the same blank area as a run whose suggestion step produced nothing; a teammate opening the run later cannot tell 'reviewed and rejected' from 'nothing generated' or 'suggestion step failed'"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "a list of suggestions (text, each with Accept / Dismiss)"
+  proposed: "Spec: dismissed items stay in the list greyed with a 'Dismissed' label; when all are dismissed the header reads '6 suggestions · 6 dismissed'"
+  shallow: false
+- id: accept-impl-4
+  title: "No way to see or restore a dismissed suggestion after page reload"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: all-dismissed, action: dismiss-suggestion}
+  object: "Run detail page suggestions list; Dismiss action (PRD names no Undo, Restore or 'Show dismissed' control)"
+  situation: "Creator dismisses suggestion 3 of 12 by mis-click, navigates to the Runs table and returns to the run 1 minute later"
+  consequence: "If dismissed items are filtered out server-side, suggestion 3 is unrecoverable; the only way back is re-submitting the 2 GB file and waiting for a new run with possibly different suggestions"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "each with Accept / Dismiss"
+  proposed: "Spec: 'Show dismissed (n)' toggle at the bottom of the list; each dismissed item has a Restore action that returns it to pending"
+  shallow: false
+- id: accept-impl-5
+  title: "Accept then Dismiss on the same item within 300 ms sends two requests whose responses can arrive out of order, so UI shows Dismissed while server stores Accepted"
+  level: L4
+  cell: {surface: run-detail, suggestion-state: accept-then-dismiss-same-item, action: dismiss-suggestion}
+  object: "Accept / Dismiss buttons on one suggestion row, Run detail page"
+  situation: "Creator clicks Accept, immediately changes mind and clicks Dismiss; PATCH accepted returns at 420 ms, PATCH dismissed returns at 180 ms; client applies responses in arrival order"
+  consequence: "Row reads Dismissed until reload, then reads Accepted; the accepted export contains an item the creator believes they rejected"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "a list of suggestions (text, each with Accept / Dismiss)"
+  proposed: "Spec: state transitions pending->accepted|dismissed and accepted<->dismissed allowed; each write carries a client sequence number and the server rejects writes with a lower sequence than the stored one"
+  shallow: false
+- id: accept-impl-6
+  title: "Decision scope undefined: Accept is either per-run (one shared state for the workspace) or per-viewer (each user has their own), and the PRD gives admins access to every run"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: acted-on-by-teammate, action: accept-suggestion, actor: team-admin}
+  object: "Users: 'Team admin: sees all runs for the workspace.' + Run detail page Accept / Dismiss"
+  situation: "Team admin opens a creator's Done run with 20 suggestions and accepts 5 of them"
+  consequence: "If per-run, the creator later finds 5 items accepted that they never reviewed; if per-viewer, the creator sees 20 pending and the admin's review is invisible to them. Data model (suggestion_decision keyed by suggestion_id vs by suggestion_id+user_id) cannot be built until this is chosen"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Team admin: sees all runs for the workspace."
+  proposed: "Spec line: 'Decisions are stored per run; any user who can open the run can Accept or Dismiss; the row shows who decided.' or the per-user alternative"
+  shallow: false
+- id: accept-impl-7
+  title: "Stale Run detail page lets a creator Accept an item a teammate dismissed 2 hours earlier, silently overwriting it"
+  level: L4
+  cell: {surface: run-detail, suggestion-state: acted-on-by-teammate, action: accept-suggestion, time-and-connection: page-open-for-hours-stale}
+  object: "Run detail page suggestions list, Accept button on an item whose state changed on the server"
+  situation: "Creator leaves the run open at 10:00; at 11:00 the admin dismisses item 4; at 12:00 the creator clicks Accept on item 4, which still shows as pending in the stale page"
+  consequence: "Last write wins with no notice; the admin's Dismiss disappears without trace, and neither user knows the other acted"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Team admin: sees all runs for the workspace."
+  proposed: "Acceptance: write includes the item's last-seen version; on mismatch the server returns 409 and the row shows 'Dismissed by <name> at 11:00. Accept anyway?'"
+  shallow: false
+- id: accept-impl-8
+  title: "No attribution or timestamp on a decided suggestion: the row never shows who accepted or dismissed it, or when"
+  level: L4
+  cell: {surface: run-detail, suggestion-state: acted-on-by-teammate, action: dismiss-suggestion}
+  object: "Run detail page 'the run's metadata' and the per-suggestion row"
+  situation: "Run has 15 suggestions, 7 decided by the creator and 3 by another creator in the same workspace"
+  consequence: "Creator cannot tell which 3 decisions were not theirs; disputes ('I never dismissed that') cannot be resolved from the UI and there is no audit trail for support"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "a list of suggestions ... and the run's metadata"
+  proposed: "Row shows 'Accepted by Priya · 26 Oct 14:02' on hover or below the text; server stores decided_by and decided_at on every state change"
+  shallow: false
+- id: accept-impl-9
+  title: "Runs table has no column showing review progress, so a run with its single suggestion still pending looks the same as a fully reviewed run"
+  level: L3
+  cell: {surface: runs-table, suggestion-state: "1", action: accept-suggestion}
+  object: "Runs table 'Columns: thumbnail, title, status, submitted at, duration, actions.'"
+  situation: "Creator has 25 Done runs on page 1, each with exactly 1 suggestion; 9 are still pending"
+  consequence: "Only way to find the 9 unreviewed runs is opening all 25 detail pages; status column says Done for all of them because Done describes processing, not review"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Columns: thumbnail, title, status, submitted at, duration, actions."
+  proposed: "Either add a 'Suggestions' column reading '0/1 reviewed' or state explicitly in v0.4 that review progress is not shown in the table"
+  shallow: false
+- id: accept-impl-10
+  title: "Order of 50 suggestions unspecified, and suggestion text carries no timecode linking it to the output video player"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: "50", action: accept-suggestion}
+  object: "Run detail page: 'a list of suggestions (text, each with Accept / Dismiss)' beside 'the output video player'"
+  situation: "A 40-minute run returns 50 suggestions referring to moments throughout the video"
+  consequence: "Generation order may be arbitrary; creator cannot jump to 12:34 to judge suggestion 31 before deciding, so Accept decisions are made without seeing the moment they refer to"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "a list of suggestions (text, each with Accept / Dismiss)"
+  proposed: "Spec: list sorted by video timecode ascending; each item shows its timecode, and clicking it seeks the player to that second"
+  shallow: false
+- id: accept-impl-11
+  title: "Decided items moving or disappearing reflows the list of 50, so a rapid second click lands on the wrong suggestion"
+  level: L4
+  cell: {surface: run-detail, suggestion-state: "50", action: dismiss-suggestion}
+  object: "Dismiss button position in the Run detail suggestions list"
+  situation: "Creator dismisses item 12; it is removed or moved to the bottom, item 13 slides up under the cursor within 1 frame, and the creator's next click at the same spot dismisses item 13"
+  consequence: "Unintended Dismiss on an item the creator never read; combined with no restore control (see accept-impl-4) the item is lost"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "each with Accept / Dismiss"
+  proposed: "Acceptance: deciding an item never changes the vertical position of other items until the page reloads (item collapses in place to a 1-line 'Dismissed · Restore' row)"
+  shallow: false
+- id: accept-impl-12
+  title: "Keyboard focus after Accept or Dismiss is unspecified; if the item is removed, focus falls to the document body and the user re-tabs from the top of a 50-item list"
+  level: L4
+  cell: {surface: run-detail, suggestion-state: "50", action: accept-suggestion}
+  object: "Accept / Dismiss buttons, Run detail page"
+  situation: "Keyboard or screen-reader user reaches item 30, presses Enter on Accept"
+  consequence: "Focus is lost; reaching item 31 again takes about 60 Tab presses (2 buttons per item) plus the player controls; screen reader announces nothing about the state change"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "each with Accept / Dismiss"
+  proposed: "Acceptance: after a decision, focus moves to the next pending item's Accept button and an aria-live region announces 'Suggestion 30 accepted'"
+  shallow: false
+- id: accept-impl-13
+  title: "No limit, paging or virtualization for the suggestions list: 400 items render 800 buttons in one page while the Runs table caps at 25 rows"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: 400-plus, action: accept-suggestion}
+  object: "Runs table 'Page size is 25.' vs Run detail suggestions list (no size or paging stated)"
+  situation: "A 3-hour video returns 412 suggestions"
+  consequence: "Detail page loads all 412 in one response and DOM; scroll position resets on any re-render after Accept; the player scrolls out of view while the creator is deciding item 300"
+  p_typical: 0.11
+  grounded: quote
+  evidence: "Rows are sorted by submitted-at descending. Page size is 25."
+  proposed: "Spec: suggestions load 50 at a time with 'Load more', header shows '412 suggestions · 0 reviewed', player is sticky while the list scrolls"
+  shallow: false
+- id: accept-impl-14
+  title: "No bulk Accept all / Dismiss all, and if added, its scope (loaded 50 vs all 412) and partial-failure behaviour are undefined"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: 400-plus, action: dismiss-suggestion}
+  object: "Run detail page per-item 'Accept / Dismiss' (the only decision controls in the PRD)"
+  situation: "Creator wants to reject all 412 suggestions; without bulk that is 412 clicks. With a bulk button, the request fails at item 237 (timeout after 30 s)"
+  consequence: "Without bulk, review is abandoned; with bulk, 236 items are dismissed and 176 pending with no message saying which, and the creator clicks again, re-sending 412 writes"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "a list of suggestions (text, each with Accept / Dismiss)"
+  proposed: "Spec: 'Dismiss all pending' applies server-side to every pending item in the run in one transaction (all or none) and reports 'Dismissed 412'"
+  shallow: false
+- id: accept-impl-15
+  title: "Bulk Dismiss all on 400 items has no undo window, so one mis-click discards the whole review"
+  level: L4
+  cell: {surface: run-detail, suggestion-state: 400-plus, action: dismiss-suggestion}
+  object: "Run detail suggestions list; Dismiss action"
+  situation: "Creator who had accepted 40 of 412 items hits a bulk 'Dismiss all' intending 'Dismiss all pending'"
+  consequence: "40 accepted decisions are overwritten to dismissed in one action with no record of their previous state"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "each with Accept / Dismiss"
+  proposed: "Bulk actions affect pending items only; a toast with Undo stays for 10 s and restores the exact previous states"
+  shallow: false
+- id: accept-impl-16
+  title: "Failed run with partially generated suggestions: PRD does not say whether the list, and its Accept / Dismiss buttons, appear beside the error message"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: none-acted-on, status-mix: all-failed, action: accept-suggestion}
+  object: "'A Failed run shows an error message from the processing service in the detail page.' + suggestions list"
+  situation: "Processing produced 30 suggestions, then crashed during output encoding; run status is Failed and there is no output video"
+  consequence: "Creator can either accept suggestions for a video that does not exist, or lose 30 usable suggestions because the list is hidden on Failed; both outcomes are unspecified"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  proposed: "Spec: on Failed runs the suggestions list is hidden (or shown read-only with Accept / Dismiss disabled and tooltip 'Run failed')"
+  shallow: false
+- id: accept-impl-17
+  title: "Accept on a run a teammate deleted while the detail page was open returns 404 with no specified copy or redirect"
+  level: L4
+  cell: {surface: run-detail, suggestion-state: acted-on-by-teammate, action: accept-suggestion, status-mix: deleted-while-processing}
+  object: "Runs table 'Actions: Open, Delete.' and Run detail Accept button"
+  situation: "Creator has a Done run open with 12 pending suggestions; team admin deletes the run from the Runs table; creator clicks Accept on item 1"
+  consequence: "Request fails with 404; UI either shows a generic error toast or optimistically marks the item Accepted on a run that no longer exists, then every further click fails"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Actions: Open, Delete."
+  proposed: "Acceptance: on 404 the page replaces the list with 'This run was deleted by <name>' and a link back to the Runs table; all Accept / Dismiss buttons become disabled"
+  shallow: false
+- id: accept-impl-18
+  title: "Dismiss captures no reason, so 400 dismissals yield no signal on why suggestions were rejected"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: all-dismissed, action: dismiss-suggestion}
+  object: "Dismiss action on the Run detail suggestions list"
+  situation: "Across a workspace, creators dismiss 95% of suggestions over one month"
+  consequence: "Team building the suggestion model sees only a dismiss rate, with no breakdown (wrong timecode, irrelevant, already done, wrong language); the PRD defines no metric for Accept or Dismiss at all"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "each with Accept / Dismiss"
+  proposed: "Either add an optional 1-click reason on Dismiss (4 fixed options) and log accept_rate per run, or state in v0.4 that decision analytics are out of scope"
+  shallow: false
