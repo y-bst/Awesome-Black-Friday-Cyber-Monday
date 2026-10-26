@@ -1,0 +1,441 @@
+- id: support-agent-1
+  title: "Run stays Processing for over 1 hour with no timeout, no stuck indicator, no user action"
+  level: L4
+  cell: {surface: runs-table, status-mix: stuck-processing-over-1h, failure-point: processing-crash, actor: creator-owner}
+  object: "Runs table status column; 'Queued -> Processing -> Done' / 'Queued -> Processing -> Failed' transitions"
+  situation: "A worker dies mid-run. The row has read 'Processing' for 61 minutes and the only transitions the PRD lists end in Done or Failed."
+  consequence: "The user opens a ticket saying 'stuck in Processing for an hour'. Support cannot tell a slow 3-hour video from a dead worker, and the user's only action is Delete."
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Queued -> Processing -> Done / Queued -> Processing -> Failed"
+  proposed: "State a maximum Processing duration (for example 60 minutes) after which the run moves to Failed with a timeout message."
+  shallow: false
+
+- id: support-agent-2
+  title: "Run stays Queued with no pick-up deadline and no cancel action"
+  level: L3
+  cell: {surface: runs-table, status-mix: stuck-queued-over-1h, failure-point: queue-timeout-never-picked-up, action: cancel-queued-run}
+  object: "Runs table 'Queued' status; Actions column limited to 'Open, Delete'"
+  situation: "5 files submitted, the queue is backed up, and 2 rows have read Queued for 90 minutes."
+  consequence: "Users cannot tell waiting from lost. Deleting a Queued row may or may not remove it from the queue, and the PRD does not say."
+  p_typical: 0.1
+  grounded: inferred
+  evidence: "Actions: Open, Delete."
+  proposed: "Define the behaviour of Delete on a Queued row and show a queue position or an 'expected wait' line."
+  shallow: false
+
+- id: support-agent-3
+  title: "Failed detail page prints the processing service's raw error with no length or format rule"
+  level: L4
+  cell: {surface: run-detail, status-mix: all-failed, failure-point: processing-crash, actor: creator-owner}
+  object: "'A Failed run shows an error message from the processing service in the detail page.'"
+  situation: "The service returns a 40-line stack trace, a bare 'Error 500', or an empty string."
+  consequence: "The user screenshots unreadable text into a ticket. With an empty string the Failed badge has no explanation at all."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  proposed: "Add a fallback line for an empty message, a character cap (for example 300) with 'show details', and a plain-language category (for example 'unsupported codec')."
+  shallow: false
+
+- id: support-agent-4
+  title: "Failed reason is visible only on the detail page, so the Runs table row shows a bare 'Failed'"
+  level: L3
+  cell: {surface: runs-table, status-mix: some-done-some-failed, batch-size: 2-5-files-one-submit, action: open}
+  object: "Runs table status column and 'Actions: Open, Delete'"
+  situation: "A user submits 5 files and 2 show Failed. The error message exists only after clicking Open."
+  consequence: "The user cannot tell whether the 2 failures share a cause (for example both HEVC .mov) without opening each one, and tickets arrive as 'two of my videos failed'."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "A Failed run shows an error message from the processing service in the detail page."
+  proposed: "Specify a short failure reason as a tooltip or subtitle on the Failed status cell."
+  shallow: false
+
+- id: support-agent-5
+  title: "No rule on who may delete a run, and no signal to the owner when a teammate deletes theirs"
+  level: L3
+  cell: {surface: runs-table, actor: team-admin, action: delete, owner-lifecycle: owner-active, status-mix: deleted-while-processing}
+  object: "Users section ('Team admin: sees all runs for the workspace') and 'Actions: Open, Delete'"
+  situation: "An admin or another creator in the same workspace deletes a creator's Processing run. The creator's row disappears on the next refresh."
+  consequence: "Ticket: 'my video is gone'. The PRD has no word for deleted-by-someone-else: no who-deleted-it record, no notice to the owner, no restore."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Team admin: sees all runs for the workspace."
+  proposed: "State delete permissions per role and add a 'deleted by <name> on <date>' entry visible to the owner for a stated retention period."
+  shallow: false
+
+- id: support-agent-6
+  title: "Clicking the Done notification after the run was deleted lands on an unspecified screen"
+  level: L4
+  cell: {surface: in-app-notification, notification-state: clicked-after-run-deleted, action: notification-click, surface2: expired-or-deleted-run-url}
+  object: "'When a run reaches Done, the user receives an in-app notification.' and the Run detail page"
+  situation: "A notification sits unread for 3 days. The run is deleted on day 2. The user clicks the notification on day 3."
+  consequence: "The notification leads nowhere: a blank detail page, a raw 404, or a spinner. The PRD gives no copy for a deleted or missing run, and the notification itself is not removed on delete."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  proposed: "On delete, remove or grey the notification; on click of a missing run show 'This run was deleted' and a link back to the Runs table."
+  shallow: false
+
+- id: support-agent-7
+  title: "Notification fires only on Done, so a Failed run produces no signal at all"
+  level: L3
+  cell: {surface: in-app-notification, status-mix: all-failed, notification-state: app-closed-when-fired, actor: creator-owner}
+  object: "Notifications section: 'When a run reaches Done...'"
+  situation: "A user submits 5 files and closes the tab. 3 reach Done (3 notifications) and 2 reach Failed (0 notifications)."
+  consequence: "The user waits for 5 notifications and files a 'stuck' ticket about the 2 that failed minutes ago."
+  p_typical: 0.15
+  grounded: quote
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  proposed: "Add a Failed notification, or state in the PRD that Failed is deliberately silent."
+  shallow: false
+
+- id: support-agent-8
+  title: "Delete on a Processing row: the backend job, the later Done event and its notification are unspecified"
+  level: L3
+  cell: {surface: delete-confirm-dialog, status-mix: deleted-while-processing, action: confirm-delete-dialog, notification-state: single}
+  object: "Runs table Delete action on a row with status Processing; Notifications rule"
+  situation: "The user deletes a Processing run. The worker finishes 4 minutes later and emits Done."
+  consequence: "The user gets a Done notification for a run that no longer exists (see the dead-link case), or the job is cancelled and the credit is lost. Support cannot say which."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "none"
+  proposed: "Specify that Delete cancels the job and suppresses the Done notification."
+  shallow: false
+
+- id: support-agent-9
+  title: "Status Done but the output video is missing or unplayable, with no state for it"
+  level: L4
+  cell: {surface: run-detail, status-mix: done-but-output-missing, failure-point: output-stored-but-unplayable, actor: creator-owner}
+  object: "Run detail page 'output video player'; status badge 'mirrors the table'"
+  situation: "The run is Done and the Done notification was sent, but the storage object is absent or the codec will not play in the browser."
+  consequence: "The detail page shows a black or broken player under a green Done badge. The user reports 'my video is gone' and support cannot distinguish a deleted file from an unplayable one."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Shows the output video player"
+  proposed: "Define player error copy (for example 'Output unavailable') and whether a Done run with no playable output counts as Failed."
+  shallow: false
+
+- id: support-agent-10
+  title: "Done run with 0 suggestions shows an unspecified empty suggestions list"
+  level: L3
+  cell: {surface: run-detail, status-mix: done-with-zero-suggestions, suggestion-state: 0-suggestions}
+  object: "Run detail page 'a list of suggestions (text, each with Accept / Dismiss)'"
+  situation: "A 3-second clip finishes Done and the suggestion step returns 0 items."
+  consequence: "The suggestions area is blank. The user cannot tell 'nothing to suggest' from 'suggestions failed to load' and opens a ticket."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "a list of suggestions (text, each with Accept / Dismiss)"
+  proposed: "Specify empty copy such as 'No suggestions for this video' and distinguish it from a suggestion-step failure."
+  shallow: false
+
+- id: support-agent-11
+  title: "5 files submitted in the same second have no tiebreak under 'sorted by submitted-at descending'"
+  level: L4
+  cell: {surface: runs-table, batch-size: 5-files-same-submitted-at-second, action: refresh-or-back}
+  object: "'Rows are sorted by submitted-at descending' and the 'submitted at' column"
+  situation: "5 runs from one Submit share the same submitted-at to the second."
+  consequence: "Row order among the 5 can differ between refreshes and does not match the file picker order, so the user reports 'my videos shuffled'. Support cannot reproduce it."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Rows are sorted by submitted-at descending."
+  proposed: "Add a secondary sort key (run id or file index) and state it."
+  shallow: false
+
+- id: support-agent-12
+  title: "Same file picked twice in one Submit creates two identical rows with no duplicate rule"
+  level: L3
+  cell: {surface: submit-dialog, batch-size: same-file-twice-in-one-submit, media-content: file-identical-to-existing-run}
+  object: "Submit dialog: 'One run is created per file'; Runs table 'title' column"
+  situation: "The user selects clip.mp4 twice (or re-submits a file that already has a Done run)."
+  consequence: "2 rows with the same title and thumbnail. Support cannot tell which is the older one, and each counts against the 5-file limit and any quota."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "One run is created per file."
+  proposed: "State whether duplicates are allowed, warned or rejected, and how identical titles are told apart in the table."
+  shallow: false
+
+- id: support-agent-13
+  title: "Source of the 'title' column is unspecified, so 255-char, emoji and extension-less filenames have no display rule"
+  level: L4
+  cell: {surface: runs-table, media-content: filename-255-chars-or-emoji-or-no-extension, action: rename-title}
+  object: "Runs table 'title' column; Run detail 'metadata'"
+  situation: "The file is named with 255 characters, or with emoji, or has no extension, or the title is blank."
+  consequence: "The title cell overflows the row or shows empty, and the user cannot rename it because no rename action exists. Tickets say 'I can't find my video'."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Columns: thumbnail, title, status, submitted at, duration, actions."
+  proposed: "State that title defaults to the filename, truncates at a stated width with the full name on hover, and falls back to 'Untitled' when empty."
+  shallow: false
+
+- id: support-agent-14
+  title: "Near-white first frame makes the white play icon invisible on the thumbnail"
+  level: L4
+  cell: {surface: runs-table, media-content: first-frame-flat-white-or-near-white, action: open}
+  object: "'first frame of the uploaded video with a white play icon centred on it. Clicking the thumbnail opens the run.'"
+  situation: "The video's first frame is flat white, or a white logo slide, and the white icon is drawn over it."
+  consequence: "The thumbnail looks like an empty box and the user does not know it is clickable. A black first frame and a first frame that already contains a play icon give a lost or doubled affordance."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "the first frame of the uploaded video with a white play icon centred on it."
+  proposed: "Specify an icon scrim or outline giving 3:1 contrast on any frame, and a fallback thumbnail when the frame is uniform."
+  shallow: false
+
+- id: support-agent-15
+  title: "Duration column has no value for Queued, Processing, Failed or 0-second runs, and does not say input or output length"
+  level: L3
+  cell: {surface: runs-table, status-mix: all-processing, media-content: no-video-track-or-0-seconds}
+  object: "Runs table 'duration' column"
+  situation: "A row is Queued or Failed, or the uploaded file has no video track and reports 0:00."
+  consequence: "Cells show blank, '0:00' or 'NaN'. After processing, the user sees a duration that differs from their file and files a 'video got shortened' ticket."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Columns: thumbnail, title, status, submitted at, duration, actions."
+  proposed: "State the duration source (input or output), the placeholder before it is known (for example an em dash), and the 0-second rule."
+  shallow: false
+
+- id: support-agent-16
+  title: "Submitted-at shows no timezone rule, so travel or a timezone change reorders what the user remembers"
+  level: L4
+  cell: {surface: runs-table, time-and-connection: timezone-change-or-travel, actor: creator-owner}
+  object: "Runs table 'submitted at' column"
+  situation: "A user submits at 23:30 in London, flies to New York, and reads the table at 08:00 local."
+  consequence: "The row reads a different clock time or date than when the user remembers submitting, and the admin in another timezone sees a third value. Ticket: 'wrong date on my run'."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "none"
+  proposed: "Specify display in the viewer's local timezone with the zone abbreviation on hover, stored in UTC."
+  shallow: false
+
+- id: support-agent-17
+  title: "Failure on page 2 of 26+ rows is invisible and there is no status filter"
+  level: L4
+  cell: {surface: pagination-control, status-mix: failures-only-on-page-2, batch-size: table-26-plus-rows-multiple-pages, action: change-sort-or-filter}
+  object: "'Page size is 25.' and 'Rows are sorted by submitted-at descending.'"
+  situation: "The user has 30 runs and the single Failed run is row 27, on page 2. Page 1 is all Done."
+  consequence: "The user does not see the failure and reports the missing output days later. Deleting one row on page 1 also pulls row 26 onto page 1, so 'where did my run go' tickets follow."
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Page size is 25."
+  proposed: "Specify a status filter or a Failed count in the page header, and whether pagination is by page number or cursor."
+  shallow: false
+
+- id: support-agent-18
+  title: "Row reads Queued while a 2 GB upload is still transferring, so a dropped connection leaves a permanent Queued row"
+  level: L4
+  cell: {surface: submit-dialog, status-mix: uploading-pre-queued, failure-point: upload-transfer, time-and-connection: offline-mid-upload, batch-size: exactly-5-files}
+  object: "'The dialog closes and the new rows appear at the top of the table with status Queued.'"
+  situation: "5 files of about 2 GB each are submitted. The dialog closes immediately, the rows say Queued, and the laptop loses wifi at 40% of file 3."
+  consequence: "No row shows upload progress or an Uploading state, and the PRD has no word for upload failure. Users report 'stuck in Queued' when the file never arrived."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "The dialog closes and the new rows appear at the top of the table with status Queued."
+  proposed: "Add an Uploading status with percentage, a Failed (upload) outcome, and resume or retry rules."
+  shallow: false
+
+- id: support-agent-19
+  title: "Session expiry at 90% of a large upload gives no message and no saved state"
+  level: L3
+  cell: {surface: error-toast-or-banner, time-and-connection: session-expired-mid-upload, failure-point: upload-transfer, media-content: exactly-2gb-or-over}
+  object: "Submit dialog 'max 2 GB each'"
+  situation: "A 1.9 GB upload takes 25 minutes and the login session expires at minute 22."
+  consequence: "The upload is rejected with a 401, the row is missing or stuck, and the user loses 22 minutes. Whether a banner appears, the file is kept, or the user is redirected to login is not stated."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "max 2 GB each"
+  proposed: "State the expiry behaviour for uploads in flight (token refresh, or a banner with 'Sign in and resubmit')."
+  shallow: false
+
+- id: support-agent-20
+  title: "'2 GB' is not defined as 2,000,000,000 or 2,147,483,648 bytes, so a 2.05 GB file is accepted or rejected unpredictably"
+  level: L4
+  cell: {surface: submit-dialog, media-content: exactly-2gb-or-over, failure-point: client-validation}
+  object: "Submit dialog 'max 2 GB each'"
+  situation: "The file is 2,100,000,000 bytes: over 2 GB decimal, under 2 GiB. The OS file manager shows '1.96 GB' while the validator says too large."
+  consequence: "The user sees an error on a file their OS reports as under the limit. The error text for oversize is also not specified."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "max 2 GB each"
+  proposed: "Define the byte threshold and the exact rejection message with the file's actual size."
+  shallow: false
+
+- id: support-agent-21
+  title: "A .mp4 or .mov passes extension validation but fails in processing because of codec or corruption"
+  level: L3
+  cell: {surface: submit-dialog, media-content: unsupported-codec-in-valid-container, failure-point: processing-crash, status-mix: failed-after-retry}
+  object: "Submit dialog 'mp4, mov' file types and Failed error message"
+  situation: "A ProRes .mov, a 10-bit HEVC .mp4, or a renamed PDF named .mp4 is submitted."
+  consequence: "Validation accepts it, the row goes Queued, Processing, then Failed with the service's message. The user is told the extension is supported yet the file failed. The PRD defines validation only by extension."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "The user picks 1 to 5 video files (mp4, mov; max 2 GB each)"
+  proposed: "State whether the client checks the codec or container, and the Failed copy for unsupported codec versus corrupt file."
+  shallow: false
+
+- id: support-agent-22
+  title: "Submit with 6 files or 1 invalid file among 5: all-or-nothing versus partial creation is not stated"
+  level: L4
+  cell: {surface: submit-dialog, batch-size: 5-files-with-1-invalid, failure-point: client-validation}
+  object: "'The user picks 1 to 5 video files' and 'One run is created per file.'"
+  situation: "The user picks 5 files; one is a .avi. Separately, the user drags in 6 files."
+  consequence: "Either 4 runs are created and the 5th vanishes silently, or the whole Submit is blocked. The user files a ticket for the 'missing' fifth video."
+  p_typical: 0.1
+  grounded: quote
+  evidence: "The user picks 1 to 5 video files (mp4, mov; max 2 GB each) and clicks Submit."
+  proposed: "Specify the per-file inline error, whether valid files are submitted, and the Submit disabled state at 0 and over 5."
+  shallow: false
+
+- id: support-agent-23
+  title: "Double-click on Submit creates two sets of runs"
+  level: L4
+  cell: {surface: submit-dialog, action: double-click-submit, batch-size: 2-5-files-one-submit}
+  object: "Submit dialog 'clicks Submit' and 'The dialog closes'"
+  situation: "On a slow connection the dialog stays open for 2 seconds after the first click, and the user clicks Submit again with 3 files selected."
+  consequence: "6 rows appear for 3 files, the user is charged double, and deleting the duplicates takes 3 delete actions with no bulk delete."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "The dialog closes and the new rows appear at the top of the table"
+  proposed: "Disable Submit on first click until the response returns."
+  shallow: false
+
+- id: support-agent-24
+  title: "Backend returns a status string outside the four listed, and the badge has no fallback"
+  level: L4
+  cell: {surface: runs-table, status-mix: unknown-status-string-from-backend, time-and-connection: during-deploy-version-skew}
+  object: "'Statuses: Queued, Processing, Done, Failed.' and the run detail 'Status badge in the header mirrors the table'"
+  situation: "A deploy introduces 'Cancelled' or 'Retrying' on the backend while the page build still knows 4 statuses."
+  consequence: "The badge shows a raw lowercase string, a blank pill, or an uncoloured badge, and the table and detail badge may disagree."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Statuses: Queued, Processing, Done, Failed."
+  proposed: "Specify a fallback badge label (for example 'Unknown') and reload prompt on version mismatch."
+  shallow: false
+
+- id: support-agent-25
+  title: "Run detail 'metadata' lists no run ID, so support cannot locate a run from a ticket"
+  level: L3
+  cell: {surface: run-detail, actor: support-staff-impersonating, action: copy-run-link}
+  object: "Run detail page 'the run's metadata'"
+  situation: "A user writes 'my video from yesterday is stuck' and attaches nothing but a screenshot."
+  consequence: "With titles that can repeat and no visible run ID or copy-link control, support must scan the workspace by timestamp. The PRD does not list which metadata fields appear."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "the run's metadata"
+  proposed: "List the metadata fields (run ID, original filename, size, submitted at, finished at) and add a copy-ID or copy-link action."
+  shallow: false
+
+- id: support-agent-26
+  title: "Support staff impersonating a user who deletes or accepts items: actor, audit and notification read-state are unspecified"
+  level: L3
+  cell: {surface: delete-confirm-dialog, actor: support-staff-impersonating, action: delete, notification-state: mark-notification-read}
+  object: "Actions 'Open, Delete' and 'Accept / Dismiss'; Notifications rule"
+  situation: "A support agent opens a user's Runs table to diagnose a stuck run and clicks the notification, which marks it read for the real user."
+  consequence: "The user later sees the notification as already read, or a run is deleted in their name. The PRD names only Creator and Team admin, so impersonation has no actor label."
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "State that impersonation sessions are read-only and do not alter notification read-state."
+  shallow: false
+
+- id: support-agent-27
+  title: "Browser Back after delete on the detail page re-shows the deleted run from cache"
+  level: L4
+  cell: {surface: expired-or-deleted-run-url, time-and-connection: browser-back-after-delete, action: refresh-or-back}
+  object: "Run detail page and Delete action"
+  situation: "The user opens a run, deletes it, lands on the Runs table, then presses Back."
+  consequence: "The cached detail page shows the player and Accept / Dismiss for a deleted run, and actions then fail with an unspecified error."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "none"
+  proposed: "Specify that a detail URL for a deleted run shows 'This run was deleted' and that cached pages revalidate on Back."
+  shallow: false
+
+- id: support-agent-28
+  title: "Detail page left open for hours still shows Processing after the Done notification arrived"
+  level: L4
+  cell: {surface: run-detail, time-and-connection: page-open-for-hours-stale, notification-state: arrives-while-viewing-that-run}
+  object: "'Status badge in the header mirrors the table.' and the Done notification"
+  situation: "The user watches a run at Processing; the run reaches Done and a notification appears while the detail page is open for 3 hours."
+  consequence: "The notification says Done while the header badge and empty player still say Processing. The PRD gives no refresh interval or live update rule."
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Status badge in the header mirrors the table."
+  proposed: "State a poll or push update interval (for example 10 seconds) for the badge and player, and mark the notification read when its run is already open."
+  shallow: false
+
+- id: support-agent-29
+  title: "5 runs finishing within 1 minute produce 5 separate notifications with no grouping or cap"
+  level: L4
+  cell: {surface: in-app-notification, notification-state: burst-of-5-in-one-minute, batch-size: exactly-5-files, action: mark-notification-read}
+  object: "'When a run reaches Done, the user receives an in-app notification.'"
+  situation: "A 5-file Submit finishes within 60 seconds."
+  consequence: "5 stacked notifications, each linking to a run; a user with 20 unread after a weekend has no 'mark all read'. Count, grouping and expiry are not stated."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "When a run reaches Done, the user receives an in-app notification."
+  proposed: "Specify grouping ('5 runs finished') above a threshold of 3 per minute, and whether a mark-all-read action exists."
+  shallow: false
+
+- id: support-agent-30
+  title: "Accept or Dismiss has no visible result state, no undo, and no rule when a teammate already acted"
+  level: L3
+  cell: {surface: run-detail, suggestion-state: accept-then-dismiss-same-item, action: accept-suggestion, actor: other-creator-same-workspace}
+  object: "Run detail 'suggestions (text, each with Accept / Dismiss)'"
+  situation: "The user clicks Accept, then Dismiss, on the same suggestion, or a teammate in the same workspace has already clicked Dismiss on it."
+  consequence: "The PRD does not say what Accept does, whether the row changes, or whether the last click wins. The user reports 'my accepted suggestion came back'."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "each with Accept / Dismiss"
+  proposed: "Define a per-suggestion state (Pending, Accepted, Dismissed), that it persists on reload, and whether the state is per user or per workspace."
+  shallow: false
+
+- id: support-agent-31
+  title: "Creator removed from the workspace: their runs, the admin's view and re-join behaviour are unspecified"
+  level: L3
+  cell: {surface: runs-table, actor: owner-removed-from-workspace, owner-lifecycle: owner-removed-from-workspace, notification-state: app-closed-when-fired}
+  object: "Users section: 'Team admin: sees all runs for the workspace.'"
+  situation: "A creator with 40 runs is removed from the workspace on Monday. Run 41 reaches Done on Tuesday."
+  consequence: "Unclear whether the admin still sees the 40 runs, whether the removed user can open a stale link, and whether the Done notification is sent. The creator reports 'my videos vanished' and the admin sees orphan rows."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "Team admin: sees all runs for the workspace."
+  proposed: "State ownership transfer or retention for removed users and cancel notifications to non-members."
+  shallow: false
+
+- id: support-agent-32
+  title: "Runs table with 0 rows on first use has no empty-state copy or Submit prompt"
+  level: L3
+  cell: {surface: empty-state, time-and-connection: first-ever-use, batch-size: 0-files}
+  object: "Runs table (no empty state listed) and Submit dialog entry point"
+  situation: "A new user opens the Runs page with 0 runs, and later deletes their last run."
+  consequence: "A header row over nothing, with no guidance on how to submit. The same blank table shows during a load failure, so users cannot tell no runs from a failed load."
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "Columns: thumbnail, title, status, submitted at, duration, actions."
+  proposed: "Specify empty-state copy with a Submit call to action, distinct from the load error banner."
+  shallow: false
+
+- id: support-agent-33
+  title: "Delete has no stated confirmation, undo or retention, so 'deleted by mistake' tickets have no recovery path"
+  level: L3
+  cell: {surface: delete-confirm-dialog, action: undo-delete, status-mix: all-done}
+  object: "Runs table 'Actions: Open, Delete'"
+  situation: "A user clicks Delete on a Done run next to Open and 30 seconds later wants it back."
+  consequence: "The PRD does not say if a confirm dialog appears, if the output video is permanently erased or soft-deleted, or for how long. Support cannot answer 'can you restore it'."
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  proposed: "State a confirm dialog naming the run title, and a retention window (for example 30 days) or permanent deletion."
+  shallow: false
+
+- id: support-agent-34
+  title: "A Failed run offers only Open and Delete, and an automatic retry would show as Processing indefinitely"
+  level: L3
+  cell: {surface: runs-table, action: retry-not-in-prd, status-mix: failed-after-retry, failure-point: processing-crash}
+  object: "Statuses 'Queued -> Processing -> Failed' and 'Actions: Open, Delete'"
+  situation: "A run fails once due to a transient worker error. The user wants to try again with the same file."
+  consequence: "The only path is Delete and re-upload of up to 2 GB. If the backend retries silently, the row keeps showing Processing and the user reports it stuck."
+  p_typical: 0.15
+  grounded: quote
+  evidence: "Actions: Open, Delete."
+  proposed: "State whether a Retry action exists, and whether automatic retries are shown in the status."
+  shallow: false
