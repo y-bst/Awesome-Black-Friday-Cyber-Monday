@@ -1,0 +1,566 @@
+- id: ds-1
+  title: "Per-session video-feature table (tutorial-card dwell s, taps on non-interactive art, time-to-first-meaningful-action s, screen at app kill) written to Snowflake/BigQuery keyed on user_id + session_id, for the existing churn model"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: ui-state-and-screen-flow, analysis-type: churn-prediction-features, lifecycle-moment: ftue-first-session, delivery-form: warehouse-table-export, companion-data: telemetry-events, constraint-to-overcome: joining-video-to-events}
+  object: "methods-churn-funnel.md section 2 INFERRED list: 'dwell/reading time on a tutorial card before dismiss; taps on non-interactive art; ... time-to-first-meaningful-action; the exact screen state at the moment of app kill'"
+  situation: "Studio data scientist retrains a D7 churn XGBoost on log features (sessions, progression, spend) and wants new feature content, not a new model class"
+  consequence: "Model gets 6-10 columns that did not exist in any event stream; if they add under 0.01 AUC the purchase is cancelled at renewal"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 3 INFERRED: 'the predictive ceiling is set by feature content, not model class. Video is an untested source of new features'"
+  proposed: "Nightly table video_session_features(user_id, session_id, feature_name, value, computed_at, model_version)"
+  shallow: false
+  mechanism: "Per-title UI-state classifier labels each sampled frame; aggregator computes dwell, gap and count features per session; loader writes rows to the customer warehouse schema"
+  example: "Match-3 title: players who dwell under 1.5 s on the booster tutorial card churn by D7 at 1.4x the rate of those who read it; the feature enters the model as tut_card_dwell_s"
+  cost: M
+  depends_on: "per-title UI-state classifier (ds-10); consented SDK capture of the first session"
+  buyer: "Data scientist / head of analytics at a mid-size mobile F2P studio"
+  input: "Consented SDK screen video of first session at 1-5 fps + touch overlay + telemetry events with user_id"
+  why_existing_tools_cannot: "Session-replay SDKs record but do not interpret game state (market.md section 2 'Does NOT do'); no paper predicts churn from human gameplay frames (methods-churn-funnel.md section 3)"
+  willingness_to_pay: "3 - analytics teams already pay UXCam median ~$21k/yr for replay (market.md section 2); in-house builders (NCSOFT, Rovio) show big studios may build instead (methods-churn-funnel.md WTP)"
+
+- id: ds-2
+  title: "App-kill moment classifier: last 10 s before backgrounding labelled fail-screen / store-screen / loading / notification-overlay / mid-play, turning binary churn into 'quit on fail' vs 'quit on interruption'"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: churn-prediction-features, capture-trigger-and-sampling: always-on-ring-buffer, constraint-to-overcome: ground-truth-labels, delivery-form: warehouse-table-export}
+  object: "methods-churn-funnel.md section 2 INFERRED: 'the exact screen state at the moment of app kill (rage quit vs. interruption)'; section 3 Rovio r = -0.586 for 'churn without completing the level'"
+  situation: "Last session of a user who never returns; telemetry only shows session_end with no reason"
+  consequence: "Churn label noise drops: players who left on an incoming call or notification are no longer trained as 'game-caused churn'; level-difficulty fixes target the 'quit on fail' share only"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 3: real pass rate vs churn r = -0.144, vs churn without completing r = -0.586"
+  proposed: "Column last_screen_class with 5 values and confidence, one row per session_end"
+  shallow: false
+  mechanism: "30 s on-device ring buffer flushed only on app background; classifier tags the final frames; label joined to session_end event"
+  example: "Puzzle game level 27: 41% of final sessions end on the fail screen vs 9% on a notification overlay; designer lowers level-27 move count instead of reworking the store"
+  cost: S
+  depends_on: "ring-buffer capture in the SDK (Sentry onErrorSampleRate pattern); UI-state classifier"
+  buyer: "Churn-model owner (data scientist) at a mobile casual studio"
+  input: "Last 30 s ring-buffer clip at app background + session_end and progression events"
+  why_existing_tools_cannot: "GameAnalytics 'Total Churn' is historical drop-off without reason (methods-churn-funnel.md section 1); Sentry buffers only on errors, not on app kill (methods-churn-funnel.md section 6)"
+  willingness_to_pay: "3 - Firebase churn prediction was sold to games but caught 275 of 145k churns (methods-churn-funnel.md section 1), so label quality is a felt pain"
+
+- id: ds-3
+  title: "Instrumentation-gap audit: video-derived screen sequence vs event stream per session, listing screens seen in video with no event and events fired with no matching screen, per funnel step"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: recruited-playtesters, signal-extracted: ui-state-and-screen-flow, analysis-type: funnel-drop-off-why, lifecycle-moment: soft-launch, delivery-form: per-cohort-report, companion-data: telemetry-events, value-lever-b2b: create-data-that-did-not-exist}
+  object: "methods-churn-funnel.md section 1 INFERRED: 'Funnel quality is bounded by instrumentation: a step that was never instrumented ... does not exist in the data'; Unity funnels cannot be edited without invalidating data"
+  situation: "Soft-launch build has 14 tutorial events; video of 200 first sessions shows 22 distinct FTUE screens"
+  consequence: "Data scientist learns 8 screens are invisible to the funnel before soft-launch cohorts are spent; event spec gets 8 new events in the next build instead of a redo after launch"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 1: Unity Funnel Analyzer editing 'would invalidate any existing data', so a new hypothesis means a new funnel"
+  proposed: "Report table: screen_id, sessions_seen, matching_event (null if none), median dwell s"
+  shallow: false
+  mechanism: "Cluster frames into screen types, align each session's screen sequence with its event sequence by timestamp, emit unmatched screens and orphan events"
+  example: "Idle tycoon soft launch in Philippines: 'choose manager' popup has no event and 18% of players stall there; event added in build 0.9.3"
+  cost: S
+  depends_on: "video-to-event clock alignment (ds-4)"
+  buyer: "Analytics lead / data scientist preparing a soft launch at a mid-size studio"
+  input: "200-500 playtester or opt-in first-session videos + raw event log for the same sessions"
+  why_existing_tools_cannot: "GameAnalytics and Unity funnels only count events that exist (methods-churn-funnel.md section 1); playtest AI reads transcripts not pixels (market.md section 1 PlaytestCloud)"
+  willingness_to_pay: "3 - per-build fee comparable to a PlaytestCloud run at ~EUR 113-141 per session (market.md section 1); sold as a one-off audit"
+
+- id: ds-4
+  title: "Video-to-event clock alignment service: per-session offset estimated from on-screen anchors (level-complete banner vs progression event), with a join_quality score 0-1 and rejection of sessions over 2 s residual"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: on-screen-text-ocr, analysis-type: churn-prediction-features, constraint-to-overcome: joining-video-to-events, delivery-form: api-or-sdk, effort: S-weeks}
+  object: "Data-scientist perspective note 'how to join video to events' (B-perspectives.yaml); methods-churn-funnel.md section 6 patent 'Gameplay telemetry and video acquisition system' (synchronised capture)"
+  situation: "Device clock, upload time and server event time disagree by 0.5-30 s; a hesitation feature measured in seconds is meaningless if the offset is unknown"
+  consequence: "Features computed on misaligned sessions are dropped instead of polluting the model; the data scientist can report what share of sessions joined cleanly"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 6: a patent for synchronised gameplay telemetry and video exists, i.e. sync is a known problem"
+  proposed: "Columns: session_id, offset_ms, anchors_matched, residual_ms, join_quality"
+  shallow: false
+  mechanism: "Detect 3+ anchor screens per session (level start, level complete, store open), match to the corresponding events, fit a linear offset/drift, score residual"
+  example: "RPG with server-authoritative events: 7% of sessions show 12 s drift from a backgrounded upload; they are excluded from the hesitation feature"
+  cost: S
+  depends_on: "anchor-screen detector per title; event log with client and server timestamps"
+  buyer: "Data engineer / data scientist at any studio joining video to telemetry"
+  input: "Sampled SDK video + telemetry events with client and server timestamps"
+  why_existing_tools_cannot: "Session-replay tools for games are screenshot-based without game-state understanding (market.md section 2 PostHog Unity, 'Does NOT do'), so no anchor matching exists"
+  willingness_to_pay: "2 - infrastructure nobody buys alone; bundled into ds-1. Signal: in-house analytics heads only accept tables joined to their event IDs (B-perspectives in-house-analytics-head)"
+
+- id: ds-5
+  title: "Opt-in sampling-bias reweighting: propensity weights per captured user from telemetry of captured vs all installs (device tier, country, Wi-Fi share, D0 playtime), shipped as a weight column with effective sample size"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, capture-trigger-and-sampling: opt-in-panel, constraint-to-overcome: sampling-bias, analysis-type: cohort-comparison, delivery-form: warehouse-table-export, companion-data: telemetry-events}
+  object: "methods-churn-funnel.md section 7 INFERRED sampling knobs: '(d) user-level sampling (e.g. 1-5% of new installs) with Wi-Fi-only upload'"
+  situation: "Only 3% of installs consent and they skew to high-end Android on Wi-Fi; a churn feature learned on them may not hold for the 97%"
+  consequence: "Data scientist can state 'video-derived finding X holds after reweighting, ESS = 4,100' or reject it; without this the video insight is dismissed as a biased sample"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7: 'Full capture is unrealistic on mobile'; Wi-Fi-only upload; 1-5% sampling"
+  proposed: "Table capture_weights(user_id, propensity, weight, ess_contribution) refreshed per cohort day"
+  shallow: false
+  mechanism: "Logistic propensity model on telemetry covariates for captured vs not; inverse-propensity weights; balance diagnostics per covariate"
+  example: "Midcore shooter: unweighted video says 22% stall at squad-select; reweighted to low-end devices it is 31%, because the screen loads 4 s slower there"
+  cost: S
+  depends_on: "telemetry for all installs including non-consenting users"
+  buyer: "Data scientist presenting video findings to a skeptical product lead"
+  input: "Capture flag per user + full-population telemetry"
+  why_existing_tools_cannot: "Playtest vendors analyse recruited testers only, with no link to production telemetry (market.md section 1 PlaytestCloud 'Does NOT do'); replay tools sample sessions without bias correction (market.md section 2 IV Metrics caps 50-100 videos)"
+  willingness_to_pay: "2 - expected inside the product, not priced separately; the buyer signal is the refusal to trust recruited-panel samples (market.md WTP: panel quality is a hidden risk)"
+
+- id: ds-6
+  title: "Model-explanation clip pull: for each of the churn model's top 5 SHAP features, 20 clips from high-risk players at the moment the feature value was set, delivered as a clip reel per feature"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, capture-trigger-and-sampling: targeted-cohort, analysis-type: ask-a-question-over-footage, delivery-form: clip-reel, automation-level: insight-for-human, value-lever-b2b: cut-time-to-insight}
+  object: "methods-churn-funnel.md section 1: EA 'funnel analysis exposed onboarding friction, then Session Replay was used to review those interactions'"
+  situation: "Churn model says 'sessions_in_first_hour < 2' is the top predictor; product lead asks what those players actually saw"
+  consequence: "Model features become explainable to designers in one meeting; data scientist stops writing hypothesis decks from feature names"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 1: EA case is 'the only vendor case found that explicitly pairs funnel with replay to get the why'"
+  proposed: "API: POST /explain {feature, cohort_filter, n_clips} returns clip URLs with timestamps"
+  shallow: false
+  mechanism: "Targeted capture is switched on for users the model scores above 0.7 churn risk; clips are cut around the event that set the feature; reel grouped by feature"
+  example: "Racing game: 'no garage visit in session 1' top feature; reel shows the garage button hidden behind a daily-reward popup on 19 of 20 clips"
+  cost: M
+  depends_on: "server-side switch to enable capture per user (targeted-cohort trigger); ds-4 alignment"
+  buyer: "Data scientist + product lead pair at a mid-size F2P studio"
+  input: "Churn model scores and SHAP values + targeted-cohort SDK video + events"
+  why_existing_tools_cannot: "Firebase Predictions outputs a segment, not evidence (methods-churn-funnel.md section 1); replay tools cannot select sessions by external model score with game-state cut points (market.md section 2)"
+  willingness_to_pay: "3 - EA paid for funnel + replay pairing (Amplitude case, methods-churn-funnel.md WTP); price anchor UXCam ~$21k/yr (market.md section 2)"
+
+- id: ds-7
+  title: "Pixel-only arousal curve per session (no face cam) aggregated to features: arousal slope over last 3 minutes, peak count, flat-arousal minutes; tested as churn and boredom predictors"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: emotion-arousal-from-pixels, analysis-type: churn-prediction-features, constraint-to-overcome: privacy-and-consent, game-platform-and-genre: single-player-narrative, delivery-form: warehouse-table-export}
+  object: "methods-churn-funnel.md section 5: Makantasis et al. arousal from gameplay video alone 'over 78% accuracy on average'; privileged-information models on pixels only 'perform equally well'"
+  situation: "Narrative or platformer title where telemetry shows steady progression yet D7 is weak; suspicion is boredom, which no event encodes"
+  consequence: "If flat-arousal minutes predict churn, designers get a pacing target per chapter; if not, the feature is dropped after one backtest"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 5 INFERRED: 'affect can be read from gameplay pixels alone with useful accuracy, so a face cam is not required'"
+  proposed: "Columns arousal_slope_last180s, arousal_peaks, flat_minutes per session"
+  shallow: false
+  mechanism: "Model pretrained on AGAIN dataset (1,100+ annotated videos, 9 games), fine-tuned per genre; outputs 1 Hz arousal; aggregator computes session features"
+  example: "Action-adventure chapter 3: median 11 flat-arousal minutes vs 3 in chapter 2; players who churn after chapter 3 have 2x flat minutes"
+  cost: M
+  depends_on: "ds-1 pipeline; legal sign-off that pixel-of-game arousal is not biometric emotion recognition of the player"
+  buyer: "Data scientist at a PC/console single-player studio"
+  input: "Gameplay video (no face) + progression events"
+  why_existing_tools_cannot: "Affectiva/iMotions products use face or biometric sensors and lean to automotive (market.md section 7); PlaytestCloud flags emotion only from think-aloud speech (methods-churn-funnel.md section 2)"
+  willingness_to_pay: "2 - research-grade; Player Research says biometrics are 'often oversold' (market.md WTP complaints); EU AI Act Art. 50(3) disclosure applies (methods-churn-funnel.md section 7)"
+
+- id: ds-8
+  title: "REFUSED: face-cam expression features (anger, joy, frustration) as churn predictors for live players"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: facecam-expression, analysis-type: churn-prediction-features, constraint-to-overcome: privacy-and-consent, companion-data: facecam}
+  object: "methods-churn-funnel.md section 5: theory-of-mind study, gameplay-feature models 'significantly' more accurate than facial-feature models for perceived frustration"
+  situation: "Vendor pitches front-camera capture during play to add emotion features to the churn model"
+  consequence: "Data scientist refuses: lower lift than gameplay features, biometric/GDPR obligations, EU AI Act emotion-recognition limits, and opt-in rate would fall so far the sample becomes unusable"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: 'EU AI Act Art. 5(1)(f) bans emotion recognition in workplace and education; ... GDPR biometric rules apply'; section 5 INFERRED: 'Face cam adds consent and biometric-law cost for unclear lift'"
+  proposed: "Drop; restrict face cam to recruited-playtester research (ds-7 is the pixel-only alternative)"
+  shallow: false
+  mechanism: "Front camera stream classified per frame into expression categories, aggregated per session"
+  example: "Casual puzzle game asks players to enable the camera for a reward; 0.3% accept, all on one device tier"
+  cost: M
+  depends_on: "camera permission flow; biometric DPIA"
+  buyer: "Would be: data scientist / analytics head at a mobile studio (refuses)"
+  input: "Front-camera video + gameplay video + events"
+  why_existing_tools_cannot: "Antidote and Affectiva capture faces only in lab-style recruited tests (market.md sections 1 and 7); no live-player product exists and the notes give reasons not to build one"
+  willingness_to_pay: "1 - 'Biometrics are often oversold' (Player Research, market.md WTP); Apple 2019 consent crackdown on screen recording (methods-churn-funnel.md section 7)"
+
+- id: ds-9
+  title: "Hesitation features from video + touch overlay: ms from CTA highlight to tap, rage-tap bursts (3+ taps within radius, <=300 ms apart) on non-interactive art, mis-swipe count per tutorial step"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: input-timing-and-hesitation, analysis-type: churn-prediction-features, lifecycle-moment: ftue-first-session, companion-data: touch-and-controller-input, delivery-form: warehouse-table-export}
+  object: "methods-churn-funnel.md section 2: UXCam rage-tap definition 'at least 3 taps within a set radius with at most 300 ms between taps'; INFERRED 'a visible CTA never tapped (UI not noticed)'"
+  situation: "Tutorial step 4 has 12% drop in the funnel; event shows only step_4_start and no step_4_complete"
+  consequence: "Data scientist separates 'did not see the CTA' (long latency, no taps) from 'tapped the wrong thing' (taps on art) as two features with different fixes"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 6 INFERRED: 'a touch/input overlay is likewise what turns watching into measurable hesitation and mis-taps'"
+  proposed: "Columns per step: cta_latency_ms, offtarget_taps, rage_bursts, misswipes"
+  shallow: false
+  mechanism: "UI detector locates the highlighted CTA bounding box per frame; touch log is hit-tested against it; latency and off-target counts computed per step"
+  example: "Merge game step 4: median CTA latency 9.2 s and 4.1 taps on the background chest art; arrow pointer added, latency falls to 2.3 s"
+  cost: S
+  depends_on: "SDK touch capture with timestamps; button detector (YOLO-class, mAP ~90% on mobile games per methods-churn-funnel.md section 4)"
+  buyer: "Data scientist / FTUE product analyst at a mobile casual studio"
+  input: "SDK video + touch coordinates + tutorial step events"
+  why_existing_tools_cannot: "UXCam rage taps work on native UI trees; game canvases show as a black box or screenshots (market.md section 2 'Does NOT do')"
+  willingness_to_pay: "3 - IV Metrics sells gameplay video + touch overlay at $49-99/month but capped at 50-100 videos and no CV (market.md section 2)"
+
+- id: ds-10
+  title: "Per-title UI-state label bootstrap: general VLM pre-labels 500 frames into 12-20 screen classes, analyst verifies in 2 hours, small detector trained and shipped with per-class precision/recall model card"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: internal-qa-builds, signal-extracted: ui-state-and-screen-flow, analysis-type: training-dataset-export, constraint-to-overcome: per-game-ui-generalisation, delivery-form: api-or-sdk, effort: S-weeks}
+  object: "methods-churn-funnel.md section 4 INFERRED: 'a per-title detector trained on a few hundred labelled frames is plausibly enough; general VLMs could label first and bootstrap it'"
+  situation: "New title onboarding; no labelled frames exist and NVIDIA-style detectors need per-game configuration"
+  consequence: "Data scientist gets a classifier with published per-class precision (e.g. store screen 0.97, tutorial card 0.91) and can decide which features are trustworthy enough for the model"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 4: NVIDIA patents 'game-agnostic detector configured per game'; YOLOv5-ABLN mAP 91.9% on 298 UI screens from 6 games"
+  proposed: "Deliverable: model file + model_card.json with confusion matrix on 100 held-out frames"
+  shallow: false
+  mechanism: "Keyframe sampling from QA builds, VLM zero-shot labelling, human verification UI, fine-tune of a small detector, held-out evaluation"
+  example: "Card-battler onboarding in 3 days: 16 classes, 'deck builder' class precision 0.82 flagged as below the 0.90 bar, so its dwell feature is held out"
+  cost: S
+  depends_on: "QA build footage covering all FTUE screens"
+  buyer: "Data scientist or ML engineer at the studio, or the vendor's own onboarding team"
+  input: "QA or bot playthrough footage of the build + screen-name list from design"
+  why_existing_tools_cannot: "NetEase WDTEST and YOLO datasets are research assets, not a per-title onboarding service (methods-churn-funnel.md section 4); off-the-shelf VLMs reach precision ~0.50 zero-shot on QA video (adjacent-usecases.md section 1)"
+  willingness_to_pay: "2 - enabling step; buyers pay for its output (ds-1) not for labels. Signal: trust in AI is low, only 16% fully trust AI QA outcomes (market.md WTP), so the model card is what makes ds-1 sellable"
+
+- id: ds-11
+  title: "On-device feature extractor: 2 fps classifier in the SDK uploads only (screen_id, enter_ms, exit_ms) rows plus 3 keyframes per session, 20-50 KB instead of ~450 MB of first-session video"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, processing-location: on-device, constraint-to-overcome: bandwidth-and-storage, analysis-type: churn-prediction-features, delivery-form: warehouse-table-export, capture-trigger-and-sampling: random-sample}
+  object: "methods-churn-funnel.md section 7 INFERRED: 'a 30-minute first session at 2 Mbps is about 450 MB of upload'; knob '(e) on-device CV that uploads only extracted events/labels plus a few keyframes'"
+  situation: "Studio at 100k installs/day wants features from 20% of installs, not 1-5%; full video would be ~7.5 TB/day at 1 Mbps for 10 minutes"
+  consequence: "Sample size rises 4-20x so video features become usable in daily churn scoring rather than monthly research; sampling-bias from Wi-Fi-only upload shrinks"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: 'storage is cheap, upload is the constraint'"
+  proposed: "SDK flag extract_only=true; keyframes JPEG 320px"
+  shallow: false
+  mechanism: "Quantised per-title classifier (from ds-10) runs on GPU/NPU at 2 fps; emits screen transitions; keyframes picked at screen entries"
+  example: "Hypercasual runner: 20% of installs report screen rows; feature 'fail-screen visits in first 5 minutes' is available for D0 churn scoring the same night"
+  cost: L
+  depends_on: "ds-10 classifier small enough for on-device; frame-budget sign-off from engine lead (<1-2 ms per frame)"
+  buyer: "Data scientist with the SDK/platform engineer as co-signer at a high-volume mobile studio"
+  input: "Live rendered frames on device + touch + events"
+  why_existing_tools_cannot: "UXCam/Sentry upload screenshots or video, not semantic rows (methods-churn-funnel.md section 6); IV Metrics caps at 100 videos/month (market.md section 2)"
+  willingness_to_pay: "3 - per-MAU pricing plausible; volume buyers already pay Smartlook 'very high' prices for replay (market.md section 2)"
+
+- id: ds-12
+  title: "Fixed-price 8-week lift study: log-only churn model vs log + video features on a time-split holdout, reporting delta AUC, delta recall at top-10% risk, and per-feature permutation importance"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, analysis-type: churn-prediction-features, delivery-form: managed-service-with-analyst, pricing-model: managed-project, value-lever-b2b: de-risk-a-go-kill-decision, buyer-org-type: mid-size-studio}
+  object: "methods-churn-funnel.md section 3: 'No paper was found that predicts churn or engagement directly from human gameplay video frames'; INFERRED 'research gap rather than a proven lift'"
+  situation: "Head of analytics will not sign an annual contract for unproven features"
+  consequence: "Buyer gets a go/kill number on their own data in 8 weeks; vendor gets the first public case study in a category with none"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "market.md WTP: AI QA '... case studies are still hard to find' (Naavik); methods-churn-funnel.md section 3: CNN/LSTM on logs 'about same or slightly worse' than traditional ML"
+  proposed: "Pass criterion agreed upfront, e.g. +0.02 AUC or +5% recall at top decile"
+  shallow: false
+  mechanism: "Vendor captures 4 weeks of consented first sessions, builds ds-1 features, trains both models on weeks 1-3 cohorts, scores week 4, writes the report"
+  example: "Midcore RPG: delta AUC +0.031, recall at top 10% from 38% to 46%; the studio converts to an annual licence"
+  cost: M
+  depends_on: "ds-1, ds-4, ds-5"
+  buyer: "Head of analytics / lead data scientist, CFO co-signs"
+  input: "Studio event warehouse + 4 weeks of consented SDK capture"
+  why_existing_tools_cannot: "Churn literature is log-based only (methods-churn-funnel.md section 3); Firebase Predictions offered no evidence of lift on customer data (275 of 145k caught, section 1)"
+  willingness_to_pay: "4 - de-risked purchase; Halfbrick +5pp D7 on targeted churners shows churn models are bought on outcome numbers (methods-churn-funnel.md section 1)"
+
+- id: ds-13
+  title: "Pre-release per-level churn covariates from bot playthrough video: agent pass rate, attempts to clear, and 'fail-without-completion' share per new level, added to the model before any player sees the level"
+  level: L3
+  cell: {buyer-role: design-balance, video-source: automated-bot-or-agent-playthrough, signal-extracted: player-skill-and-mechanics, analysis-type: churn-prediction-features, lifecycle-moment: live-event-or-update, capture-trigger-and-sampling: scheduled-bot-playthrough, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "methods-churn-funnel.md section 3: Roohi et al. (Aalto + Rovio) DRL agents on 168 Angry Birds Dream Blast levels; real churn vs 'churn without completing' r = -0.586"
+  situation: "Weekly level drop of 20 new puzzle levels; the churn model has no history for them"
+  consequence: "Data scientist ships a level-difficulty prior so day-1 churn forecasts for the drop exist; designer reorders the 2 hardest levels away from positions 1-3"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 3: population model '(skill, persistence, boredom) predicts per-level churn'"
+  proposed: "Table level_priors(level_id, agent_pass_rate, mean_attempts, predicted_churn) per build"
+  shallow: false
+  mechanism: "Partner bots (nunu.ai / modl.ai class) play each level 200 times; video analysis reads fail/complete screens and attempts; regression maps agent stats to historical player churn"
+  example: "Match-3 weekly update: level 1,412 agent pass rate 4% vs 30% median; moved from slot 2 to slot 14; predicted churn at that level drops 1.8pp"
+  cost: M
+  depends_on: "bot-play partner or in-house agents; history of player churn per level for calibration"
+  buyer: "Data scientist with lead level designer at a casual puzzle studio"
+  input: "Bot playthrough video per level + historical per-level player churn"
+  why_existing_tools_cannot: "modl.ai and nunu.ai sell bug finding, 'says nothing about churn' (market.md section 3 'Does NOT do'); Roohi is a paper, not a product (methods-churn-funnel.md section 3)"
+  willingness_to_pay: "3 - casual studios pay per release for QA bots; GameDriver from $150/month (market.md section 3); per-build pricing fits"
+
+- id: ds-14
+  title: "Build-to-build screen-dwell drift alert: KS test on per-screen dwell and transition probabilities between version N and N+1 on the first 2,000 sessions, posted to Slack when D1 drops"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: load-and-wait-screens, analysis-type: root-cause-of-a-metric-change, lifecycle-moment: new-version-release, delivery-form: alert-or-slack, companion-data: build-and-config-metadata}
+  object: "methods-churn-funnel.md section 1: Unity docs list only candidate causes ('a bug that crashes the game, or the level is too hard')"
+  situation: "Version 3.8 ships; D1 down 2.1pp vs 3.7 and no event changed"
+  consequence: "Within 48 hours the data scientist sees 'loading screen after tutorial: median 3.1 s -> 9.4 s on Mali GPUs' instead of running a week of hypothesis queries"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 1 INFERRED: 'every tool above leaves why to a hypothesis step'"
+  proposed: "Slack message: top 5 screens by KS statistic with p-value, device split and 3 clips each"
+  shallow: false
+  mechanism: "Per-version distribution of screen dwell and screen-to-screen transitions from video features; two-sample tests per screen x device tier; ranked deltas"
+  example: "Farm sim 3.8: new consent popup inserted before first harvest adds a transition with 14% exit; rollback of popup order in 3.8.1"
+  cost: S
+  depends_on: "ds-1 features tagged with build version"
+  buyer: "Data scientist on call for release metrics at a live mobile studio"
+  input: "Video-derived screen features per session + build_version + device model"
+  why_existing_tools_cannot: "Funnels show 'where drop offs happen' only for instrumented steps (methods-churn-funnel.md section 1); loading screens without events are invisible to GameAnalytics funnels"
+  willingness_to_pay: "4 - release regressions cost D1 directly; HeadSpin sold the 'over 30 per cent left due to bad experience' frame (market.md section 3); per-build-or-release pricing"
+
+- id: ds-15
+  title: "Interruption covariate: share of session time with OS notification banners, call overlays or app switches detected in video, used to remove non-game churn from labels and as a control feature"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, signal-extracted: device-context-interruptions-and-app-switch, analysis-type: churn-prediction-features, constraint-to-overcome: ground-truth-labels, game-platform-and-genre: mobile-casual-hypercasual}
+  object: "methods-churn-funnel.md section 7 INFERRED privacy hazards: 'notifications overlaying the screen'"
+  situation: "Commuter-time hypercasual sessions end abruptly; model attributes it to level difficulty"
+  consequence: "Difficulty coefficients stop absorbing interruption effects; level tuning decisions rest on cleaner estimates"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 2 INFERRED: video shows 'the exact screen state at the moment of app kill (rage quit vs. interruption)'"
+  proposed: "Columns interrupt_count, interrupt_seconds, last_interrupt_before_end_s"
+  shallow: false
+  mechanism: "Detector for OS overlay patterns (banner region, call UI) plus app lifecycle events; overlays masked before storage"
+  example: "Hypercasual runner: 17% of sessions ending within 60 s have a notification banner in the last 5 s; those sessions are relabelled 'interrupted', not 'quit'"
+  cost: S
+  depends_on: "overlay detector per OS version; redaction step (ds-24)"
+  buyer: "Churn-model owner at a hypercasual publisher"
+  input: "SDK video + app lifecycle events"
+  why_existing_tools_cannot: "Telemetry records session_end but not what covered the screen (methods-churn-funnel.md section 2 INFERRED list); no vendor in market.md section 9 gap map links device video to churn"
+  willingness_to_pay: "2 - a feature inside ds-1, not a product; signal is label-quality pain (Firebase 275 of 145k, methods-churn-funnel.md section 1)"
+
+- id: ds-16
+  title: "A/B variant explanation: clips stratified by variant x retained/churned, with per-screen dwell and exit-rate deltas, attached to the experiment readout when variant B loses 1-3pp D1"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, analysis-type: ab-test-variant-explanation, lifecycle-moment: ab-test-running, delivery-form: per-cohort-report, signal-extracted: ui-state-and-screen-flow, capture-trigger-and-sampling: targeted-cohort}
+  object: "competitor-and-ua.md section 1: Deconstructor of Fun 2025 FTUE case, 'sessions grouped by early behaviour and tied to day-1 retention, leading to a tutorial change'"
+  situation: "Experiment shortened tutorial (B) loses 1.6pp D1 vs control; telemetry cannot say which removed step mattered"
+  consequence: "Data scientist reports 'B players open the shop 40 s earlier and 23% exit there' rather than 'B lost, revert'; next variant keeps the short tutorial and delays shop unlock"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 1: Amplitude FunCraft funnel finding 'new players wanted easier puzzles rather than tutorials' came from hypothesis, not evidence of what was seen"
+  proposed: "Readout section: top 5 screens by variant delta with 5 clips per cell"
+  shallow: false
+  mechanism: "Capture rate raised to 10% inside the experiment; features computed per arm; difference-in-dwell and exit-rate ranked; clips sampled per arm x outcome"
+  example: "Word game tutorial A/B: B has 3 screens fewer; B players meet the energy paywall at minute 6 vs minute 14"
+  cost: S
+  depends_on: "experiment assignment in telemetry; ds-1"
+  buyer: "Experimentation owner / data scientist at a F2P studio"
+  input: "Experiment assignment + SDK video for both arms + retention outcome"
+  why_existing_tools_cannot: "Funnel tools compare counts per arm; replay tools lack game-state tagging to compute per-screen deltas (market.md section 2 'Does NOT do')"
+  willingness_to_pay: "3 - tied to experiments studios already run; Amplitude case studies sell FTUE outcomes (+40% D1 FunCraft, methods-churn-funnel.md WTP)"
+
+- id: ds-17
+  title: "D0 payer-propensity features from store-screen video: seconds on shop, price tiers scrolled into view, offer popups dismissed under 1 s, return visits to the same SKU before session end"
+  level: L4
+  cell: {buyer-role: monetisation, video-source: own-players-consented-sdk, signal-extracted: economy-and-store-events, analysis-type: early-ltv-or-payer-prediction, lifecycle-moment: d1-to-d7, companion-data: purchase-and-ad-revenue-events, delivery-form: warehouse-table-export}
+  object: "methods-churn-funnel.md section 2 INFERRED example: 'player looked at the shop button for 6 s and did not tap' does not exist in the data"
+  situation: "Payer model built on day-0 events predicts 3% of installs who will pay by D7; shop browsing without purchase is invisible"
+  consequence: "Payer recall at fixed precision rises; UA value-based bidding receives earlier, better signals; data scientist can test 'browsed $4.99 starter pack twice' as a feature"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "competitor-and-ua.md section 3: GeekLab says it is 'hard to see which creative acquired players who later retain and pay, especially on iOS'"
+  proposed: "Columns shop_seconds, tiers_viewed, offer_dismiss_fast, sku_revisits"
+  shallow: false
+  mechanism: "Store-screen classifier plus OCR of price labels on screen; scroll position from frame diff; aggregated per session"
+  example: "Strategy game: non-payers who viewed the $9.99 tier twice on D0 convert at 4x baseline by D7; targeted starter offer on D1"
+  cost: M
+  depends_on: "ds-1; store-screen OCR per locale"
+  buyer: "Data scientist owning LTV/payer model, with monetisation lead"
+  input: "SDK video of store screens + purchase events + install attribution"
+  why_existing_tools_cannot: "Event analytics logs purchases and shop_open but not what was viewed; replay tools render game canvases as black boxes (market.md section 2)"
+  willingness_to_pay: "4 - UA teams are the best-funded buyers (Sett $57M, market.md section 6); payer signals feed spend-based bidding"
+
+- id: ds-18
+  title: "Telemetry backfill from pixels for under-instrumented titles: HUD OCR of level, coins, gems and HP reconstructs a progression/economy event log for an acquired or ported game with no events"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: platform-or-emulator-capture, signal-extracted: structured-game-state-reconstruction, analysis-type: churn-prediction-features, buyer-org-type: publisher, constraint-to-overcome: per-game-ui-generalisation, delivery-form: warehouse-table-export}
+  object: "methods-churn-funnel.md section 4: Q3Vision 'reconstructs Quake III game state from screen video only; YOLO ... plus OCR for health, armour, ammo'"
+  situation: "Publisher acquires a back-catalogue title whose events are a single session_start; re-instrumenting costs a dev sprint per platform"
+  consequence: "Data scientist can fit a churn and economy model on the acquired title in weeks, using a reconstructed event table, before deciding to invest in a re-instrumentation sprint"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 4 INFERRED: 'Weak pieces: stylised low-res HUD OCR'"
+  proposed: "Table reconstructed_events(user_id, ts, event_type, value, ocr_confidence)"
+  shallow: false
+  mechanism: "Per-title HUD region map; OCR with upscaling and binarisation (NVIDIA patent method); state-change detection emits events"
+  example: "Publisher buys a 2019 idle RPG: reconstructed gold balance shows 60% of churners hit a 3-day gold wall at stage 40; sunset vs revive decision made on that"
+  cost: M
+  depends_on: "emulator or platform capture partner, or opt-in SDK; HUD font legibility"
+  buyer: "Head of analytics at a publisher with acquired titles"
+  input: "Emulator/platform capture or SDK video + whatever events exist"
+  why_existing_tools_cannot: "Omnic does pixel game-state parsing but sells to players (market.md section 4); no studio-facing reconstruction product in the market.md section 9 gap map"
+  willingness_to_pay: "2 - niche, project-priced; signal: Sensor Tower paid to extend game-feature coverage via acquisitions (competitor-and-ua.md section 8)"
+
+- id: ds-19
+  title: "Cross-title harmonised video-feature schema for a 30-game portfolio: same 15 features (tutorial screens count, first fail minute, first store view minute, ad prompt count) regardless of each game's event naming"
+  level: L3
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, analysis-type: benchmark-vs-competitor, lifecycle-moment: soft-launch, buyer-org-type: publisher, delivery-form: warehouse-table-export, value-lever-b2b: de-risk-a-go-kill-decision}
+  object: "methods-churn-funnel.md section 1: GameAnalytics benchmarks note 'many top-performing studios store data in-house and never appear in public benchmarks'"
+  situation: "Publisher data science team wants a portfolio churn model that transfers to a soft-launch title with 4,000 installs; every studio named events differently"
+  consequence: "Soft-launch go/kill model gets comparable inputs across titles; transfer learning works because features mean the same thing"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 1 INFERRED: 'Ordered-funnel rules (Unity) and any-order rules (GameAnalytics) produce different drop-off numbers for the same players'"
+  proposed: "Schema v1 with 15 features and definitions; per-title mapping from classifier classes to schema"
+  shallow: false
+  mechanism: "Per-title classifiers map screens to a shared ontology (tutorial, fail, store, reward, ad, social); features computed identically"
+  example: "Publisher soft-launches a merge game: first store view at minute 2.1 vs portfolio P75 of minute 8; store unlock delayed before global launch"
+  cost: L
+  depends_on: "ds-10 for each title; shared screen ontology"
+  buyer: "Publisher head of data science / portfolio analytics"
+  input: "SDK video from 30 titles + each title's events"
+  why_existing_tools_cannot: "GameRefinery benchmarks features by analysts on store metadata, not player behaviour (competitor-and-ua.md section 1); event schemas differ per title"
+  willingness_to_pay: "4 - publishers already pay $45-115k/yr for market intelligence (competitor-and-ua.md section 8); annual-enterprise-licence"
+
+- id: ds-20
+  title: "REFUSED: vendor dashboard with a proprietary 0-100 'frustration score' per session and no row-level export, feature definitions or validation numbers"
+  level: L3
+  cell: {buyer-role: analytics-bi, delivery-form: dashboard, signal-extracted: emotion-arousal-from-pixels, constraint-to-overcome: accuracy-and-trust, analysis-type: churn-prediction-features, pricing-model: per-month-seat}
+  object: "B-perspectives.yaml in-house-analytics-head: 'refuses another dashboard; only accepts output as tables in the warehouse joined to their event IDs'"
+  situation: "Vendor demo shows a heatmap of frustration by level; data scientist asks for the column and its precision"
+  consequence: "Data scientist refuses: a score that cannot be joined, backtested or validated cannot enter the churn model, and a dashboard number with no ground truth will not survive the first disagreement with telemetry"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "market.md WTP: 'Trust in AI is low: only 16% fully trust AI QA outcomes'; adjacent-usecases.md section 1: best VLM zero-shot precision 0.50"
+  proposed: "Drop the dashboard-only SKU; ship the same score as a column with a validation report (ds-1, ds-10)"
+  shallow: false
+  mechanism: "Black-box model scores sessions and renders charts in vendor UI only"
+  example: "Studio trial: dashboard says level 12 is most frustrating; telemetry says level 12 has the highest D1 retention; no data to reconcile"
+  cost: S
+  depends_on: "nothing"
+  buyer: "Would be: analytics head at a mid-size studio (refuses)"
+  input: "SDK video only"
+  why_existing_tools_cannot: "n/a - refusal; the notes show buyers distrust unvalidated AI output (market.md WTP complaints, Naavik '... case studies are still hard to find')"
+  willingness_to_pay: "1 - analytics heads refuse closed dashboards; contrast with warehouse-table delivery"
+
+- id: ds-21
+  title: "REFUSED: generic 'ask a question over all sessions' chat that answers in prose without per-session structured output, which the data scientist can replicate with Gemini video input at 1 fps"
+  level: L3
+  cell: {buyer-role: analytics-bi, delivery-form: ask-question-agent-chat, analysis-type: ask-a-question-over-footage, constraint-to-overcome: commoditisation-by-general-video-llms, pricing-model: per-hour-of-video, effort: XS-repackage-existing-user-test-product}
+  object: "competitor-and-ua.md section 1: Gemini video input, 'default 1 FPS sampling, about 6 hours of video in 2M context'"
+  situation: "Vendor repackages the User Test report agent over live-player footage; data scientist runs the same prompts on 50 sessions in a notebook in an afternoon"
+  consequence: "No budget released: output is not reproducible, not joinable, and cheaper to build in-house; it survives only as a front end on top of ds-1 tables"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "B-perspectives.yaml in-house-analytics-head: 'we can point Gemini at a sample of sessions ourselves'"
+  proposed: "Make the chat answer by querying the feature tables and citing session_ids, not by free-form watching"
+  shallow: false
+  mechanism: "LLM watches sampled sessions on demand and writes answers"
+  example: "Question 'why do players quit at level 5?' returns a paragraph citing 'many players seemed confused'; no counts, no session list"
+  cost: S
+  depends_on: "existing User Test product (A-frame assumption)"
+  buyer: "Would be: data scientist / BI lead (refuses); UX researcher may still buy it"
+  input: "SDK video"
+  why_existing_tools_cannot: "General video LLMs already do this (competitor-and-ua.md section 1 Gemini); PlaytestCloud ships AI summaries at no extra charge (adjacent-usecases.md section 10)"
+  willingness_to_pay: "1 - PlaytestCloud includes AI analysis 'at no extra charge' (adjacent-usecases.md section 10), so prose summaries are priced at zero"
+
+- id: ds-22
+  title: "Multi-class churn-reason labels from the final 120 s of the last session: fail-loop, lost/confused, paywall-hit, idle/bored, interrupted, with 300-session human-coded validation and Cohen's kappa reported"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, analysis-type: churn-prediction-features, lifecycle-moment: post-churn-winback, constraint-to-overcome: ground-truth-labels, delivery-form: warehouse-table-export, capture-trigger-and-sampling: always-on-ring-buffer}
+  object: "methods-churn-funnel.md section 2 VERIFIED: Sony patents 'rage quitting as leaving a match early from frustration'; Universal Boredom Detector tracks idle time"
+  situation: "Win-back campaign sends the same 500-gem gift to every lapsed player; churn model predicts 'will churn' but not 'why'"
+  consequence: "Data scientist trains reason-specific models; win-back offer differs by reason (hint pack for fail-loop, discount for paywall-hit); label quality is quantified, not assumed"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 1: Halfbrick gifted predicted churners, +5pp D7; one gift for all churn reasons"
+  proposed: "Column churn_reason with probability per class + label_source (model / human)"
+  shallow: false
+  mechanism: "Ring buffer kept on device and uploaded on the session that later becomes 'last' (upload deferred until 72 h inactivity check or next launch); VLM + classifier assign reason; 300 sessions double-coded by humans"
+  example: "Bubble shooter: 46% fail-loop, 21% paywall-hit, 18% idle; fail-loop lapsers get 3 free boosters, return rate 9% vs 5% for generic gift"
+  cost: M
+  depends_on: "ds-2; deferred-upload logic; human coding tool"
+  buyer: "Data scientist owning churn and win-back targeting at a casual studio"
+  input: "Last-session ring-buffer clip + events + win-back campaign outcomes"
+  why_existing_tools_cannot: "Packaged churn prediction outputs a binary segment (Firebase, methods-churn-funnel.md section 1); academic churn work is log-only (section 3)"
+  willingness_to_pay: "3 - win-back spend makes reason labels worth money; Halfbrick case shows targeting churners is a bought use case (methods-churn-funnel.md WTP)"
+
+- id: ds-23
+  title: "Closed-loop fail-loop intervention with a built-in 10% holdout: on-device detector sees 3 fails on the same level plus >8 s idle on the fail screen, triggers a hint offer, and logs treatment/holdout for uplift modelling"
+  level: L4
+  cell: {buyer-role: product-retention, video-source: own-players-consented-sdk, analysis-type: real-time-in-session-intervention, automation-level: closed-loop-in-game-action, processing-location: on-device, value-lever-b2b: enable-automated-action, lifecycle-moment: d1-to-d7}
+  object: "methods-churn-funnel.md section 2: ASU/HyperX study 'predicted tilt about 15-20 minutes before it occurred'; section 1 Halfbrick +5pp D7 on gifted churners"
+  situation: "Player is in a fail loop on level 33 and will likely churn tonight; the churn model scores nightly, too late"
+  consequence: "Retention action fires in-session; the data scientist gets randomised uplift data, so the intervention's effect is measured instead of assumed"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 2: 'Signals of Struggle' telemetry-only struggle detection worked only in 1 of 3 quests"
+  proposed: "Event intervention_shown(user_id, trigger, arm) with arm in {treat, holdout}"
+  shallow: false
+  mechanism: "On-device UI-state model detects fail-screen repeats and idle; game receives a callback; 10% random holdout; outcome joined by data scientist"
+  example: "Match-3 level 33: hint offer after third fail; treated D3 retention +2.4pp vs holdout; cost 0.3 gems per treated player"
+  cost: L
+  depends_on: "ds-11 on-device extractor; game-side callback; engine lead frame-budget approval"
+  buyer: "Product lead (retention) with data scientist designing the experiment, at a casual F2P studio"
+  input: "Live on-device frames + touch + level events"
+  why_existing_tools_cannot: "Firebase predicts churn over 7 days, not in-session (methods-churn-funnel.md section 1); telemetry-only struggle detection generalised poorly (Signals of Struggle, section 2)"
+  willingness_to_pay: "3 - outcome-based pricing possible on measured uplift; Halfbrick +5pp D7 is the bought precedent (methods-churn-funnel.md section 1)"
+
+- id: ds-24
+  title: "Pre-warehouse redaction and retention: player names, chat panels, notification banners and payment sheets blurred on ingest; raw video deleted after 72 h; only features and redacted keyframes kept, with lineage per row"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, constraint-to-overcome: privacy-and-consent, processing-location: customer-cloud-byoc, delivery-form: warehouse-table-export, signal-extracted: on-screen-text-ocr}
+  object: "methods-churn-funnel.md section 7 INFERRED: 'Privacy hazards specific to game video: player names and chat in HUD/social panels, notifications overlaying the screen, payment sheets'"
+  situation: "Privacy counsel blocks video features from the warehouse because raw frames contain third-party player names and chat"
+  consequence: "Data scientist can keep 13-month feature history for model training while raw video is gone in 72 h; DPIA passes"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "methods-churn-funnel.md section 7: UXCam 'real-screen video requires opt-in and occlusion'; PostHog Unity has 'no built-in masking' (market.md section 2)"
+  proposed: "Lineage columns: source_clip_id (deleted), redaction_version, retention_expiry"
+  shallow: false
+  mechanism: "OCR + region detector for name plates, chat panels, OS overlays, payment sheets; blur before any frame is written; scheduled deletion; features computed before deletion"
+  example: "MMO-lite mobile title: guild chat panel blurred in 100% of keyframes; legal approves 13-month feature retention"
+  cost: M
+  depends_on: "region detectors per title; BYOC deployment option"
+  buyer: "Data scientist with privacy counsel as co-signer at a mid-size or AAA studio"
+  input: "SDK video + OCR"
+  why_existing_tools_cannot: "PostHog Unity replay has no masking of text or images (market.md section 2); Bugsee carries GDPR masking warnings (market.md section 2)"
+  willingness_to_pay: "3 - not bought alone but a gate: without it ds-1 is unsellable to EU studios; Apple 2019 crackdown is the floor (methods-churn-funnel.md section 7)"
+
+- id: ds-25
+  title: "Consent-flagged paired dataset export (video + touch/controller inputs + events, aligned to 33 ms) from the studio's own opt-in sessions, licensed per hour to world-model labs, with the data science team as data steward"
+  level: L3
+  cell: {buyer-role: data-buyer-training, video-source: own-players-consented-sdk, analysis-type: training-dataset-export, delivery-form: licensed-dataset, pricing-model: data-licence-per-hour, value-lever-b2b: produce-a-sellable-asset, companion-data: touch-and-controller-input}
+  object: "methods-churn-funnel.md section 6: Medal 'value lies in clips paired with recorded inputs'; market.md section 4: Worldmodeldata licensed 'nearly 1M hours of game data from studios'"
+  situation: "Studio already captures opt-in video for churn features; labs pay for paired video + inputs"
+  consequence: "The same capture pipeline produces a revenue line that pays for the churn analytics; data scientist must verify consent scope, dedupe and alignment before export"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "market.md section 4 INFERRED: 'Gameplay video they hold has resale value to AI labs, and that changes what pay for analysis competes with'"
+  proposed: "Export manifest: hours, games, consent_version, input alignment error ms, PII redaction version"
+  shallow: false
+  mechanism: "Filter sessions whose consent covers resale; align input log to frames; strip PII (ds-24); package with metadata; licence via Origin Lab-type broker"
+  example: "Midcore shooter studio licenses 8,000 consented hours to a lab; proceeds cover the capture SDK costs for the year"
+  cost: M
+  depends_on: "consent text that names resale; ds-4 alignment; ds-24 redaction"
+  buyer: "World-model lab buying; studio head of data as seller-side owner"
+  input: "Opt-in SDK video + input log + events"
+  why_existing_tools_cannot: "Medal/GI monetise player-uploaded PC clips, not studio-owned mobile sessions with event alignment (market.md section 4 'Does NOT do')"
+  willingness_to_pay: "4 - OpenAI's reported ~$500M offer for Medal; General Intuition $2.3B; Origin Lab 500k+ hours (market.md section 4)"
+
+- id: ds-26
+  title: "Point-in-time feature availability: each video feature row carries available_at (upload + processing time), so a D0 churn model is trained only on features that would have existed at scoring time"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, analysis-type: churn-prediction-features, constraint-to-overcome: bandwidth-and-storage, delivery-form: warehouse-table-export, lifecycle-moment: ftue-first-session}
+  object: "methods-churn-funnel.md section 6: UXCam 'Upload happens when the app goes to background'; section 7 Wi-Fi-only upload knob"
+  situation: "Video for 40% of D0 sessions arrives 6-30 h later on Wi-Fi; a model trained on all features leaks future data and collapses in production"
+  consequence: "Offline AUC matches online AUC; the data scientist can choose the scoring time (e.g. D0+12 h) by the coverage curve rather than discover leakage after launch"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7 INFERRED: 'must wait for Wi-Fi'"
+  proposed: "Coverage curve: share of sessions with features available by hour since install"
+  shallow: false
+  mechanism: "Timestamps for capture_end, upload_done, features_written per session; feature store serves as-of joins"
+  example: "Casual game: features available for 58% of installs at D0+6 h, 91% at D0+24 h; churn scoring moved from D0 midnight to D1 noon"
+  cost: S
+  depends_on: "ds-1; upload telemetry from SDK"
+  buyer: "ML engineer / data scientist running production churn scoring"
+  input: "Upload and processing timestamps + feature table"
+  why_existing_tools_cannot: "Replay vendors present sessions for viewing, not as time-stamped features for model serving (market.md section 2)"
+  willingness_to_pay: "2 - expected as part of ds-1; absence is a reason to reject the vendor (in-house analytics head signal, B-perspectives)"
+
+- id: ds-27
+  title: "Telemetry-breakage monitor: video shows tutorial step 3 screen in 98% of sessions but tutorial_step_3 event fires in 61% on build 2.14, alert raised before funnel and churn features are corrupted"
+  level: L4
+  cell: {buyer-role: analytics-bi, video-source: own-players-consented-sdk, analysis-type: anomaly-alert, lifecycle-moment: new-version-release, delivery-form: alert-or-slack, companion-data: build-and-config-metadata, value-lever-b2b: reduce-cost-per-incident}
+  object: "methods-churn-funnel.md section 1: Unity funnels 'Steps must be completed in exact order or the user counts as lost'"
+  situation: "A client refactor drops an event on Android only; funnel shows a fake 37% drop at step 3"
+  consequence: "Data scientist avoids a week of chasing a phantom drop and retraining the churn model on broken features; product does not 'fix' a step that works"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 1 INFERRED: 'Funnel quality is bounded by instrumentation'"
+  proposed: "Daily check: screen_seen_rate vs event_fired_rate per screen x platform x build; alert when gap > 10pp"
+  shallow: false
+  mechanism: "Video-derived screen visits compared to matching events per build and platform; discrepancy alert with sample clips and event payloads"
+  example: "Build 2.14 Android: 'claim reward' event missing in 39% of sessions where the reward screen is visible; hotfix 2.14.1"
+  cost: S
+  depends_on: "ds-3 mapping of screens to events"
+  buyer: "Data scientist / analytics engineer owning event quality at a live studio"
+  input: "Video-derived screen visits + event stream + build/platform metadata"
+  why_existing_tools_cannot: "Funnel tools trust the event stream as truth and cannot detect missing events (methods-churn-funnel.md section 1); no video-vs-event reconciliation product in the market.md section 9 gap map"
+  willingness_to_pay: "3 - per-build pricing; cost of a corrupted D1 readout on release; event QA today is manual"
