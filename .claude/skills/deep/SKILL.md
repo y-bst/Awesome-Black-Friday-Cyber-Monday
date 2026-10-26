@@ -60,6 +60,7 @@ Then tell the user: the path of `leaves.md`, the leaf count, the leaf rate (shar
 ## Hard rules for you, the orchestrator
 
 - Never skip A0, D or H. They are the stages that catch what you would miss.
+- Validate every YAML file you write (A, B, C, patched B and C) with `python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" <file>` before spawning anything that reads it. Quote any string value containing a colon. A broken grid file silently gives every generation agent the wrong grid.
 - Never generate findings yourself. Your findings would share your framing's blind spots.
 - Never summarise agent output. Write it to the run directory and move on.
 - Never reduce a quota because the topic "seems small". Reduce the mode instead, and only if the user asked for `--quick`.
