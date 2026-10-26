@@ -1,0 +1,492 @@
+- id: sre-1
+  title: After a provider outage of 45 min, hundreds of History entries keep a Running badge indefinitely because no run timeout or heartbeat-to-Failed transition is specified
+  level: L4
+  cell: {surface: history-entry-status-badge, run-status: stuck-over-1h, time-and-connection: during-agent-outage, history-state: several-running-at-once}
+  object: History tab entry status (spec "Still unspecified - Statuses an entry can have on the History tab")
+  situation: Model provider returns 5xx for 45 min; 300 runs across 120 users were Running when calls started failing and the workers lost their in-flight requests
+  consequence: Entries show Running for hours or days; users cannot tell stuck from slow; support gets "where is my report" tickets with no state to point at
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed."
+  proposed: Spec a max no-heartbeat window (e.g. 10 min) and a max run duration (e.g. 60 min) after which the entry moves to Failed with reason "Agent unavailable" and a Retry button
+  shallow: false
+- id: sre-2
+  title: When the agent is known to be degraded at submit time, Submit still redirects to History with a new entry; no pre-submit degraded warning or block is specified
+  level: L3
+  cell: {surface: submit-button, time-and-connection: during-agent-outage, action: submit, run-status: queued}
+  object: Submit button and the redirect rule ("On submit the user is redirected to the History tab")
+  situation: Status page shows the model provider at 40% error rate; user fills Report form for 8 videos and clicks Submit
+  consequence: User is sent to History, sees an entry that will likely fail or sit queued, and leaves believing the report is in progress
+  p_typical: 0.08
+  grounded: quote
+  evidence: "There is no loading page, to save the user's time. On submit the user is redirected to the **History** tab, where a new entry appears with whatever was submitted."
+  proposed: Add a degraded-state banner on the Agent page above Submit ("Reports are delayed, expect > 30 min") driven by a health flag, and state whether Submit stays enabled
+  shallow: false
+- id: sre-3
+  title: Whether submissions made during an outage are accepted into a queue or rejected at submit is unspecified, as is the queue's maximum depth
+  level: L3
+  cell: {actor: background-agent-job, run-status: queued, time-and-connection: during-agent-outage, surface: error-toast-or-banner}
+  object: Submit -> History entry creation ("a new entry appears with whatever was submitted")
+  situation: Outage lasts 3 hours; 2,000 submissions arrive while the provider is down
+  consequence: Either 2,000 entries pile up Queued and drain in a burst at recovery, or submits fail with no error copy defined; neither behaviour is a spec line
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "On submit the user is redirected to the **History** tab, where a new entry appears with whatever was submitted."
+  proposed: State "submissions are accepted and queued up to N per user / M global; beyond that Submit shows error toast 'Agent is busy, try again later' and no entry is created"
+  shallow: false
+- id: sre-4
+  title: A deploy while a Report run is Running has no specified outcome - resume from checkpoint, restart from scratch, or fail the entry
+  level: L3
+  cell: {time-and-connection: deploy-during-run, run-status: running, actor: background-agent-job, mode: report}
+  object: History entry in Running state for a Report over 6-20 videos
+  situation: Worker pods are replaced by a rolling deploy 12 min into a 20 min Report run
+  consequence: Run silently dies and stays Running, or restarts and doubles provider cost, or fails with no reason; user sees no difference between these
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed."
+  proposed: Spec "on deploy, workers drain for up to 15 min; unfinished runs restart once from the start with the same entry id; second interruption marks Failed (reason: interrupted)"
+  shallow: false
+- id: sre-5
+  title: A run restarted after deploy or outage can consume the user's run quota twice and write two outputs into one entry
+  level: L3
+  cell: {run-status: retrying, time-and-connection: deploy-during-run, permission-and-plan: quota-remaining, surface: history-entry-detail}
+  object: History entry detail of a restarted Report run
+  situation: Run restarted once after interruption; first attempt had already written a partial output
+  consequence: User sees a half report then a full one, or two outputs; quota counter drops by 2 for 1 visible run
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "A Report produces one output covering all selected videos, not one per video."
+  proposed: State that quota is charged once per entry id at terminal Done, partial attempt output is discarded, and restart count is shown in entry detail ("Restarted 1x")
+  shallow: false
+- id: sre-6
+  title: A follow-up answer in flight during a deploy can vanish from the follow-up thread with no failed-turn marker
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-1, time-and-connection: deploy-during-run, action: ask-follow-up}
+  object: Follow-up thread ("Follow-up questions are supported after the first answer.")
+  situation: User asks follow-up 1; worker is killed by deploy 20 s later
+  consequence: Thread shows the question with no answer and no spinner end state; the user re-asks and gets a duplicate turn when the original also completes
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: Each follow-up turn gets its own status (Pending / Answered / Failed) and a Retry on Failed; interrupted turns retry once automatically
+  shallow: false
+- id: sre-7
+  title: No per-user concurrency limit - one user submitting 40 runs in 2 minutes can occupy all agent workers
+  level: L3
+  cell: {actor: creator-owner, history-state: several-running-at-once, time-and-connection: rate-limit-at-submit, surface: submit-button}
+  object: Submit button (no limits listed; spec lists "Minimum and maximum number of videos per run" as unspecified, says nothing on runs per user)
+  situation: A researcher scripts or rapidly clicks 40 Report submissions of 20 videos each
+  consequence: Every other user's runs sit Queued for the duration; no copy tells the 41st submit it was refused or delayed
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Minimum and maximum number of videos per run; video length and size limits."
+  proposed: Spec max 3 concurrent Running entries per user and max 20 Queued; beyond that Submit shows quota-or-limit-message "You have 20 runs waiting"
+  shallow: false
+- id: sre-8
+  title: Fair queueing across users in a workspace is unspecified, so a 100-video Report from one user delays every 1-video question behind it
+  level: L3
+  cell: {actor: other-user-same-workspace, run-status: queued, videos-selected: 21-100, mode: ask-question}
+  object: History entry status for an Ask question entry
+  situation: User A submits a Report over 80 videos; user B then asks a question over 1 video
+  consequence: B's quick question waits 30+ min Queued behind A's run with FIFO ordering
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "History is per user."
+  proposed: State queue policy (per-user round robin; Ask question jobs on a separate lane with target start < 30 s)
+  shallow: false
+- id: sre-9
+  title: A Queued entry shows no queue position or ETA, so during a backlog users cannot tell "waiting 2 min" from "waiting 2 hours"
+  level: L4
+  cell: {surface: history-entry-status-badge, run-status: queued, observer-location-at-status-change: on-history-tab-top, history-state: several-running-at-once}
+  object: History entry row status badge
+  situation: Queue backlog of 600 jobs after a recovery
+  consequence: Badge reads Queued for 90 min; users resubmit, growing the backlog further
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Queued badge shows "Queued - about N min" or "Position N" once backlog > 5 min
+  shallow: false
+- id: sre-10
+  title: No admin bulk-retry exists for entries that failed inside a known outage window, and no user-facing Retry is in the spec
+  level: L3
+  cell: {actor: admin, run-status: failed, action: retry-whole-run, time-and-connection: during-agent-outage}
+  object: History tab entries with Failed status (actions listed by spec: none)
+  situation: 450 runs failed between 14:02 and 14:47 UTC due to provider outage
+  consequence: On-call must either write a one-off script or tell 450 users to rebuild their video selection and resubmit by hand
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Statuses an entry can have on the History tab, and what opening an entry shows while running, when done, and when failed."
+  proposed: Add an ops action "retry all entries failed with reason X between T1 and T2" that reuses the same entry ids, plus a user Retry button on Failed entries
+  shallow: false
+- id: sre-11
+  title: When ops bulk-marks stuck entries Failed, the entry detail copy does not distinguish operator-failed from agent-failed
+  level: L4
+  cell: {actor: admin, run-status: stuck-over-1h, surface: history-entry-detail, action: open-history-entry}
+  object: History entry detail when failed
+  situation: On-call bulk-fails 300 entries stuck Running for > 2 h after outage
+  consequence: User opens entry and sees a generic "Failed" with no reason and no hint that a retry will now work
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "what opening an entry shows while running, when done, and when failed."
+  proposed: Failed entries carry a reason code and copy, e.g. "Stopped by us during a service outage on 26 Oct - Retry"
+  shallow: false
+- id: sre-12
+  title: A bulk or user retry of a run whose videos were deleted since submit has no defined behaviour (fail, skip, or partial)
+  level: L3
+  cell: {run-status: retrying, video-state: deleted-after-selection-before-run, per-video-outcome-within-run: video-skipped-because-deleted, actor: background-agent-job}
+  object: Selected videos list stored on the entry ("a new entry appears with whatever was submitted")
+  situation: Run failed in outage; 2 of 6 videos are deleted on the Videos page before the retry 3 h later
+  consequence: Retry fails again, or produces a report over 4 videos that still reads as covering 6
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "A Report produces one output covering all selected videos, not one per video."
+  proposed: Retry re-validates videos; if any are gone, entry shows "4 of 6 videos available" and asks to confirm before running
+  shallow: false
+- id: sre-13
+  title: Agent or model version can change between an Ask question's first answer and its follow-ups, and the thread does not record which version answered which turn
+  level: L3
+  cell: {surface: follow-up-thread, thread-state: follow-up-after-agent-version-change, time-and-connection: agent-model-version-changed-since-entry, mode: ask-question}
+  object: Follow-up thread
+  situation: First answer on Monday by model v1; model upgraded Tuesday; follow-up on Wednesday answered by v2 with different style and different conclusions
+  consequence: Follow-up contradicts the first answer; support cannot explain the discrepancy because the version is not logged per turn
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: Store agent + model version per turn; state whether follow-ups pin to the original version or always use current, and show "answered by newer model" when it changed
+  shallow: false
+- id: sre-14
+  title: Entries from an older agent version show no version marker, so a re-run on the same videos giving a different report has no explanation
+  level: L3
+  cell: {history-state: entries-from-older-agent-version, surface: history-entry-detail, actor: support-staff-impersonating, run-status: superseded-by-re-run}
+  object: History entry detail for a Report
+  situation: User re-submits the same 10 videos and prompt 2 months later and gets a materially different report
+  consequence: User files a bug "agent is inconsistent"; support has no recorded version, prompt template id or model id to compare
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Every entry stores agent version, model id and prompt-template hash; entry detail shows the agent version in a footer
+  shallow: false
+- id: sre-15
+  title: No per-entry log record is specified, so support cannot answer "where is my report" for a given user and time
+  level: L4
+  cell: {actor: support-staff-impersonating, surface: history-entry-row, run-status: submit-accepted-but-entry-never-created, time-and-connection: steady-state}
+  object: History entry (no id, timestamps or lifecycle events defined in spec)
+  situation: User writes "I submitted a report at about 3pm yesterday and it is not there"
+  consequence: Support has to grep raw logs by user id and guess; average time to answer measured in hours
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "History is per user, currently."
+  proposed: Log per entry - entry id, user id, workspace id, mode, video ids, submitted_at, enqueued_at, started_at, finished_at, attempt count, provider request ids, terminal status, reason code; searchable by user id + time
+  shallow: false
+- id: sre-16
+  title: Submit can be accepted and the job enqueued while the History entry write fails, leaving an orphan job and no entry after redirect
+  level: L3
+  cell: {surface: redirect-transition, run-status: submit-accepted-but-entry-never-created, time-and-connection: redirect-lands-before-entry-exists, action: submit}
+  object: Redirect rule "where a new entry appears with whatever was submitted"
+  situation: Database write for the entry times out under load during a queue backlog; job enqueue succeeded
+  consequence: User lands on History with no new entry, resubmits; job #1 still runs and consumes cost with nowhere to write its output
+  p_typical: 0.07
+  grounded: quote
+  evidence: "On submit the user is redirected to the **History** tab, where a new entry appears with whatever was submitted."
+  proposed: Create the entry first (Queued) and enqueue the job with the entry id in one transaction; redirect only after the entry exists, else show error toast and stay on the form
+  shallow: false
+- id: sre-17
+  title: No entry id or reference is visible to the user to quote to support
+  level: L4
+  cell: {surface: history-entry-detail, run-status: failed, actor: support-staff-impersonating, action: open-history-entry}
+  object: History entry detail
+  situation: User contacts support about one of 3 failed entries with the same blank run name
+  consequence: Support cannot tell which entry the user means; "entries-with-blank-run-name" makes them indistinguishable
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Run name (optional)"
+  proposed: Entry detail shows a short copyable reference (e.g. "Ref R-7F3K2") and the submitted_at time with timezone
+  shallow: false
+- id: sre-18
+  title: "History is per user" leaves no defined path for support or admin to view a user's entry, nor an audit record of that access
+  level: L3
+  cell: {actor: support-staff-impersonating, surface: history-tab, permission-and-plan: full-access, history-state: 100-entries}
+  object: History tab ("History is per user.")
+  situation: Support needs to see the failed entry and its output to diagnose a user complaint
+  consequence: Support either cannot help or uses an unaudited database read that exposes test participant content
+  p_typical: 0.04
+  grounded: quote
+  evidence: "History is per user, currently."
+  proposed: Specify read-only support impersonation of the History tab with an audit log row per view, or an ops-only entry lookup by reference id
+  shallow: false
+- id: sre-19
+  title: A run waiting on provider 429 rate limits shows as Running, indistinguishable from active processing
+  level: L4
+  cell: {run-status: rate-limited-waiting, surface: history-entry-status-badge, videos-selected: 21-100, observer-location-at-status-change: on-history-tab-top}
+  object: History entry status badge (assumed Queued / Running / Done / Failed)
+  situation: A 60-video Report hits provider token-per-minute limits and backs off for 25 min
+  consequence: Badge reads Running for 40 min with no change; user assumes it is stuck and resubmits
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Statuses an entry can have on the History tab"
+  proposed: Add a "Waiting for capacity" sub-state or a progress line "Processed 12 of 60 videos" updated at least every 60 s
+  shallow: false
+- id: sre-20
+  title: No run timeout is defined, so a legitimately slow run over 20 three-hour videos cannot be told apart from a stuck one
+  level: L3
+  cell: {run-status: timed-out, video-state: 3-hour-long, videos-selected: 6-20, mode: report}
+  object: Spec unknown "video length and size limits"
+  situation: Report over 20 videos of 3 h each (60 h of footage) runs for 75 min
+  consequence: On-call's stuck-run alarm either fires on healthy runs or misses real hangs; user sees Running with no bound
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Minimum and maximum number of videos per run; video length and size limits."
+  proposed: Define timeout as a function of total footage (e.g. 5 min + 2 min per footage hour, cap 120 min) and a per-video progress heartbeat
+  shallow: false
+- id: sre-21
+  title: When 1 of 20 per-video provider calls fails after retries during a partial outage, whether the single Report completes partial or fails is unspecified
+  level: L3
+  cell: {per-video-outcome-within-run: one-video-unusable, run-status: partial-some-videos-unusable, time-and-connection: during-agent-outage, mode: report}
+  object: Clarification "A Report produces one output covering all selected videos"
+  situation: Provider degraded at 10% error rate; 19 videos processed, video 14 fails 3 times
+  consequence: Either the whole report fails and 19 videos of work is lost, or the report silently omits video 14 while claiming to cover all 20
+  p_typical: 0.15
+  grounded: quote
+  evidence: "A Report produces one output covering all selected videos, not one per video."
+  proposed: Spec "Done with warnings - 19 of 20 videos included; video 14 failed (agent error)" plus Retry-missing action
+  shallow: false
+- id: sre-22
+  title: Automatic retry count, backoff and the user-visible state during retries are unspecified
+  level: L4
+  cell: {run-status: retrying, actor: background-agent-job, surface: history-entry-status-badge, time-and-connection: during-agent-outage}
+  object: History entry status
+  situation: Job hits a transient provider 503 and is retried by the worker
+  consequence: Without a cap, jobs retry forever during long outages and amplify load on the provider at recovery; user sees no indication
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "Statuses an entry can have on the History tab"
+  proposed: Max 3 attempts with exponential backoff (30 s, 2 min, 8 min) plus jitter; badge shows "Retrying (2 of 3)"
+  shallow: false
+- id: sre-23
+  title: Double-clicking Submit while the submit API is slow under load creates two entries and two jobs
+  level: L4
+  cell: {action: double-submit, surface: submit-button, time-and-connection: during-agent-outage, history-state: two-entries-same-second}
+  object: Submit button with immediate redirect
+  situation: Submit endpoint latency rises to 8 s during a backlog; user clicks Submit twice
+  consequence: Two identical entries appear in History within the same second; both run and both consume quota
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "On submit the user is redirected to the **History** tab"
+  proposed: Disable Submit after first click until response; server dedupes by client-generated idempotency key for 60 s
+  shallow: false
+- id: sre-24
+  title: When a backlog drains after recovery, users who closed the app get no notification that their entries finished or failed
+  level: L3
+  cell: {surface: notification-email-or-in-app, entry-point-and-lifecycle-phase: app-closed-while-running, run-status: done, observer-location-at-status-change: logged-out}
+  object: History tab as the only status surface ("There is no loading page")
+  situation: 500 Queued runs complete within 20 min after a 3 h outage ends
+  consequence: Users only discover results if they come back; failed ones are never retried; support ticket volume persists after the incident ends
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "There is no loading page, to save the user's time."
+  proposed: Spec an in-app badge on the Agent nav item and an optional email for runs that took > 10 min, with a per-user batching rule (max 1 email per 15 min)
+  shallow: false
+- id: sre-25
+  title: No incident banner on the History tab is specified to tell users their Queued or Running entries are affected by an outage
+  level: L3
+  cell: {surface: error-toast-or-banner, observer-location-at-status-change: on-history-tab-top, time-and-connection: during-agent-outage, history-state: several-running-at-once}
+  object: History tab
+  situation: Provider outage ongoing for 30 min; user opens History and sees 4 entries Running
+  consequence: User files a ticket or resubmits each run; ticket count scales with affected users
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Ops-controlled banner text on History and Agent page ("Runs are delayed due to a provider issue; they will resume automatically")
+  shallow: false
+- id: sre-26
+  title: It is unspecified whether run quota is charged at submit, at start, or at Done, which decides who pays for outage-failed and backlog-abandoned runs
+  level: L3
+  cell: {permission-and-plan: quota-remaining, run-status: queued, action: submit, time-and-connection: during-agent-outage}
+  object: Submit button (no quota rule in spec)
+  situation: User on a 50-runs-per-month plan submits 5 runs during an outage; all 5 fail
+  consequence: User loses 5 of 50 runs to an outage they did not cause, or ops must refund manually per user
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: Charge quota only on Done (or Done with warnings); Failed with reason agent_unavailable is never charged
+  shallow: false
+- id: sre-27
+  title: A user whose quota was exhausted by outage-failed runs is blocked at submit with no copy explaining the refund
+  level: L4
+  cell: {permission-and-plan: quota-exhausted-at-submit, run-status: failed, surface: quota-or-limit-message, time-and-connection: during-agent-outage}
+  object: Submit / quota-or-limit-message (absent from spec)
+  situation: 3 runs failed during outage, user now at 0 remaining
+  consequence: User cannot retry the runs that failed through no fault of their own
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: Message "You have used all runs this month. Runs that failed due to our outage were refunded" with the refunded count
+  shallow: false
+- id: sre-28
+  title: Whether a run continues after the user logs out or their session expires is unspecified; a job tied to the user's session token dies silently
+  level: L3
+  cell: {action: logout-while-running, run-status: running, actor: background-agent-job, time-and-connection: session-expired-at-submit}
+  object: History entry while running
+  situation: User submits a 30 min Report and logs out 2 min later; job fetches transcripts with the user's session credential
+  consequence: Job fails with an auth error 10 min in and stays Running or Failed with no reason the user understands
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "History is per user."
+  proposed: Jobs run under a service identity scoped to the entry's video ids; logout does not affect them (state this explicitly)
+  shallow: false
+- id: sre-29
+  title: A run in flight when the user is removed from the workspace has no defined fate - continue, cancel, or orphan
+  level: L3
+  cell: {actor: removed-or-deactivated-user, permission-and-plan: member-removed-from-workspace, run-status: running, history-state: several-running-at-once}
+  object: Per-user History ("History is per user")
+  situation: Admin removes a contractor with 6 Running Reports
+  consequence: Jobs keep consuming provider capacity and write outputs (containing workspace video content) to a history no one can see
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "History is per user, currently."
+  proposed: Removal cancels Queued and Running entries within 1 min and logs it; outputs are retained or deleted per workspace retention rule
+  shallow: false
+- id: sre-30
+  title: A video being re-ingested during a run gives the job either the old transcript, the new one, or none, with no snapshot rule
+  level: L3
+  cell: {video-state: re-ingesting-after-edit, run-status: running, per-video-outcome-within-run: video-replaced-mid-run, actor: ingestion-job}
+  object: Ingested state that the Add video pop-up selects from ("from their ingested videos")
+  situation: Uploader re-runs ingestion on a video 5 min into a Report that includes it
+  consequence: Report mixes old and new transcript fragments, or that video's read fails mid-run; impossible to reproduce later
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "the user selects videos from their ingested videos"
+  proposed: Runs read a pinned ingestion version per video recorded on the entry; re-ingest creates a new version without touching running jobs
+  shallow: false
+- id: sre-31
+  title: Ingestion jobs and agent runs may compete for the same provider capacity, and no priority between them is specified
+  level: L3
+  cell: {actor: ingestion-job, video-state: ingestion-queued-not-started, library-state: all-videos-still-ingesting, surface: add-video-popup}
+  object: Videos page ingestion and the Add video pop-up's ingested-only list
+  situation: During an agent backlog, a team uploads 200 videos; ingestion waits behind agent runs on a shared provider quota
+  consequence: Pop-up shows 0 selectable videos for an hour; new users conclude upload is broken
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Videos page: users upload videos; uploaded videos get ingested."
+  proposed: State separate capacity pools or a priority order (ingestion before Report runs) and show "N videos ingesting, about M min" in the pop-up
+  shallow: false
+- id: sre-32
+  title: When selected videos exceed the model's context window, which videos or segments were dropped is not logged per entry or shown to the user
+  level: L4
+  cell: {per-video-outcome-within-run: video-truncated-to-fit-context, videos-selected: 21-100, run-status: done, mode: report}
+  object: Report output "covering all selected videos"
+  situation: 40 videos of 45 min each exceed the context budget; the agent truncates
+  consequence: Report reads as complete but omits videos 31-40; support cannot confirm because nothing records it
+  p_typical: 0.07
+  grounded: quote
+  evidence: "A Report produces one output covering all selected videos, not one per video."
+  proposed: Entry stores per-video coverage (full / truncated to N min / skipped); detail shows "Covered 30 of 40 videos fully"
+  shallow: false
+- id: sre-33
+  title: A retry or re-run after a model upgrade uses the new model, and whether the original entry is replaced or kept alongside is unspecified
+  level: L3
+  cell: {run-status: superseded-by-re-run, action: retry-whole-run, time-and-connection: agent-model-version-changed-since-entry, surface: history-entry-row}
+  object: History entry row
+  situation: Run failed on v1 in an outage; bulk retry 2 days later runs on v2
+  consequence: User sees two rows or one row whose output silently comes from a different model than other runs from that week
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Retry reuses the same entry id and records "Retried on <date> with agent vN"; History shows one row
+  shallow: false
+- id: sre-34
+  title: A follow-up that fails during an outage has no failed-turn state, and whether the failed turn is sent as context with the next follow-up is unspecified
+  level: L3
+  cell: {thread-state: thread-where-an-answer-failed, time-and-connection: during-agent-outage, action: ask-follow-up, surface: follow-up-thread}
+  object: Follow-up thread
+  situation: Follow-up 3 fails with provider 503; user asks follow-up 4 after recovery
+  consequence: Follow-up 4's answer may refer to an unanswered question or ignore it; follow-up input may be disabled with no reason
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Follow-up questions are supported after the first answer."
+  proposed: Failed turn shows "Couldn't answer - Retry"; it is excluded from model context until answered; input stays enabled
+  shallow: false
+- id: sre-35
+  title: When a backlog drains out of order, History sort key (submitted_at vs finished_at) decides whether a just-finished old run appears at the top or on page 3
+  level: L4
+  cell: {history-state: mix-of-done-and-failed-across-recent-runs, surface: history-filter-or-sort-controls, run-status: done, observer-location-at-status-change: on-history-tab-scrolled-or-filtered}
+  object: History tab list ordering (not specified)
+  situation: User submitted 12 runs during an outage; they finish in a different order over 40 min
+  consequence: Rows jump positions as statuses change; user loses the row they were watching
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Sort by submitted_at descending, stable; status changes update in place without reordering
+  shallow: false
+- id: sre-36
+  title: Which timestamp an entry shows (submitted, started, finished) and in which timezone is unspecified, so support cannot correlate a user's report with UTC logs
+  level: L4
+  cell: {time-and-connection: timezone-of-entry-timestamp, surface: history-entry-row, actor: support-staff-impersonating, run-status: failed}
+  object: History entry row
+  situation: User in IST says "my 3:10 report failed"; logs are in UTC
+  consequence: Support searches the wrong 5.5 h window
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: Row shows submitted time in viewer local time; detail shows submitted / started / finished with UTC on hover
+  shallow: false
+- id: sre-37
+  title: Prompt and question text containing participant personal data may be written verbatim into job logs with no redaction or log retention rule
+  level: L3
+  cell: {text-input-state: text-contains-participant-personal-data, actor: test-participant-data-subject, surface: prompt-field, run-status: failed}
+  object: Prompt / instructions field and question field
+  situation: User types "Focus on what Jane Doe (jane@acme.com) said about pricing"; job fails and error log captures the full request
+  consequence: Participant PII sits in observability tools with 30-90 day retention and wider access than History
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "Prompt / instructions (optional)"
+  proposed: Logs store prompt hash and length, not text; full text only in the entry store under the same access as History
+  shallow: false
+- id: sre-38
+  title: With no cancel action, a runaway Report over the whole library cannot be stopped by the user or by on-call
+  level: L3
+  cell: {action: cancel-run-not-in-spec, videos-selected: all-videos-in-library, run-status: running, library-state: 2000-videos}
+  object: History entry (actions for a running entry are not listed)
+  situation: User accepts select-all on 2,000 videos and submits; job will run for hours and saturate provider quota
+  consequence: Other users' runs queue behind it; on-call's only lever is killing the worker, which leaves the entry Running
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Minimum and maximum number of videos per run; video length and size limits."
+  proposed: Add Cancel on Queued and Running entries (new status Cancelled) and an ops cancel by entry id
+  shallow: false
+- id: sre-39
+  title: No operator kill switch is specified to disable Submit on the Agent page during an outage, nor the disabled-state copy
+  level: L4
+  cell: {surface: submit-button, action: open-agent-page, time-and-connection: during-agent-outage, mode: report}
+  object: Submit button
+  situation: On-call decides to stop new submissions for 1 h while the provider recovers
+  consequence: Without a flag, on-call must deploy to stop intake, or the backlog keeps growing
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: Feature flag disables Submit in both modes with copy "New runs are paused until about HH:MM"; the form keeps the user's draft
+  shallow: false
+- id: sre-40
+  title: History tab status refresh mechanism is unspecified; hundreds of open tabs polling every 2 s during an outage add load to the status endpoint
+  level: L4
+  cell: {time-and-connection: page-open-for-hours, observer-location-at-status-change: on-history-tab-top, history-state: several-running-at-once, surface: history-tab}
+  object: History tab ("past and current submissions")
+  situation: 800 users leave History open while their runs are Queued during a 2 h backlog
+  consequence: Either statuses never update without refresh, or aggressive polling doubles API load during the incident
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Poll only while any visible entry is non-terminal, backoff 5 s -> 60 s, pause when the tab is hidden; or push via server events
+  shallow: false
+- id: sre-41
+  title: Log retention may be shorter than History retention, so support cannot investigate a failed entry older than the log window
+  level: L3
+  cell: {entry-point-and-lifecycle-phase: long-after-retention-window, time-and-connection: after-a-year, actor: support-staff-impersonating, run-status: failed}
+  object: History entry from a year ago
+  situation: User asks in October 2027 why a run from October 2026 failed; logs kept 30 days
+  consequence: Support has only the Failed badge; the reason was never stored on the entry itself
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "Lists past and current submissions from both modes."
+  proposed: Persist terminal reason code, attempt count, agent version and timings on the entry record, independent of log retention
+  shallow: false
