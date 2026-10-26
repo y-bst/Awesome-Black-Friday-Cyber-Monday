@@ -54,7 +54,7 @@ None. Every item has the full schema, is L3/L4 and names a concrete spec object.
 ## Notes on normalisation
 
 - admin-25 had a non-axis key `surface-secondary: empty-state`. It was folded into `surface` as `[history-tab, empty-state]` and the key was removed.
-- Mislabelled values the agents wrote (for example history-4 `action: filter-by-tag`, history-7 `action: open-add-video-popup`) are kept. The value the situation plainly satisfies was added next to them (for example `filter-history-by-mode-or-status`).
+- Values that agents mislabelled are kept as written. Where the situation plainly satisfies another value, that value was added next to the original. Example: history-4 keeps `action: filter-by-tag` and gains `filter-history-by-mode-or-status`. history-7 keeps `action: open-add-video-popup`, and nothing was added because no action value matches opening the History list.
 - Survivors keep their own cell plus the values added by normalisation. Cells of merged ids were not combined into the survivor.
 
 ## Leaves per perspective (in -> surviving)
