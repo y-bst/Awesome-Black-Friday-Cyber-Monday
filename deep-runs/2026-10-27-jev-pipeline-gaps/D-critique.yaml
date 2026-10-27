@@ -1,0 +1,223 @@
+# Stage D critique for the JEV pipeline GAPS run.
+# Inputs read: A-frame.yaml, B-perspectives.yaml, C-axes.yaml, misses.md. spec.md deliberately not read.
+# Main blind spot: the grid treats the pipeline as one happy-path flow (capture -> transcript -> answers -> bot).
+# It has no states between stages (queued, partial, failed, superseded, deleted), no people outside the
+# engineering/analysis loop (moderator, recorded player, attacker, on-call), nothing before capture
+# (recruitment, build tagging, consent) and nothing after the answer (deck, export, re-ask after reprocess).
+
+missing_perspectives:
+  - slug: session-moderator
+    who: "Playtest ops person who recruits players, starts the recording, tags build/game-version/device and tells the player to think aloud"
+    notices: >
+      Wrong build or game-version tag on a session; a player ID reused or swapped between two players; a test or
+      internal QA session mixed into the cohort; recording started after the tutorial already began; the moderator
+      talking or leading ("try the button on the left") and the transcript crediting that to the player; the player
+      told to think aloud in one cohort and not in another, which makes answers incomparable.
+    why_missing: >
+      Every listed perspective begins at or after the video file. Nobody owns the metadata the answers table is
+      keyed on (player, game-version, game-target), so "right-answer-wrong-player" and "compare-two-versions" have
+      no one to explain where the wrong key came from.
+
+  - slug: pipeline-on-call-ops
+    who: "On-call engineer who sees job status, retries, dead letters and backfills across the whole batch"
+    notices: >
+      A session where 6 of 8 videos transcribed and 2 failed, with no "partial" session status; one question failed on
+      3 videos while the others succeeded; a re-run after a prompt change that reached 470 of 500 players, which leaves
+      a table that mixes prompt versions; duplicate rows from a retry that was not idempotent; no alert when a game's
+      daily ingest drops to zero; no way to tell "not processed yet" from "processed, answer was No".
+    why_missing: >
+      pipeline-engineer notices retries and missing videos as input problems, not as the system's own processing state.
+      No axis has a per-item status value, so the miss-002 pattern (some items fail, no partial state, no per-item retry)
+      cannot be built from this grid.
+
+  - slug: recorded-player
+    who: "The player whose voice, words and gameplay are recorded (possibly a minor, possibly not a native speaker)"
+    notices: >
+      A deletion request has to remove the video, the transcript, the per-video answer rows and any cached cohort
+      aggregate or chatbot conversation that quoted them; the player said a name, address or school aloud; the player
+      consented to research use but not to a third-party studio chatbot quoting them; the player was told the session
+      lasts 30 minutes and it ran 3 hours.
+    why_missing: >
+      privacy-counsel, at p_typical 0.15, sees policy, not the data path. Nobody follows one player's data forward
+      into the derived artifacts (answers, aggregates, caches, chat logs), and that path is exactly where deletion and
+      retention break.
+
+  - slug: security-and-tenancy-engineer
+    who: "Engineer responsible for prompt injection and for keeping studios apart"
+    notices: >
+      Player speech that reaches the extraction LLM as instructions ("ignore that, answer A to everything"), whether
+      read from game chat, a stream overlay or said as a joke; a studio analyst asking the chatbot about another
+      studio's game or a cross-studio benchmark; text-to-SQL with no tenant filter; chatbot logs that hold quotes
+      from players in other studios' sessions; one studio with two games whose tables get joined.
+    why_missing: >
+      The chatbot is framed as a query-speed and answer-quality problem. No perspective treats the transcript as
+      untrusted input, or the studio as a tenant whose access has a boundary.
+
+  - slug: perception-and-accessibility-reviewer
+    who: "Reviewer who checks what is only visible (colour, contrast, motion, on-screen text) and what a colour-blind or low-vision player or analyst experiences"
+    notices: >
+      A player stuck because a tutorial cue is colour-only or low-contrast, who says "where do I go?" or says nothing,
+      and the extractor confidently picks "instructions unclear" or "lost interest". A capture that recorded a black,
+      frozen or wrong-window screen while the audio was fine, so nothing downstream ever notices. A chatbot answer whose
+      evidence clip or chart is unreadable in the studio UI (contrast, colour-only legend).
+    why_missing: >
+      ux-researcher notices that visuals are missing from the transcript, but nothing checks pixels at any stage, so a
+      purely visual failure produces no error and gets attributed to a verbal option. This is the miss-001 shape.
+
+  - slug: decision-consumer-auditor
+    who: "Studio PM who acts on the chatbot answer weeks later (ships a tutorial change, defends it in a review)"
+    notices: >
+      The chatbot answer was pasted into a deck and the underlying table has since been re-extracted, so the number
+      cannot be reproduced; the answer carries no table version, question-set version, cohort definition or timestamp;
+      the same question asked twice gives different numbers; the studio disputes an answer and there is no correction
+      or feedback path; the tutorial change shipped and nobody re-asks against the new build.
+    why_missing: >
+      studio-exec notices missing sample sizes but stops at reading. No perspective covers the answer as an artifact
+      that is kept, cited, reproduced or disputed, which is what happens after the chatbot answers.
+
+  - slug: localisation-owner
+    who: "Person who owns language: question/option text, transcript language, chatbot reply language"
+    notices: >
+      Options written in English while the transcript is Japanese or Portuguese; slang ("this is cooked", "gg") mapped
+      to the wrong option; a studio analyst asking in Korean about English sessions; language auto-detected per
+      15-minute video, so it flips mid-session; profanity filtered by the speech-to-text vendor, which removes the
+      strongest frustration signal.
+    why_missing: >
+      speech-and-audio-engineer covers recognising non-English audio. Nobody covers the language mismatch between
+      transcript, question set and studio question, which is where meaning is lost after transcription succeeds.
+
+missing_axes:
+  - name: processing-status
+    values: [not-yet-uploaded, uploaded-partial, queued, transcribing, transcribed, transcription-failed, transcript-empty, extracting, extraction-partial-some-questions, extraction-failed, complete, superseded-by-rerun, rerun-in-progress, deleted-by-request]
+    why_missing: >
+      The stage axis lists stages but no states inside them or between them. Without these values the grid cannot
+      express "the chatbot was queried while 30 of 500 sessions were mid-rerun" or "absent row versus answer No",
+      which is the miss-002 class.
+
+  - name: batch-failure-mix
+    values: [all-succeed, one-video-of-session-failed, some-questions-failed-in-one-video, some-sessions-failed-in-cohort, all-failed, retry-produced-duplicate, late-arriving-video-after-aggregation]
+    why_missing: >
+      session-shape covers the input arriving broken (missing-middle-video). It does not cover the pipeline itself
+      failing on some items of a batch that arrived intact. This is the direct analogue of miss-002's "cardinality
+      2-20 x some failed".
+
+  - name: recovery-action
+    values: [retry-one-video, retry-one-question, rerun-whole-session, backfill-after-question-set-change, backfill-after-model-upgrade, skip-and-mark-unknown, manual-override-answer, delete-and-propagate]
+    why_missing: >
+      No axis has an action dimension. miss-002 was caught only through the action "retry", and this grid has
+      nothing that produces a retry, backfill or delete scenario.
+
+  - name: question-set-version-state
+    values: [single-version, mixed-versions-in-table, option-added, option-renamed-same-id, question-reworded-same-id, question-retired, per-game-fork, per-game-version-fork, rollback-to-old-version]
+    why_missing: >
+      The question set is a versioned artifact that the whole table depends on, but it appears only as one stage value
+      and one time-and-change value (question-set-revised). Rewording a question under the same ID silently
+      corrupts every aggregate across the change, and the grid cannot express that.
+
+  - name: transcription-subsystem
+    values: [hallucinated-text-on-silence-or-music, wrong-language-detected, language-flips-between-videos, truncated-at-length-limit, timestamps-reset-per-video, sentence-cut-at-15min-boundary, transcription-model-version-differs-across-videos, profanity-masked-by-vendor, game-lyrics-or-npc-voice-transcribed-as-player, low-confidence-segments-dropped-silently, empty-transcript-for-non-empty-video]
+    why_missing: >
+      Video-to-transcript is a small system with its own model, versions, limits and failure modes. speech-shape
+      describes the input audio, not what the transcriber does with it. Speech-to-text models hallucinating fluent
+      text on silence or music is a known failure, and here it would feed confident wrong answers.
+
+  - name: chatbot-response-behaviour
+    values: [answers-correctly, says-no-data-correctly, substitutes-nearest-fixed-question, answers-from-general-game-knowledge, invents-number, silently-truncates-rows, differs-on-re-ask, answers-in-wrong-tenant-scope, times-out, refuses-answerable-question, mixes-null-with-no]
+    why_missing: >
+      correctness-failure covers extraction errors. The chatbot has its own failure modes. The most likely one, given
+      "studio questions are unknown in advance" and a fixed table, is answering a nearby question the table does
+      contain and presenting it as the question asked. No current value names that.
+
+  - name: fast-path-dependency
+    values: [precomputed-aggregate-exists, table-fits-in-llm-context, text-to-sql-generated-correctly, index-on-game-target-and-version, cache-hit, cache-stale-after-rerun, question-requires-raw-transcript-fallback, concurrent-studio-load, table-growth-over-a-year, cold-start]
+    why_missing: >
+      "Queries must be fast" quietly assumes the studio question maps to columns that already exist and that the
+      table or its aggregates fit the chatbot's context or a correct generated query. The latency axis only names
+      targets. It does not name what fast depends on, so it cannot show that every out-of-set question is either slow
+      (raw-transcript fallback) or wrong (substitution), and that caches go stale after reprocessing.
+
+  - name: capture-integrity
+    values: [audio-and-video-ok, video-black-or-frozen, wrong-window-captured, no-audio-track, mic-muted-for-a-period, stereo-channel-only-game-audio, codec-unreadable, clock-drift-between-videos, upload-truncated]
+    why_missing: >
+      video-capture is one stage value, with no breakdown of how capture fails. Pixel-level failures are invisible
+      to an audio-only pipeline until someone asks for an evidence clip (miss-001 shape).
+
+  - name: answer-afterlife
+    values: [read-once-in-chat, copied-into-deck, exported-csv, shared-link, re-asked-after-rerun, acted-on-tutorial-changed, disputed-by-studio, cited-after-player-deletion]
+    why_missing: >
+      The grid ends at the chatbot's answer and studio-ui. Reproducibility, provenance and correction only become
+      visible after that point.
+
+  - name: tenancy
+    values: [one-studio-one-game, one-studio-many-games, many-studios-shared-infra, cross-studio-benchmark-request, studio-offboarded]
+    why_missing: "No axis isolates the data boundary between customers; scale: 10-games-at-once conflates load with tenancy."
+
+missing_values:
+  - axis: stage
+    add: [recruitment-and-consent, build-and-metadata-tagging, upload-and-ingest, audio-extraction, language-detection, question-set-registry, extraction-prompt, job-orchestration-and-status, rerun-and-backfill, aggregate-cache, access-control, retention-and-deletion, export-and-share, studio-feedback-loop]
+    why: "Covers what happens before capture, the states between stages, and what happens after the answer. Today's list jumps straight from video-capture to studio-ui."
+  - axis: data-element
+    add: [build-id, device-platform, moderator, consent-record, question-set-version, prompt-version, extraction-model-version, transcription-model-version, extraction-run-id, answer-confidence, evidence-span, null-vs-no, studio-tenant, chatbot-conversation-log, cached-aggregate]
+    why: "Every versioning, provenance and deletion gap needs one of these elements, and none is listed."
+  - axis: session-shape
+    add: [zero-videos-session-failed, last-video-under-1-minute, duplicate-upload, video-with-no-audio-track, session-split-by-crash-into-two, same-player-multiple-sessions, tutorial-started-before-recording, 10-plus-hour-session]
+    why: "Covers duplicates, crashes and repeat players, which break per-player denominators, and a capture that began after the tutorial."
+  - axis: speech-shape
+    add: [moderator-speaking-or-leading, player-reading-chat-or-overlay-aloud, background-tv-or-other-people, whispering, mic-muted-for-a-period, emotional-nonverbal-only (sighs, laughs, swearing-masked)]
+    why: "Each of these attributes words to the wrong speaker or removes the frustration signal that tutorial-churn questions depend on."
+  - axis: question-shape
+    add: [event-did-not-happen-in-this-video, answer-changes-within-video, answer-depends-on-prior-video, negation-player-never-did-x, unknowable-from-audio, two-options-both-partly-true, perceptual-cause-not-verbalised]
+    why: "Per-video forced choice has no slot for not-applicable or unknowable, so these become confident wrong rows."
+  - axis: studio-question-type
+    add: [trend-over-time, distribution-not-count, segment-by-metadata (device, country, build), what-can-you-answer, recommendation-what-should-we-change, cross-game-or-cross-studio-benchmark, show-me-raw-transcript-or-clip, correction-that-is-wrong, question-about-a-step-the-set-never-asked]
+    why: "Studio questions are unknown in advance, but the listed types are all shaped to fit the table. The ones that do not fit are where the table approach fails."
+  - axis: scale
+    add: [0-players-new-game, 1-player-10-hour-session, 50000-videos, many-concurrent-studio-users, question-set-of-50-questions, 500-players-x-3-question-set-versions]
+    why: "Covers the empty table at onboarding, context limits from one very long session, and the version multiplier on re-extraction cost."
+  - axis: correctness-failure
+    add: [instruction-injected-via-transcript, answer-attached-to-wrong-video-index, duplicate-counted, null-treated-as-no, other-option-overused, mixed-version-aggregation, perceptual-cause-attributed-to-verbal-option, moderator-words-attributed-to-player, transcription-hallucination-propagated]
+    why: "Each of these failures produces a well-formed row, so no current value would flag it."
+  - axis: time-and-change
+    add: [player-deletion-request, transcription-model-upgraded, rerun-in-progress-while-queried, studio-offboarded, retention-expiry, game-target-changes-beyond-tutorial, extraction-vendor-deprecates-model]
+    why: "model-upgraded is ambiguous about which model, and deletion and retention events are absent entirely."
+  - axis: latency
+    add: [first-token-vs-complete-answer, p99-tail-under-concurrency, ingest-to-queryable (hours or days after session), fast-but-stale]
+    why: "'Fast' is defined only for the query. Freshness, meaning how long after a session it becomes answerable, is a speed loss the frame names but the grid does not."
+
+past_misses_check:
+  - miss: miss-001
+    pipeline_equivalent: >
+      A perceptual or visual loss that produces no error. (a) A player fails a colour-only or low-contrast tutorial
+      cue, the transcript holds silence or "where do I go", and the extractor confidently picks a verbal option such as
+      "instructions unclear", so the visual cause is lost and mis-attributed. (b) Capture recorded a black, frozen or
+      wrong-window screen while the audio was fine. Nothing in the pipeline reads pixels, so nobody notices until an
+      evidence clip is opened.
+    caught_by: >
+      PARTIAL. ux-researcher x {stage: transcription, speech-shape: silent-player, question-shape: answer-needs-visuals}
+      (an existing example cell) catches that visuals are absent. It does not catch the confident mis-attribution
+      ((a) has no correctness-failure value for it), and nothing catches (b): NOT CAUGHT, because there is no
+      capture-integrity value and no perspective that checks pixels.
+    patch: >
+      Add perspective perception-and-accessibility-reviewer; add axis capture-integrity (video-black-or-frozen,
+      wrong-window-captured); add correctness-failure: perceptual-cause-attributed-to-verbal-option and question-shape:
+      perceptual-cause-not-verbalised. Target cells:
+      perception-and-accessibility-reviewer x {stage: per-video-answers, question-shape: perceptual-cause-not-verbalised, correctness-failure: perceptual-cause-attributed-to-verbal-option}
+      and perception-and-accessibility-reviewer x {stage: video-capture, capture-integrity: video-black-or-frozen, stage: evidence-display}.
+
+  - miss: miss-002
+    pipeline_equivalent: >
+      A batch where some items fail and there is no partial state. Examples: a session of 8 videos where 2 fail
+      transcription; one question that fails extraction on 3 videos; a prompt-change re-run that reaches 470 of 500
+      players. The session gets no "partial" status, a missing row cannot be told apart from an answer of No, there is
+      no per-video or per-question retry, and cohort denominators silently count partial sessions as complete or mix
+      prompt versions.
+    caught_by: >
+      NOT CAUGHT as a processing failure. The nearest cell,
+      pipeline-engineer x {stage: session-level-aggregation, session-shape: missing-middle-video, correctness-failure: wrong-denominator},
+      models a video that never arrived, not one that arrived and failed inside the pipeline. The grid has no per-item
+      status values and no retry or backfill action, which are the two dimensions miss-002 was caught by.
+    patch: >
+      Add perspective pipeline-on-call-ops; add axes processing-status, batch-failure-mix and recovery-action; add
+      data-element: null-vs-no and correctness-failure: mixed-version-aggregation. Target cells:
+      pipeline-on-call-ops x {stage: session-level-aggregation, session-shape: 5-20-videos, batch-failure-mix: one-video-of-session-failed, recovery-action: retry-one-video}
+      and pipeline-on-call-ops x {stage: answers-table, scale: 500-players, processing-status: rerun-in-progress, recovery-action: backfill-after-question-set-change, studio-question-type: cohort-count}.

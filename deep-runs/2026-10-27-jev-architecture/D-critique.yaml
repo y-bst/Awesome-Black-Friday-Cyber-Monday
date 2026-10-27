@@ -1,0 +1,269 @@
+# Stage D critique: IDEATE run, JEV architecture (representation, query path, question generation)
+# Inputs read: A-frame.yaml, B-perspectives.yaml, C-axes.yaml only (spec.md and memo.md deliberately unread).
+# Headline: all 18 perspectives are roles *inside* an LLM-pipeline build or its immediate users. Nobody on the list
+# has shipped "extract once, ask unknown questions later" at vendor scale. That problem is already solved in at least
+# five industries (observability, conversation analytics, UX-research repositories, clinical data, legal discovery),
+# and none of them is represented. The grid is also missing the ideate-mandated axes (mechanism type, user segment,
+# moment in journey, channel/surface). Its levers stop at the pipeline boundary: nothing changes how data is collected
+# or where answers are delivered.
+
+missing_perspectives:
+  - slug: observability-log-analytics-builder
+    who: "Engineer who built a log/event analytics store at scale (Splunk, Datadog, Honeycomb, ClickHouse-based observability)"
+    notices: >
+      Their whole product category exists to answer unknown questions fast over data that was written before anyone
+      knew the question. Wide structured events with high-cardinality attributes; schema-on-read (JSON/variant
+      columns) instead of a fixed answer table; columnar store plus inverted index; tiered retention (hot aggregates,
+      warm events, cold raw media); query-time sampling with error bars; and automatic contrast ("BubbleUp": what
+      attribute values differ between the slow/churned group and the baseline) so the user does not have to guess the question.
+    why_missing: >
+      The list frames the store as an LLM-extraction problem (store-designer, retrieval-engineer) and does not include
+      the people who solved unknown-question latency without LLMs. Cheap options like "emit every observation as a wide
+      event with open attributes" or "auto-diff churners against retainers" have nobody to propose them.
+  - slug: conversation-analytics-vendor
+    who: "Product/ML lead at a call-centre or sales conversation-intelligence vendor (Gong, CallMiner, Observe.AI, NICE)"
+    notices: >
+      Hours of recorded speech per customer, thousands of tenants, and each tenant asks its own questions. The patterns
+      they converged on: customer-defined "trackers" (keyword + semantic + example-based) that are applied
+      retroactively over the whole history overnight; universal pre-extracted primitives (talk ratio, silence,
+      sentiment curve, topic segments, moments) computed for every call regardless of tenant; scorecards; and
+      "smart trackers" learned from a few labelled examples. Also noticed: tracker libraries shared across tenants
+      in the same vertical, which here means the same game genre.
+    why_missing: >
+      The closest analogue on earth to this system (long multi-part speech recordings, many tenants, unknown questions,
+      fast answers) is absent. question-generation-researcher covers the academic side, not the shipped product patterns.
+      "Studio-defined tracker backfilled overnight" sits between the memo's lazy backfill and fixed questions, and
+      nobody here would name it.
+  - slug: ux-research-repository-vendor
+    who: "Builder of AI insight features over user-research session video (Dovetail, UserTesting/UserZoom AI insights, Condens, Lookback, PlaytestCloud)"
+    notices: >
+      Highlight reels, auto-tagging against a research taxonomy, theme clustering across sessions, "insight" objects
+      that link to evidence clips, and a repository that researchers query months later. They know which features
+      researchers trusted and which they ignored. They also know these vendors are the competition, and that they
+      offer clip-first evidence rather than numbers-first.
+    why_missing: >
+      The grid treats JEV as if no prior art exists. There is no competitor or substitute lens, so options that only
+      re-create what Dovetail or PlaytestCloud already ship would score as novel.
+  - slug: clinical-data-abstraction-lead
+    who: "Clinical informatics lead (registry chart abstraction, OMOP common data model, phenotype libraries)"
+    notices: >
+      Their field solved "extract once from long unstructured records, then answer research questions nobody wrote
+      yet, across many institutions with different local formats". The solution was a common data model with
+      vocabulary mapping per site, which here means per game: standard concepts (step, mechanic, UI element, affect),
+      with each game's local names mapped onto them. On top of that sit reusable phenotype definitions (cohort
+      logic as shareable artifacts), abstraction with source-span evidence, and inter-abstractor agreement as the
+      quality metric.
+    why_missing: >
+      knowledge-graph-person and question-generation-researcher touch ontologies but not the per-tenant vocabulary
+      mapping onto a shared model. That mapping is the specific mechanism that makes onboarding a new game cheap.
+  - slug: ediscovery-tar-practitioner
+    who: "Legal e-discovery / technology-assisted review (TAR) practitioner"
+    notices: >
+      For "find all players who X" questions, recall matters more than precision. TAR solved this with seed sets,
+      continuous active learning, and recall estimation by random sampling of the null set, with numbers you can
+      defend. Their position: retrieval-then-LLM without a recall estimate is indefensible. They would also point out
+      that privilege/redaction layers apply before anyone queries.
+    why_missing: >
+      eval-lead covers accuracy on golden sets, and statistician covers confidence intervals on aggregates. Nobody
+      covers recall for find-players-who queries, which is where retrieval paths silently fail.
+  - slug: studio-data-team-rejector
+    who: "Head of data/analytics engineering at a client studio who believes they can build this in-house"
+    notices: >
+      They do not want a chatbot. They want raw observations exported into their warehouse (Snowflake/BigQuery share,
+      Parquet drop, API) keyed by their player IDs, so they can join to telemetry and use their own BI and their own
+      LLM. Their questions: why pay JEV if you hand us transcripts? What is the moat? Will your schema break our dbt
+      models when you add a field?
+    why_missing: >
+      The askers on the list (analyst, designer) are friendly users. Nobody on it is an integrator who might say no.
+      Options where JEV's value is the extraction layer and not the query UI (warehouse-native delivery, stable
+      versioned schema contract) are invisible without them.
+  - slug: studio-security-reviewer
+    who: "Studio infosec / vendor-risk reviewer"
+    notices: >
+      Pre-release footage under NDA is the studio's most leak-sensitive asset. Their questions: which model vendor
+      sees frames and audio, and is that data used for training? Where is data resident? Is there single-tenant or
+      in-VPC deployment? Is SSO/RBAC per project? There is also prompt injection: player speech or on-screen text
+      becomes LLM input at ingestion and query time. Cross-studio leakage through a shared ontology, shared
+      question bank or shared cache is another risk.
+    why_missing: >
+      privacy-counsel covers personal data of players, not the studio's IP. A security veto would decide between
+      architectures (e.g. shared cross-tenant semantic cache, cross-game learned schema, third-party video-understanding APIs).
+  - slug: publisher-portfolio-buyer
+    who: "Publisher-side user-research or portfolio insights director overseeing many studios/titles"
+    notices: >
+      Cross-title benchmarks ("is this tutorial's step-3 stall rate bad compared with our other 12 titles?") require a
+      shared, comparable representation, and per-studio bespoke questions destroy comparability. Buys annually and
+      centrally, and wants standard reports plus drill-down. That is the opposite pull from per-game flexibility.
+    why_missing: >
+      The audience in the frame is "a studio". The list has no buyer above the studio, so cross-game scope and
+      standardised question banks look like nice-to-haves rather than the enterprise revenue lever.
+  - slug: platform-owner
+    who: "Developer-relations / partner-success lead at a platform (console first party, PC store, mobile store, UGC platform like Roblox/UEFN)"
+    notices: >
+      They have thousands of small developers who cannot afford a research team. They want a self-serve, zero-config
+      product embedded in the dev portal, with genre-default question banks and aggregate benchmarks across the
+      platform. Every developer is "a new game", and onboarding time per game must be close to zero.
+    why_missing: >
+      No channel/distribution perspective exists. This buyer turns "per-game hand-written questions don't scale" from
+      a cost problem into the binding constraint.
+  - slug: playtest-ops-protocol-designer
+    who: "Playtest operations lead who designs session protocol and recruits players"
+    notices: >
+      The cheapest way to answer more questions is to change what gets recorded: think-aloud prompting, in-game
+      micro-survey popups at step boundaries, a post-session questionnaire, a webcam, telemetry SDK hooks, recruiting
+      quotas so cohorts are big enough. Silent players produce empty transcripts and break speech-centric
+      representations. Their view: a session starts at recruitment, so the data has a history before ingestion.
+    why_missing: >
+      Every part value starts after the video exists. The data-generating process is treated as fixed, which removes
+      a whole lever class.
+  - slug: video-understanding-search-engineer
+    who: "Engineer from sports analytics / media archive search / video-native foundation models (Hudl, Second Spectrum, Twelve Labs, broadcast MAM)"
+    notices: >
+      Time-coded multimodal clip embeddings that support query-by-text and query-by-example ("find moments like this
+      clip"). Event spotting models trained once per sport, which here means per genre. Hierarchical temporal indexes
+      (frame → shot → play → game). Highlight generation. Their claim: you do not need a transcript-first representation.
+    why_missing: >
+      cv-frame-engineer is scoped to adding frames to an existing transcript pipeline, so video-first representations
+      have no advocate.
+  - slug: games-user-research-lead
+    who: "GUR lead at a large studio (established playtest lab with biometrics, RITE, heuristic evaluation)"
+    notices: >
+      Decades of established question frameworks: usability heuristics for games, PXI/GEQ/PENS experience inventories,
+      MDA, funnel/progression analysis. These are ready-made ontologies for question generation. They also know which
+      questions researchers actually take to producers, which is usually a prioritised issue list with severity and
+      frequency, not a Q&A.
+    why_missing: >
+      studio-analyst-asker and game-designer-asker are consumers. Nobody brings the discipline's existing taxonomies
+      as an input to question generation, or "severity-ranked issue list" as an output form.
+
+missing_axes:
+  - name: mechanism-type
+    values: [precompute-more, defer-to-query-time, reuse-or-cache-prior-work, approximate-then-refine, narrow-or-clarify-the-question, push-instead-of-pull, transfer-across-games, change-data-at-source, human-in-the-loop, auto-discover-without-question]
+    why_missing: >
+      The C-axes contract for ideate requires a mechanism-type axis, and it is absent. Without it every option is
+      "where in the pipeline". Cells like push-instead-of-pull (alert the studio about anomalies nobody asked about) or
+      auto-discover-without-question (contrast churners with retainers automatically) never get generated, and those
+      are the most direct answers to "unknown questions".
+  - name: user-segment
+    values: [studio-analyst, game-designer, ux-researcher, producer-exec, studio-data-engineer, live-ops-community, publisher-portfolio, platform-devrel, indie-solo-dev, jev-internal-ops]
+    why_missing: >
+      Required by the ideate contract. The grid assumes one generic asker. Option value differs sharply by segment:
+      a producer wants a ranked issue list, a data engineer wants a schema contract, an indie wants zero config.
+  - name: moment-in-journey
+    values: [game-onboarding-day-0, first-cohort-ingested, first-studio-question, steady-state-weekly, new-build-version, pre-launch-greenlight, live-ops-update, renewal-review]
+    why_missing: >
+      Required by the ideate contract. Question generation at day 0 (no data, no usage log) is a different problem from
+      steady state (usage log exists, prior answers cacheable). The grid has extraction-trigger, but not the studio-side
+      journey that decides which lever is even available.
+  - name: delivery-surface
+    values: [chatbot, dashboard-standard-report, warehouse-share-or-export, api-sdk, notebook, slack-jira-integration, scheduled-digest, clip-reel, alert]
+    why_missing: >
+      Required by the ideate contract (channel/surface). "chatbot-ui" is a single part value. Several of the cheapest
+      ways to make answers fast are to precompute a standard report or push a digest so the question is never typed.
+  - name: subject-domain
+    values: [onboarding-tutorial, core-loop, progression-difficulty, economy-monetization, social-multiplayer, narrative, ui-navigation, technical-bugs-performance, accessibility, player-affect]
+    why_missing: >
+      The leaf test forces a tutorial-churn worked example, and granularity has "tutorial-step". Together they bias the
+      whole run toward tutorials, although the frame says sessions are hours long. Representations that work for linear
+      tutorials (step funnels) fail for open-ended mid-game play, economy, or multiplayer.
+  - name: tenancy-and-deployment
+    values: [shared-multi-tenant, logically-isolated-per-studio, single-tenant, studio-vpc-or-on-prem, export-only-no-hosting, federated-query-into-studio-warehouse]
+    why_missing: >
+      This decides which representations are allowed at all: a cross-game learned schema or shared semantic cache is
+      impossible under strict isolation. The security and publisher perspectives pull in opposite directions on it.
+  - name: reuse-scope-of-extraction
+    values: [game-specific, genre-shared, universal-primitives, customer-defined-on-top-of-universal]
+    why_missing: >
+      This is the main lever conversation-analytics and clinical CDM vendors use to make onboarding cheap. question-origin
+      says where questions come from, but not how far an extraction investment transfers.
+  - name: schema-evolution
+    values: [frozen-schema, append-only-versioned-fields, schema-on-read, eager-backfill-all-history, lazy-backfill-on-demand, deprecate-and-migrate, model-upgrade-reextract]
+    why_missing: >
+      Unknown questions guarantee that new fields arrive continuously. How old sessions get the new field, and what
+      happens to answers computed under the old schema or model, is a design space in its own right. Today it is only
+      half-covered by extraction-trigger.
+  - name: uncertainty-policy
+    values: [always-answer, answer-with-ci-and-n, abstain-below-coverage, ask-clarifying-question, give-range-then-refine, escalate-to-human-analyst]
+    why_missing: >
+      evidence-form says what is shown, not what the system does when it does not know. The ask-your-data-veteran's
+      "trust collapse after one wrong number" calls for this as a lever, not a display choice.
+  - name: build-or-buy
+    values: [build-in-house, open-source-component, managed-cloud-service, third-party-video-understanding-api, studio-owned-stack]
+    why_missing: >
+      Effort S/M/L hides that several cells (inverted index, OLAP, clip embeddings, conversation trackers) are already
+      available off the shelf. The owner's build/prototype/drop decision needs this.
+
+missing_values:
+  - axis: part
+    add: [collection-protocol, tenancy-access-control, export-integration, feedback-loop-from-query-log, cost-governance, schema-evolution]
+    why: >
+      All current parts sit between "video exists" and "answer shown". Upstream (what gets recorded), downstream
+      (delivery into studio systems), and the loop back (failed questions becoming new extractions) are missing.
+  - axis: representation
+    add: [wide-event-schema-on-read, inverted-full-text-index, olap-cube-materialized-views, step-funnel-state-machine-per-player, hierarchical-temporal-summary-tree, clip-or-frame-embeddings, time-series-signals-affect-pace-silence, customer-defined-trackers-over-universal-primitives, common-data-model-with-per-game-vocab-map, behaviour-archetype-clusters, issue-list-with-severity-frequency, question-answer-bank-precomputed]
+    why: >
+      The list covers LLM-native options (MCQ, observation log, graph, summaries, embeddings). It misses classic
+      analytics (inverted index, OLAP, wide events), video-native (clip embeddings), signal-based (time-series of
+      speech rate, silence, deaths, idle) and domain-proven (CDM vocab mapping, trackers, funnel state machines)
+      representations.
+  - axis: query-path
+    add: [full-text-keyword-search, semantic-cache-similar-question, query-by-example-clip, automatic-contrast-cohort-diff, sampled-map-reduce-with-ci, progressive-answer-then-refine, agentic-multi-tool-plan, text-to-semantic-layer-metrics, human-analyst-escalation, push-alert-no-query]
+    why: >
+      This is the main hole the brief asked about. The cheapest fast path (keyword search over transcripts) is missing.
+      So are the observability answer to unknown questions (automatic contrast), the approximation trade (answer on
+      a sample with a CI in 2s, then refine), and reuse of near-duplicate prior questions.
+  - axis: question-origin
+    add: [genre-template-library, design-doc-patch-notes-store-page-derived, kpi-backward-from-studio-metrics, discriminative-contrast-churn-vs-retain, emergent-topic-clustering-of-player-speech, established-gur-frameworks-heuristics-pxi-mda, failed-query-log, few-shot-tracker-from-examples, onboarding-interview-with-studio, public-reviews-and-community-mining, pilot-sessions-then-freeze]
+    why: >
+      This is the question-generation lever set the brief flagged. The current five values are all "who writes it".
+      Missing are sources of content (design docs, patch notes, reviews, GUR frameworks), statistical generators
+      (contrast between outcome groups, topic clustering), and lifecycle tricks (pilot-then-freeze, failed-query-log
+      promotion, few-shot trackers).
+  - axis: modality
+    add: [webcam-face-and-posture, survey-or-in-game-prompt-response, player-profile-metadata, build-version-metadata, frame-embeddings, silence-or-absence-of-speech, controller-or-touch-heatmap]
+    why: >
+      The grid is speech-centric. Silent players, webcam affect, and survey answers (the ground truth for "how felt")
+      are absent. Build version is needed for compare-versions.
+  - axis: granularity
+    add: [variable-length-moment-or-episode, level-quest-match-mission, game-system, build-version, player-segment-cluster, studio-portfolio]
+    why: >
+      "tutorial-step" is the only in-game structural unit, which fails for hours-long non-linear play. Moments/episodes
+      are the unit conversation analytics and sports video index on.
+  - axis: question-type
+    add: [what-surprised-unknown-unknowns, what-to-fix-first-prioritised, who-are-the-churners-segment-discovery, technical-issue-bug-perf, counterfactual-why-not, prevalence-of-quoted-sentiment, did-the-fix-work-pre-post]
+    why: >
+      The listed types are mostly answerable from a store designed for them. The hard types for "unknown questions"
+      are the ones where the studio does not know what to ask (surprises, segments, prioritisation), and they are missing.
+  - axis: extraction-trigger
+    add: [on-new-game-onboarding, on-new-field-added, on-low-confidence-or-disagreement, on-cohort-size-threshold, continuous-during-live-session, on-studio-tracker-defined]
+    why: >
+      The current triggers ignore the event that matters most for unknown questions: a new field or tracker being
+      defined, which forces a decision about historical backfill.
+  - axis: scope
+    add: [cross-studio-benchmark, query-time-defined-cohort, build-version-pair]
+    why: >
+      Publisher and platform buyers need cross-studio scope, which conflicts with isolation and has to be visible as
+      an option slot. compare-versions also needs a version-pair scope.
+  - axis: latency-tier
+    add: [progressive-streaming, push-no-query, sub-200ms-cached]
+    why: >
+      Latency is treated as one number per answer. Progressive answers (estimate now, exact later) and push delivery
+      change the constraint instead of just meeting it.
+  - axis: evidence-form
+    add: [clip-montage-n-examples, contrast-vs-baseline, coverage-statement-n-of-m-players, extraction-provenance-model-and-schema-version, recall-estimate, chart, severity-frequency-matrix]
+    why: >
+      The designer asked to "see 5 clips of the same failure". The ediscovery perspective needs recall estimates.
+      Answers that change after re-extraction need provenance.
+  - axis: effort
+    add: [XS-days, buy-or-integrate]
+    why: >
+      Some options (keyword search, semantic cache, standard report) are days of work or off-the-shelf, and S-weeks
+      over-prices them.
+
+past_misses_check: "not applicable: ideate run"
+
+grid_notes:
+  - "No perspective has shipped this class of system at scale. The closest are ask-your-data-veteran (p=0.15) and retrieval-engineer, neither of whom has run a multi-tenant unknown-question store. Adding observability, conversation-analytics and UX-repository vendors fixes this."
+  - "The leaf test's mandatory tutorial-churn example combined with the 'tutorial-step' granularity is a framing bias. Consider letting the worked example be any question from the subject-domain axis, or requiring one non-tutorial example per perspective."
+  - "Nobody who says no: integrators (studio data team), security, and competitors were all missing. Expect options that assume the studio will use the JEV chatbot as the main surface."
+  - "p_typical values are high for builder roles (0.5-0.8) and very low for skeptics (0.12-0.2). The skeptics are where the non-obvious options come from, so their quota should not be trimmed."
