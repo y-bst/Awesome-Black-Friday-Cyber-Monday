@@ -12,7 +12,7 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 | positive options with `contested_by` | 5 |
 | refusal leaves kept (`refusal: true`) | 26 |
 | surviving | 159 |
-| leaves with cell values added in normalisation | 159 (1602 values added) |
+| leaves with cell values added in normalisation | 158 (971 values added) |
 
 ## Rejected
 
@@ -123,7 +123,7 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 
 | value | leaves |
 |---|---|
-| product-retention | 68 |
+| product-retention | 60 |
 | ua-marketing | 2 |
 | qa | 3 |
 | live-ops | 1 |
@@ -132,16 +132,16 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 | competitive-intel | 2 |
 | player-support | 0 |
 | trust-safety | 0 |
-| finance-exec | 4 |
+| finance-exec | 3 |
 | platform-owner | 0 |
 | ux-research | 3 |
 | localisation | 2 |
 | accessibility-compliance | 0 |
 | rating-and-consumer-compliance | 0 |
 | certification-release | 0 |
-| engineering-performance | 54 |
-| analytics-bi | 65 |
-| community-and-creator-marketing | 6 |
+| engineering-performance | 52 |
+| analytics-bi | 63 |
+| community-and-creator-marketing | 4 |
 | esports-team-or-league | 0 |
 | publishing-scout-bd | 0 |
 | ad-network-ops | 0 |
@@ -157,17 +157,17 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 
 | value | leaves |
 |---|---|
-| own-players-consented-sdk | 101 |
-| recruited-playtesters | 3 |
-| platform-or-emulator-capture | 16 |
-| public-streams-and-ugc | 4 |
+| own-players-consented-sdk | 100 |
+| recruited-playtesters | 2 |
+| platform-or-emulator-capture | 13 |
+| public-streams-and-ugc | 2 |
 | competitor-store-and-ad-video | 0 |
-| internal-qa-builds | 11 |
+| internal-qa-builds | 10 |
 | esports-vod | 0 |
 | support-ticket-attachment | 0 |
 | cloud-gaming-server-render | 2 |
 | automated-bot-or-agent-playthrough | 14 |
-| beta-and-early-access-testers | 8 |
+| beta-and-early-access-testers | 3 |
 | console-share-and-platform-clips | 2 |
 | creator-sponsored-streams | 0 |
 | ad-and-playable-ad-sessions | 2 |
@@ -179,88 +179,88 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 
 | value | leaves |
 |---|---|
-| funnel-drop-off-why | 115 |
-| churn-prediction-features | 105 |
-| root-cause-of-a-metric-change | 10 |
-| benchmark-vs-competitor | 31 |
-| anomaly-alert | 22 |
+| funnel-drop-off-why | 33 |
+| churn-prediction-features | 31 |
+| root-cause-of-a-metric-change | 9 |
+| benchmark-vs-competitor | 14 |
+| anomaly-alert | 18 |
 | highlight-or-clip-generation | 0 |
-| bug-reproduction | 8 |
-| compliance-audit | 18 |
-| creative-insight-for-ads | 3 |
+| bug-reproduction | 6 |
+| compliance-audit | 12 |
+| creative-insight-for-ads | 2 |
 | coaching-feedback | 0 |
-| training-dataset-export | 7 |
-| cohort-comparison | 43 |
-| ask-a-question-over-footage | 16 |
-| build-to-build-regression-diff | 24 |
-| ab-test-variant-explanation | 10 |
+| training-dataset-export | 6 |
+| cohort-comparison | 28 |
+| ask-a-question-over-footage | 15 |
+| build-to-build-regression-diff | 17 |
+| ab-test-variant-explanation | 7 |
 | ad-verification-and-fraud | 1 |
 | content-rating-classification | 0 |
-| early-ltv-or-payer-prediction | 4 |
+| early-ltv-or-payer-prediction | 2 |
 | real-time-in-session-intervention | 6 |
 | automated-test-generation | 0 |
 | creative-generation-from-gameplay | 0 |
 | evidence-pack-for-enforcement | 1 |
-| (no value) | 1 |
+| (no value) | 9 |
 
 ## delivery-form
 
 | value | leaves |
 |---|---|
-| dashboard | 33 |
+| dashboard | 26 |
 | alert-or-slack | 9 |
-| per-cohort-report | 46 |
-| api-or-sdk | 38 |
+| per-cohort-report | 31 |
+| api-or-sdk | 34 |
 | clip-reel | 1 |
 | in-tool-annotation | 3 |
 | managed-service-with-analyst | 3 |
 | licensed-dataset | 0 |
-| warehouse-table-export | 47 |
-| issue-tracker-ticket | 15 |
+| warehouse-table-export | 45 |
+| issue-tracker-ticket | 14 |
 | engine-editor-plugin | 5 |
 | ask-question-agent-chat | 8 |
 | generated-creative-files | 0 |
 | enforcement-or-cert-evidence-pack | 3 |
 | white-label-embed | 0 |
 | weekly-digest-email | 2 |
-| (no value) | 7 |
+| (no value) | 9 |
 
 ## pricing-model
 
 | value | leaves |
 |---|---|
-| per-session | 35 |
+| per-session | 25 |
 | per-month-seat | 3 |
-| per-game | 12 |
+| per-game | 11 |
 | per-mau | 1 |
 | revenue-share | 0 |
-| managed-project | 7 |
-| free-with-platform | 3 |
+| managed-project | 5 |
+| free-with-platform | 2 |
 | per-hour-of-video | 2 |
-| per-build-or-release | 5 |
+| per-build-or-release | 3 |
 | outcome-based-per-bug-or-uplift | 1 |
-| annual-enterprise-licence | 28 |
+| annual-enterprise-licence | 8 |
 | oem-royalty-or-white-label | 1 |
 | cpm-or-per-impression-verified | 0 |
 | data-licence-per-hour | 0 |
 | freemium-self-serve | 5 |
 | per-audit-or-certification | 0 |
-| (no value) | 79 |
+| (no value) | 103 |
 
 ## value-lever-b2b
 
 | value | leaves |
 |---|---|
-| replace-labour-hours | 8 |
-| increase-coverage-from-sample-to-all | 19 |
-| cut-time-to-insight | 28 |
-| create-data-that-did-not-exist | 13 |
-| de-risk-a-go-kill-decision | 17 |
-| avoid-fine-or-cert-failure | 22 |
+| replace-labour-hours | 4 |
+| increase-coverage-from-sample-to-all | 16 |
+| cut-time-to-insight | 22 |
+| create-data-that-did-not-exist | 12 |
+| de-risk-a-go-kill-decision | 15 |
+| avoid-fine-or-cert-failure | 17 |
 | produce-a-sellable-asset | 3 |
-| reduce-cost-per-incident | 14 |
-| enable-automated-action | 15 |
-| (no value) | 62 |
+| reduce-cost-per-incident | 13 |
+| enable-automated-action | 13 |
+| (no value) | 74 |
 
 ## buyer-org-type
 
@@ -270,7 +270,7 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 | mid-size-studio | 32 |
 | aaa-studio | 10 |
 | publisher | 17 |
-| platform-or-store | 5 |
+| platform-or-store | 3 |
 | ad-network-or-dsp | 0 |
 | analytics-or-mmp-vendor | 0 |
 | outsourced-services-vendor | 1 |
@@ -278,9 +278,9 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 | brand-advertiser | 0 |
 | data-or-market-intel-buyer | 0 |
 | investor | 0 |
-| device-oem | 16 |
+| device-oem | 15 |
 | regulator-or-rating-body | 0 |
-| (no value) | 77 |
+| (no value) | 80 |
 
 ## Uncategorised
 
