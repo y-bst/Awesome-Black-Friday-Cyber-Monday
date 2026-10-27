@@ -1,0 +1,671 @@
+- id: ops-1
+  title: "Mint session_id at recruitment scheduling and inject it into the capture app, so every 15-minute video file is named <session_id>_<segment_index> at the source"
+  level: L4
+  cell: {part: collection-protocol, granularity: session, extraction-trigger: at-ingestion, mechanism-type: change-data-at-source, moment-in-journey: first-cohort-ingested, effort: XS-days}
+  object: "spec.md Unspecified: 'how videos of one session are linked'; spec.md section 1: 'each video is capped at 15 minutes, so one session is many videos'"
+  situation: "A recruiter books player P-0412 for a 2-hour slot; today the capture app writes files named by wall-clock time and the stitcher must guess which 8 files belong together"
+  consequence: "Stitching heuristics (gap thresholds, filename sorting) are replaced by a key that exists before the first frame is recorded; 0 orphan videos per cohort instead of the 2-5% that timestamp heuristics misassign"
+  p_typical: 0.18
+  grounded: quote
+  evidence: "spec.md: 'how videos of one session are linked' is listed as Unspecified"
+  proposed: "Scheduling tool issues session_id (ULID) and a one-time capture token; the capture client embeds session_id, segment_index, player_id, build_hash in each file name and in a sidecar JSON written at segment close"
+  mechanism: "Changes collection-protocol and session-stitching: the sidecar JSON {session_id, segment_index, player_id, build_hash, started_at, protocol_version} is the primary key for the manifest; ingestion rejects any file with no sidecar instead of guessing"
+  example: "Studio asks 'what share of 500 players quit before tutorial step 5'; the planner groups observations by session_id from the sidecar and reads the last segment per session, with no join on filename timestamps"
+  cost: S
+  depends_on: nothing
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table is per video with no session key; this makes every per-player count correct by construction"
+  shallow: false
+
+- id: ops-2
+  title: "Think-aloud nudge: capture app shows 'say what you are thinking' overlay after 90s of mic silence, logs each nudge as an observation row with origin=prompt"
+  level: L4
+  cell: {part: collection-protocol, modality: silence-or-absence-of-speech, representation: timestamped-observation-log, extraction-trigger: continuous-during-live-session, mechanism-type: change-data-at-source, subject-domain: onboarding-tutorial, question-type: why}
+  object: "spec.md section 2: 'Each video is converted to a transcript'; memo.md item 1: 'utterance, friction signal, sentiment, quote with timestamp as evidence'"
+  situation: "In a 300-player remote cohort, 35-45% of players speak fewer than 20 words in a 15-minute video, so the transcript-based fields are empty for them"
+  consequence: "Silent players are not 'no friction'; they are missing data, and any 'why did they quit' answer is drawn from the vocal minority"
+  p_typical: 0.22
+  grounded: quote
+  evidence: "spec.md: 'The transcript alone is not enough'"
+  proposed: "Capture client measures mic RMS; after 90s below threshold it shows a 3s non-blocking overlay; nudge events (session_id, video_ms, count) are written to the observation log so the extractor can mark utterances within 20s of a nudge as prompted=true"
+  mechanism: "Changes collection-protocol and store: adds a nudge event stream and a boolean prompted on utterance rows; silence_ratio per session is computed at ingestion as seconds-below-threshold / session seconds"
+  example: "Question 'why do players quit at the inventory step': rows with prompted=true supply 40% more 'why' quotes than before; the answer states 'n=212 of 300 players had at least one utterance in step 4 (was n=140)'"
+  cost: S
+  depends_on: nothing
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table answers 'unknown' for silent players; this raises per-step speech coverage from roughly 45% to 70% of players"
+  shallow: false
+
+- id: ops-3
+  title: "Silence ratio and words-per-minute stored per session; the query planner states speech coverage (n of m players with >= 30 words in the step) on every speech-derived answer"
+  level: L4
+  cell: {part: evaluation, modality: silence-or-absence-of-speech, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: abstain-below-coverage, question-type: prevalence-of-quoted-sentiment, granularity: tutorial-step}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "Studio asks 'what percent of players found the crafting tutorial confusing'; 180 of 500 players said nothing during that step"
+  consequence: "Without a coverage statement the chatbot reports 22% confused with denominator 500 when the honest denominator is 320; the studio ships a fix sized to the wrong number"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'What a transcript contains (speech only, on-screen text, events)'"
+  proposed: "Per (session_id, step) store words, seconds, silence_ratio; planner computes speech-covered denominator and refuses a percentage when covered players are fewer than 30 or below 50% of the cohort, returning the covered count instead"
+  mechanism: "Changes evaluation and query-path: a coverage table keyed by (session_id, step) is written at ingestion; every speech-derived aggregate is emitted with 'n_covered of n_total'; below the floor the answer switches to a count plus a recommendation to run think-aloud nudges"
+  example: "'22% of players (71 of 320 who spoke during the step; 180 silent, excluded) called crafting confusing'"
+  cost: S
+  depends_on: ops-2
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no notion of why a cell is empty; this separates 'silent' from 'no friction'"
+  shallow: false
+
+- id: ops-4
+  title: "One-question micro-survey at tutorial step boundaries, fired by the studio SDK hook step_exit: 'How clear was that? 1-5' plus optional 10-word text, stored as a survey row keyed (session_id, step_id)"
+  level: L4
+  cell: {part: collection-protocol, modality: survey-or-in-game-prompt-response, granularity: tutorial-step, extraction-trigger: on-studio-tracker-defined, question-type: how-felt, subject-domain: onboarding-tutorial, evidence-form: count-with-denominator}
+  object: "spec.md section 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Studio wants per-step clarity scores across 500 players; speech sentiment inference from transcripts has unknown accuracy and misses silent players"
+  consequence: "A direct 1-5 clarity score at every step boundary is available for every player who reached the step, with no model inference; response rate in remote playtests of this type is 85-95% when the prompt is one tap"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  proposed: "SDK hook emits step_exit(step_id, build_hash); capture app overlays a 1-tap scale; row {session_id, step_id, clarity_1_5, text, asked_at_ms, answered_at_ms, skipped} lands in the store alongside observations"
+  mechanism: "Changes collection-protocol and store: adds a survey_responses table; the question generator treats clarity_1_5 as a closed field so 'which step is least clear' is an aggregate query"
+  example: "'Which tutorial step is least clear' returns step 4 (mean 2.3, n=412 of 500 reached, 391 answered) versus step 2 (mean 4.1)"
+  cost: M
+  depends_on: ops-7
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table infers 'confused' from speech; this measures it from the player at the moment it happens"
+  shallow: false
+
+- id: ops-5
+  title: "REFUSE: micro-survey prompts more often than once per step or inside a step; prompts themselves cause quits and contaminate the churn measurement"
+  level: L3
+  cell: {part: collection-protocol, modality: survey-or-in-game-prompt-response, granularity: utterance, subject-domain: onboarding-tutorial, question-type: how-felt, mechanism-type: change-data-at-source}
+  object: "spec.md section 3: 'detecting churn in the tutorial'"
+  situation: "A designer proposes a popup every 2 minutes asking 'how are you feeling' to feed the sentiment field"
+  consequence: "Persona refuses: in prior remote tutorial tests, interruptions above one per step raised early quits by an estimated 5-10 percentage points, so the instrument changes the very outcome the pipeline is meant to measure; the answer to 'why did they churn' becomes 'the survey'"
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none"
+  proposed: "Protocol rule: at most one prompt per step boundary, none during the first 3 minutes of play, and a protocol_version field so any cohort that violated the rule is flagged in comparisons"
+  mechanism: "Changes collection-protocol: a prompt budget (max 1 per step, max 8 per hour) enforced by the capture app; prompts beyond budget are dropped and counted in a prompts_suppressed field"
+  example: "Studio asks 'did more players quit in cohort B than A'; the planner finds cohort B ran protocol_version 3 (prompt every 2 min) and attaches 'not comparable: prompt rate differs' instead of a bare percentage"
+  cost: S
+  depends_on: ops-4
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table cannot tell whether churn was caused by the game or by the instrument; the prompt budget keeps the measurement clean"
+  shallow: false
+
+- id: ops-6
+  title: "Quit-reason capture: when the capture app detects game process exit or the player taps 'I am done', show 6 fixed reasons plus free text; store as the churn_reason closed field"
+  level: L4
+  cell: {part: collection-protocol, modality: survey-or-in-game-prompt-response, question-type: why, subject-domain: onboarding-tutorial, representation: fixed-mcq-answers, evidence-form: count-with-denominator, mechanism-type: change-data-at-source}
+  object: "spec.md section 3: 'a fixed set of questions with options, written per game target. The targets are mostly detecting churn in the tutorial'"
+  situation: "Of 500 players, 90 quit during the tutorial; the transcript around the quit moment is usually silence or a sigh"
+  consequence: "The single most-asked studio question ('why did they quit') is answered from a direct response for 70-80% of quitters instead of inferred from an empty transcript"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it'"
+  proposed: "Options: bored, stuck, confusing, bug or crash, out of time, did not like the game; plus text; row {session_id, quit_at_ms, reason_enum, text, step_id_at_quit}"
+  mechanism: "Changes collection-protocol and store: churn_reason becomes a closed field written at session end; the question generator maps every 'why quit' phrasing to this field first and only falls back to transcript retrieval when the field is null"
+  example: "'Why did players quit during the tutorial' returns stuck 38 of 90, confusing 22, bug 11, bored 9, out of time 6, other 4; 12 quitters did not answer and are listed separately"
+  cost: S
+  depends_on: ops-1
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table infers quit reason from 15 minutes of transcript; this asks the player at the quit moment"
+  shallow: false
+
+- id: ops-7
+  title: "Studio telemetry SDK hook: the game emits step_enter, step_exit, death, menu_open with build_hash and monotonic ms; stored as the ground-truth step timeline instead of screen-state classification"
+  level: L4
+  cell: {part: ingestion-extraction, modality: game-telemetry, representation: step-funnel-state-machine-per-player, granularity: tutorial-step, extraction-trigger: at-ingestion, mechanism-type: change-data-at-source, user-segment: studio-data-engineer, build-or-buy: studio-owned-stack}
+  object: "memo.md item 1: 'step on screen, action, utterance'; spec.md Unspecified: 'whether game telemetry is joined'"
+  situation: "The memo plans to detect 'step on screen' from frames; most studios already fire analytics events at tutorial step boundaries and can forward them with a 1-day integration"
+  consequence: "Step boundaries become exact (ms precision, 0 classifier error) for integrated studios; the frame pipeline is reserved for what telemetry does not carry (what the player hovered, what text they read)"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "spec.md: 'whether game telemetry is joined' is Unspecified"
+  proposed: "SDK or webhook: POST /events {session_id, build_hash, event_name, step_id, t_ms}; capture app aligns t_ms with video time via a sync beep at session start; events become observation rows with origin=telemetry"
+  mechanism: "Changes ingestion and store: a telemetry_events table joined to the manifest by session_id; the step funnel per player is computed from step_enter/step_exit; frames are only extracted inside steps with friction markers"
+  example: "'Median time on step 3 across 500 players' is SELECT percentile_cont(0.5) over step_exit minus step_enter, returning 4m12s with no vision model in the loop"
+  cost: M
+  depends_on: ops-1
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no step timestamps at all; this gives exact step durations and ordering per player"
+  shallow: false
+
+- id: ops-8
+  title: "Audio sync beep and clock offset: capture app plays a 1 kHz tone at session start and logs the wall clock, so telemetry t_ms maps to video_ms with under 100 ms error"
+  level: L4
+  cell: {part: frame-pipeline, modality: audio-non-speech, granularity: session, extraction-trigger: at-ingestion, mechanism-type: change-data-at-source, effort: XS-days}
+  object: "memo.md item 1: 'timestamped atomic observations across all videos of a session'"
+  situation: "Telemetry events arrive with the game's monotonic clock; video has its own clock; without a sync point, step boundaries drift by 2-8 seconds and clips open on the wrong moment"
+  consequence: "Every clip-with-timestamp evidence link for a telemetry-derived observation opens within 0.1 s of the event instead of several seconds off"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md section 1: 'A player's gameplay session is captured as video'"
+  proposed: "Capture app: at start, emit tone and write {session_id, tone_wall_clock_ms}; SDK: on init, write {session_id, init_wall_clock_ms, monotonic_ms}; ingestion detects the tone in the audio track and stores clock_offset_ms in the manifest"
+  mechanism: "Changes frame-pipeline and session-stitching: one offset per session in the manifest; all telemetry rows get video_id and video_ms derived from it"
+  example: "Studio clicks the evidence clip on 'player 212 died 3 times at step 4'; each clip starts 2 s before the death event at the correct frame"
+  cost: S
+  depends_on: ops-7
+  part: frame-pipeline
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no evidence clips; this makes telemetry-derived evidence frame-accurate"
+  shallow: false
+
+- id: ops-9
+  title: "Two-channel audio at capture: mic on channel 1, game audio on channel 2, so ASR runs on clean speech and non-speech sounds (sighs, laughs) are detectable on the mic channel alone"
+  level: L4
+  cell: {part: collection-protocol, modality: audio-non-speech, representation: time-series-signals-affect-pace-silence, granularity: utterance, mechanism-type: change-data-at-source, question-type: how-felt, effort: XS-days}
+  object: "spec.md section 2: 'Each video is converted to a transcript'"
+  situation: "Game music and voice-over mixed into the mic track raise ASR word error by an estimated 10-20 points during combat tutorials; a sigh under music is undetectable"
+  consequence: "Word error drops, and a frustration signal (sigh, groan, long exhale) becomes computable per step from the mic channel without any vision"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'The transcript alone is not enough'"
+  proposed: "Capture client records mic and system audio as separate tracks in the same container; ingestion runs ASR on track 1 and a non-speech audio classifier (sigh, laugh, groan, silence) on track 1 with per-event rows"
+  mechanism: "Changes collection-protocol and ingestion: adds an audio_events table {session_id, video_ms, class, confidence}; the question generator gains 'how-felt' primitives such as sighs per step per player"
+  example: "'Which tutorial step frustrates players most' returns step 4 with 1.8 sighs or groans per player-minute (n=480) versus a cohort mean of 0.4"
+  cost: S
+  depends_on: nothing
+  part: collection-protocol
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table has sentiment only where words exist; this measures affect for silent players too"
+  shallow: false
+
+- id: ops-10
+  title: "Pre-session intake form (8 fields: hours per week, 3 genres played, platform, language, age band, prior games in this genre, input device, hearing or vision needs) stored as the session header"
+  level: L4
+  cell: {part: collection-protocol, modality: player-profile-metadata, granularity: player, scope: query-time-defined-cohort, question-type: find-players-who, mechanism-type: change-data-at-source, effort: XS-days}
+  object: "spec.md Unspecified: 'languages'; spec.md section 4: 'a question over, say, 500 players'"
+  situation: "Studio asks 'do genre newcomers churn more at step 4 than veterans'; today nothing about the player exists except a video"
+  consequence: "Every cohort-split question (newcomers vs veterans, controller vs keyboard, under-25 vs over-35) becomes a GROUP BY on fields that exist before ingestion"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "spec.md Unspecified: 'languages'"
+  proposed: "Recruitment form writes player_profile {player_id, hours_per_week_band, genres[3], platform, language, age_band, genre_prior_games_count, input_device, accessibility_needs[]}; ingestion joins it by player_id from the sidecar"
+  mechanism: "Changes collection-protocol and store: a player_profile table; the planner's cohort resolver maps 'newcomers' to genre_prior_games_count = 0 using a small synonym table"
+  example: "'Do newcomers churn more at step 4' returns newcomers 31% (n=140) vs veterans 9% (n=360), quit before step 5"
+  cost: S
+  depends_on: ops-1
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table cannot split by anything about the player; this allows any profile split without re-extraction"
+  shallow: false
+
+- id: ops-11
+  title: "Recruitment quota table per game: minimum 30 players per cell of (genre experience x platform), 40% genre newcomers; the planner reports 'under-recruited' when a cohort split falls below 30"
+  level: L4
+  cell: {part: collection-protocol, scope: cohort, extraction-trigger: on-cohort-size-threshold, uncertainty-policy: abstain-below-coverage, evidence-form: coverage-statement-n-of-m-players, moment-in-journey: game-onboarding-day-0, user-segment: jev-internal-ops}
+  object: "spec.md section 4: 'a question over, say, 500 players is fast'"
+  situation: "A studio asks about mobile newcomers; the cohort recruited has 11 of them because recruitment was first-come"
+  consequence: "Answers on sub-cohorts below 30 are reported with a recruiting gap and the number of extra players needed, not as a percentage that will be quoted in a greenlight deck"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  proposed: "quota table {game_id, cell_key, min_n, recruited_n}; recruitment tool blocks closing the cohort until all cells reach min_n; planner joins the answer's cohort to quota and appends the gap"
+  mechanism: "Changes collection-protocol and evaluation: quota enforced at recruitment; at query time a cohort of size under 30 returns count-only plus 'recruit 19 more mobile newcomers to answer this at the usual confidence'"
+  example: "'Mobile newcomer churn at step 4' returns '4 of 11 quit; cohort under quota (need 30), 19 more players scheduled for next week' instead of '36%'"
+  cost: S
+  depends_on: ops-10
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table reports percentages at any n; this connects the answer to the recruiting pipeline that can fix it"
+  shallow: false
+
+- id: ops-12
+  title: "Incentive type stored per session (hourly pay, completion bonus, unpaid volunteer, store credit); the planner refuses to compare churn across incentive types without a flag"
+  level: L4
+  cell: {part: collection-protocol, modality: player-profile-metadata, question-type: compare-versions, uncertainty-policy: ask-clarifying-question, scope: build-version-pair, mechanism-type: narrow-or-clarify-the-question}
+  object: "spec.md section 3: 'detecting churn in the tutorial'"
+  situation: "Cohort A (build 1.2) was paid a completion bonus; cohort B (build 1.3) was paid hourly; B shows 14% more tutorial quits"
+  consequence: "Without the field the studio concludes build 1.3 made the tutorial worse; a completion bonus reduces natural quitting to near zero so the comparison is meaningless"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "session header gains incentive_type enum and incentive_amount; planner checks that both sides of any pre-post or version comparison share incentive_type and otherwise asks 'compare only hourly-paid cohorts (A n=120, B n=130)?'"
+  mechanism: "Changes collection-protocol and query-path: one enum field; a comparison guard in the planner that lists confounded protocol fields (incentive_type, moderated, protocol_version) before emitting a diff"
+  example: "'Did build 1.3 reduce tutorial churn' returns 'cohorts differ on incentive_type; restricted to hourly-paid players: 1.2 quit 18% (n=120), 1.3 quit 15% (n=130)'"
+  cost: S
+  depends_on: ops-10
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table does not know how the player was paid, so every churn rate is confounded by the incentive"
+  shallow: false
+
+- id: ops-13
+  title: "Natural-quit protocol: a cohort arm with no completion bonus and an explicit 'you may stop whenever you would stop at home' instruction, flagged natural_quit_allowed=true"
+  level: L4
+  cell: {part: collection-protocol, question-type: who-are-the-churners-segment-discovery, subject-domain: onboarding-tutorial, scope: cohort, mechanism-type: change-data-at-source, evidence-form: contrast-vs-baseline}
+  object: "spec.md section 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Paid testers told to play for 2 hours almost never quit a tutorial; the churn the studio fears happens at home with no incentive"
+  consequence: "Churn becomes observable at all: in a natural-quit arm the quit rate is a usable estimate of real churn, and the non-natural arm still supplies step durations and friction"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it'"
+  proposed: "Per cohort, 50% of players in the natural-quit arm (paid a flat show-up fee, told they can stop any time, minimum 10 minutes); arm stored as a session header field; churn questions default to this arm"
+  mechanism: "Changes collection-protocol: an arm field on the session header; the planner routes every 'quit' or 'churn' question to natural_quit_allowed=true sessions and reports the arm size"
+  example: "'Tutorial churn rate' returns '24% of 250 natural-quit players stopped before step 6; the 250 full-session players are excluded from the rate but included in step timing'"
+  cost: S
+  depends_on: ops-12
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table measures churn in sessions where quitting is not allowed; this creates sessions where it is"
+  shallow: false
+
+- id: ops-14
+  title: "Retrospective think-aloud: after the session the player watches 3 auto-selected clips (longest silence, longest step, the quit moment) and records a 30-second comment on each"
+  level: L4
+  cell: {part: collection-protocol, question-type: counterfactual-why-not, evidence-form: clip, mechanism-type: human-in-the-loop, modality: speech-transcript, granularity: variable-length-moment-or-episode, subject-domain: player-affect}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "Player 212 was silent for 6 minutes at the crafting bench and then quit; the live transcript has nothing to explain it"
+  consequence: "The moments the pipeline most needs a 'why' for get a targeted quote from the player 10 minutes later, when recall is still good; typical yield is a usable reason for 60-70% of selected clips"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "At session end the capture app runs 3 selectors (max silence window, max step duration from telemetry, last 60 s before exit), plays each clip, records audio; rows stored as observations with origin=retrospective and clip_ref"
+  mechanism: "Changes collection-protocol and store: observation rows gain origin enum {live, prompted, retrospective, moderator}; retrieval for 'why' questions ranks retrospective rows first"
+  example: "'Why do players stall at the crafting bench' returns 'I did not see that the recipe list scrolls' (player 212, retrospective, clip 00:41:10-00:41:40) plus 14 similar"
+  cost: M
+  depends_on: ops-7
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no mechanism to ask the player about a specific moment; this gets a reason for the exact moment"
+  shallow: false
+
+- id: ops-15
+  title: "Post-session PXI short form (10 items, 7-point) plus 'which step was hardest' pick from the game's step list, joined by session_id"
+  level: L4
+  cell: {part: question-generation, question-origin: established-gur-frameworks-heuristics-pxi-mda, modality: survey-or-in-game-prompt-response, granularity: session, question-type: how-felt, representation: fixed-mcq-answers, scope: cross-studio-benchmark}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes)'"
+  situation: "A studio asks 'is our tutorial worse than typical'; nothing in the pipeline is comparable across games"
+  consequence: "Ten validated items give a per-session experience score comparable across every game JEV runs, so 'worse than typical' has a benchmark; the hardest-step pick cross-checks the telemetry funnel"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'entities x dimensions x outcomes'"
+  proposed: "Questionnaire delivered in the capture app at session end; rows {session_id, item_id, score_1_7} and {session_id, hardest_step_id}; aggregate per game and per JEV portfolio with n"
+  mechanism: "Changes question-generation and store: the ontology's 'outcome' dimension gets 10 ready-made items instead of invented ones; cross-game benchmark is a materialised view by game_id"
+  example: "'Is our tutorial clarity below average' returns 'clarity item mean 3.9 (n=480) vs JEV portfolio mean 4.6 across 22 games; hardest step picked: step 4 by 41%'"
+  cost: S
+  depends_on: ops-1
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no cross-game comparable score; this adds one without a model"
+  shallow: false
+
+- id: ops-16
+  title: "Moderator probe log: in moderated sessions the moderator taps 'probed' with a reason code; utterances within 30 s are tagged moderator_elicited and excluded from spontaneous-sentiment counts"
+  level: L4
+  cell: {part: ingestion-extraction, mechanism-type: human-in-the-loop, modality: speech-transcript, granularity: utterance, evidence-form: extraction-provenance-model-and-schema-version, question-type: prevalence-of-quoted-sentiment}
+  object: "memo.md item 1: 'utterance, friction signal, sentiment'"
+  situation: "In 60 of 500 sessions a moderator asked 'what do you think of the map?' at step 3; the chatbot later reports that 'players talk about the map at step 3' as if it were spontaneous"
+  consequence: "Prevalence questions separate moderator-caused mentions from player-initiated ones; a studio's 'how many players mentioned X unprompted' is answerable"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'utterance, friction signal, sentiment'"
+  proposed: "Moderator console with one-tap probe button and 6 reason codes; probe events {session_id, video_ms, code} stored; extractor tags utterances in the next 30 s as elicited=true"
+  mechanism: "Changes ingestion and store: a boolean elicited on utterance rows plus a moderated flag on the session; prevalence answers report unprompted and elicited counts separately"
+  example: "'How many players mentioned the map was confusing' returns '38 unprompted of 440 unmoderated, 41 of 60 when asked by a moderator'"
+  cost: S
+  depends_on: ops-2
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table mixes elicited and spontaneous speech; this keeps prevalence honest"
+  shallow: false
+
+- id: ops-17
+  title: "Session header field moderated in {remote-unmoderated, remote-moderated, lab-moderated}; speech-derived rates are reported per modality because moderated sessions produce 2-3x the words"
+  level: L4
+  cell: {part: store, modality: player-profile-metadata, granularity: session, evidence-form: contrast-vs-baseline, uncertainty-policy: answer-with-ci-and-n, schema-evolution: append-only-versioned-fields}
+  object: "spec.md section 4: 'a question over, say, 500 players'"
+  situation: "A game's 500 sessions are 100 lab-moderated and 400 remote-unmoderated; the chatbot reports 'players complained about step 4' at 30% overall"
+  consequence: "The 30% is a mix of 55% in lab and 24% remote; the studio cannot tell which number to trust, and the pipeline cannot tell which is closer to home play"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'a question over, say, 500 players'"
+  proposed: "Header enum written at scheduling; every speech-derived rate is emitted as two numbers when both modalities exceed 30 sessions; the default denominator for 'at home' questions is remote-unmoderated"
+  mechanism: "Changes store and query-path: one enum column; the planner's aggregate template GROUPs BY moderated when the cohort is mixed"
+  example: "'Share of players who complained about step 4' returns 'remote 24% (n=400), lab 55% (n=100); remote is the closer proxy for home play'"
+  cost: S
+  depends_on: ops-10
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has one rate per question; this prevents lab-inflated rates being read as home rates"
+  shallow: false
+
+- id: ops-18
+  title: "Protocol version as a first-class field (protocol_version int, with a changelog table) so every answer that spans two protocol versions carries a 'protocol changed between cohorts' note"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: append-only-versioned-fields, question-type: did-the-fix-work-pre-post, evidence-form: extraction-provenance-model-and-schema-version, uncertainty-policy: answer-with-ci-and-n, moment-in-journey: new-build-version}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Between cohort 3 and cohort 4 the think-aloud nudge interval changed from 90 s to 60 s; cohort 4 has 35% more 'confused' utterances"
+  consequence: "A pre-post question on a build change picks up the protocol change as a game change unless the protocol version is visible to the planner"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'cached as a new field'"
+  proposed: "protocol_changelog {protocol_version, changed_at, field, old, new}; session header carries protocol_version; planner joins and emits a note listing changed fields when a comparison spans versions"
+  mechanism: "Changes schema-evolution and query-path: versions are append-only, never edited; the memo's model-and-schema-version provenance is extended with protocol_version"
+  example: "'Did build 1.4 reduce confusion at step 4' returns the diff plus 'protocol changed (nudge interval 90 s to 60 s) between these cohorts; 35% of the increase is within the range this change produced in earlier games'"
+  cost: S
+  depends_on: nothing
+  part: schema-evolution
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no record of how data was collected; this stops protocol changes being read as game changes"
+  shallow: false
+
+- id: ops-19
+  title: "Pilot-then-freeze: the first 5 sessions per game run full open-ended extraction (no question set); the question set for the cohort is induced from them and frozen before the remaining 495 are recorded"
+  level: L4
+  cell: {part: question-generation, question-origin: pilot-sessions-then-freeze, extraction-trigger: on-new-game-onboarding, moment-in-journey: game-onboarding-day-0, representation: learned-schema-from-data, mechanism-type: approximate-then-refine}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "A new game arrives on day 0 with no usage log and an ontology that does not know the game has a crafting bench"
+  consequence: "The question set includes game-specific objects (crafting bench, recipe scroll, map pin) seen in 5 real sessions, and the collection protocol (which steps get micro-surveys, where nudges are placed) is tuned before the expensive cohort is recruited"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "memo.md: 'pruned by the game target'"
+  proposed: "Pilot arm of 5 moderated sessions; a long-context pass lists every named object, step and friction moment; the ontology instantiates questions over that list; a human picks the step boundaries for micro-surveys; cohort recruiting opens only after freeze"
+  mechanism: "Changes question-generation and collection-protocol: the ontology is instantiated from pilot observations rather than from a design doc; the frozen set is versioned as question_set_v1 for the cohort"
+  example: "Pilot reveals players confuse 'forge' and 'crafting bench'; a question 'which station did the player open first' is added and the micro-survey at step 4 asks which one they meant to use"
+  cost: M
+  depends_on: ops-1
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table is written before anyone has watched a session; this writes it after watching 5"
+  shallow: false
+
+- id: ops-20
+  title: "Studio onboarding interview logs the studio's top 10 questions before recruitment and maps each to the instrument that will answer it (telemetry, micro-survey, think-aloud, quit-reason, vision)"
+  level: L4
+  cell: {part: question-generation, question-origin: onboarding-interview-with-studio, moment-in-journey: game-onboarding-day-0, user-segment: game-designer, mechanism-type: narrow-or-clarify-the-question, delivery-surface: dashboard-standard-report}
+  object: "spec.md Constraints: 'Their questions are not known in advance'"
+  situation: "Spec says questions are unknown; in practice every studio has 10 it already knows and 50 it will discover; the known 10 decide what must be recorded"
+  consequence: "The 10 known questions have a named instrument before the first session, so none of them hits the lazy-backfill path; the unknown 50 fall to the observation log"
+  p_typical: 0.14
+  grounded: quote
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  proposed: "Interview template; table studio_questions {game_id, question_text, instrument, field_name, answerable_from_day: n}; the standard report for the cohort is these 10 questions with answers and n"
+  mechanism: "Changes question-generation and delivery: a pre-registered question list drives the protocol build and becomes the cohort's standard report; chatbot queries that match a pre-registered question are served from its field"
+  example: "Studio question 'do players understand the stamina bar' is mapped to micro-survey at step 2 plus OCR of the stamina tooltip; day-0 report shows '71% clear (n=490), 9% never opened the tooltip'"
+  cost: S
+  depends_on: nothing
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table is written by JEV guessing the target; this is written from what the studio said it needs"
+  shallow: false
+
+- id: ops-21
+  title: "Minimum capture spec enforced at session start: 1920x1080, 30 fps, 6 Mbps, UI scale 100%; sessions below spec are flagged capture_quality=low and excluded from on-screen-text questions"
+  level: L4
+  cell: {part: frame-pipeline, modality: on-screen-text-ocr, granularity: video, mechanism-type: change-data-at-source, evidence-form: coverage-statement-n-of-m-players, effort: XS-days}
+  object: "memo.md item 1: 'Video frames add screen state and on-screen text'"
+  situation: "Remote players record at 720p with 1.5 Mbps; tutorial tooltip text at 11 px is unreadable by OCR in 30-40% of those sessions"
+  consequence: "On-screen-text questions ('did the player see the warning') are answered only over sessions where the text was legible, with the excluded count stated"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'Video frames add screen state and on-screen text'"
+  proposed: "Capture app refuses to start below spec unless the recruiter overrides; manifest stores resolution, fps, bitrate; ingestion runs OCR legibility probe on 10 sampled frames and sets capture_quality"
+  mechanism: "Changes frame-pipeline and collection-protocol: a quality gate before recording and a per-video quality field; OCR-dependent fields are null with reason=capture_quality for low sessions"
+  example: "'How many players read the stamina warning' returns '312 of 430 legible sessions; 70 sessions excluded (720p capture)'"
+  cost: S
+  depends_on: nothing
+  part: frame-pipeline
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table cannot say why a visual answer is missing; this names the capture defect and prevents it next cohort"
+  shallow: false
+
+- id: ops-22
+  title: "Controller and touch input logging in the capture app (button, axis, tap coordinates at 60 Hz) stored as input_events; idle input over 20 s combined with mic silence is the 'stuck' primitive"
+  level: L4
+  cell: {part: ingestion-extraction, modality: input-events, representation: time-series-signals-affect-pace-silence, granularity: variable-length-moment-or-episode, question-type: what-happened, mechanism-type: change-data-at-source, build-or-buy: open-source-component}
+  object: "memo.md item 1: 'friction signal'"
+  situation: "A player stares at the inventory screen for 40 s pressing nothing; the transcript is silent and the frame is static, so no observation row is generated"
+  consequence: "Stuck episodes become detectable for silent players from input alone; tap heatmaps per tutorial step show where players pressed when nothing happened"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'friction signal'"
+  proposed: "Capture client hooks OS input APIs; rows {session_id, video_ms, device, code, x, y}; ingestion derives idle_episode rows (start_ms, end_ms, step_id) when no input for 20 s and no speech; heatmap per step is a materialised view"
+  mechanism: "Changes ingestion and store: an input_events stream and derived idle_episodes table; the question generator gains 'where did players tap when stuck' from the heatmap view"
+  example: "'Where do players get stuck at step 4' returns 'idle episodes over 20 s in 143 of 500 players, median 38 s; 61% of dead taps land on the greyed Craft button'"
+  cost: M
+  depends_on: ops-1
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table infers 'stuck' from speech; this measures it from input for every player"
+  shallow: false
+
+- id: ops-23
+  title: "REFUSE as default: webcam face and posture capture; recruitment yield drops and the consent form length doubles, so run it only as an opt-in arm of at most 20% of a cohort"
+  level: L3
+  cell: {part: collection-protocol, modality: webcam-face-and-posture, subject-domain: player-affect, tenancy-and-deployment: logically-isolated-per-studio, mechanism-type: change-data-at-source, user-segment: jev-internal-ops}
+  object: "memo.md item 1: 'sentiment'"
+  situation: "A proposal to require webcam for every remote player to get facial affect at each tutorial step"
+  consequence: "Persona refuses as a requirement: in remote panels, mandatory webcam cuts sign-up by an estimated 25-40% and biases the panel toward extroverts, which distorts churn; opt-in arm keeps the panel representative and still yields affect on 100 players"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'sentiment'"
+  proposed: "Session header webcam_consent boolean; at most 20% of slots offered as webcam-with-bonus; affect fields computed only for that arm and reported with 'n=100 webcam arm'"
+  mechanism: "Changes collection-protocol and store: a consent flag and a cap enforced by the scheduler; affect observations carry origin=webcam"
+  example: "'Did players look frustrated at step 4' returns 'webcam arm n=100: 44% showed a frustration expression in step 4; not measured for 400 players'"
+  cost: M
+  depends_on: ops-10
+  part: collection-protocol
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no affect channel; this adds one without shrinking the panel"
+  shallow: false
+
+- id: ops-24
+  title: "REFUSE: replacing think-aloud with silent play plus heavier vision extraction; speech is the only 'why' channel that costs nothing at ingestion"
+  level: L3
+  cell: {part: collection-protocol, modality: speech-transcript, question-type: why, mechanism-type: change-data-at-source, representation: clip-or-frame-embeddings, effort: XS-days}
+  object: "spec.md section 2: 'The owner's view: the transcript alone is not enough; what is on screen is largely lost'"
+  situation: "A proposal to drop the think-aloud instruction because silent sessions are 'more natural' and vision models can infer intent"
+  consequence: "Persona refuses: vision can show a player opening the wrong menu 3 times but not that they thought it was the map; 'why' questions over 500 players would depend on inferred intent with no quote evidence; think-aloud adds 0 ingestion cost and the naturalness cost is bounded by the natural-quit arm"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'what is on screen is largely lost'"
+  proposed: "Keep think-aloud as the default instruction; store think_aloud_instructed boolean so the rare silent-play arm is separable"
+  mechanism: "Changes collection-protocol: instruction given in the pre-session script; one boolean on the header"
+  example: "'Why did players open the forge instead of the bench' is answered by 23 quotes ('I thought the anvil icon was crafting') rather than a vision model's guess"
+  cost: S
+  depends_on: nothing
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Same channel as the fixed table but kept deliberately; the refusal protects the 'why' questions the table was built for"
+  shallow: false
+
+- id: ops-25
+  title: "Live moderator probe queue: during a moderated session the pipeline pushes 'player idle 45 s at step 4, ask why' to the moderator console within 10 s so the 'why' is captured in the moment"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: alert, mechanism-type: push-instead-of-pull, extraction-trigger: continuous-during-live-session, latency-tier: under-30s, question-type: why, user-segment: ux-researcher}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction'"
+  situation: "Moderator is watching 2 sessions at once and misses a 45 s stall; the stall is only found days later in the observation log with no explanation"
+  consequence: "The highest-value 'why' moments get a question asked while the player can still answer it, instead of a retrospective guess; probe events are logged per ops-16 so they stay separable"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md item 1: 'friction signal'"
+  proposed: "Streaming pass over telemetry and input events with 3 rules (idle over 30 s, 3 deaths in 2 min, same menu opened 3 times); each rule pushes a card to the moderator console with a suggested probe"
+  mechanism: "Changes chatbot-ui and ingestion: a rule engine on the live event stream; probe suggestions and whether the moderator acted are stored with the session"
+  example: "Card: 'P-0212 idle 45 s on crafting bench; suggested: what are you trying to do right now?'; the answer 'I am looking for the recipe' becomes a retrievable quote at 00:41:12"
+  cost: M
+  depends_on: ops-7
+  part: chatbot-ui
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table asks questions of a transcript after the fact; this asks the player during the session"
+  shallow: false
+
+- id: ops-26
+  title: "Language set from the intake form, not auto-detected: ASR model and extraction prompts pick language per session; mixed-language sessions are flagged for review"
+  level: L4
+  cell: {part: ingestion-extraction, modality: player-profile-metadata, granularity: session, mechanism-type: change-data-at-source, uncertainty-policy: escalate-to-human-analyst, effort: XS-days}
+  object: "spec.md Unspecified: 'languages'"
+  situation: "A Brazilian cohort speaks Portuguese with English game terms; auto-detect flips to English on 30% of segments and the transcript drops the Portuguese"
+  consequence: "Word error on mixed-term speech falls, and the planner knows which cohorts can be pooled for a quote-prevalence answer"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md Unspecified: 'languages'"
+  proposed: "intake language field drives ASR language and a glossary of the game's English terms; segments where detected language disagrees with intake for over 50% of words are queued for a human check"
+  mechanism: "Changes ingestion: language from the header, per-game term glossary passed to ASR; a disagreement queue"
+  example: "'How many players mentioned the stamina bar' pools 3 language cohorts because 'stamina' is a glossary term in all three, with per-language n listed"
+  cost: S
+  depends_on: ops-10
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no language field; this makes multi-language cohorts poolable"
+  shallow: false
+
+- id: ops-27
+  title: "Re-contact panel for pre-post: players consent at recruitment to one follow-up; the same 150 players replay the new build so 'did the fix work' is within-subject"
+  level: L4
+  cell: {part: collection-protocol, question-type: did-the-fix-work-pre-post, scope: build-version-pair, moment-in-journey: live-ops-update, evidence-form: contrast-vs-baseline, mechanism-type: change-data-at-source, modality: build-version-metadata}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy'"
+  situation: "Studio patches step 4 and asks whether confusion dropped; a fresh cohort differs in genre experience and platform mix"
+  consequence: "Within-subject comparison on 150 players removes recruitment drift; the planner can also compare 'first exposure' (fresh players) against 'second exposure' and label each"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'coverage of real studio questions'"
+  proposed: "Recruitment consent includes one re-contact; player_id persists across sessions; session header carries build_hash and exposure_index; pre-post questions default to matched player_ids"
+  mechanism: "Changes collection-protocol and store: player_id stable across cohorts, exposure_index per session; the planner's pre-post template joins on player_id"
+  example: "'Did patch 1.4 fix step 4' returns 'same 150 players: clarity 2.3 to 3.9; quit at step 4: 19 to 6; note: second exposure'"
+  cost: M
+  depends_on: ops-10
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table compares two unrelated cohorts; this compares the same players"
+  shallow: false
+
+- id: ops-28
+  title: "Break detection and logging: capture app has a 'pause' button that writes break rows; unlogged idle over 5 minutes with no input and no speech is also stored as break_inferred"
+  level: L4
+  cell: {part: session-stitching, granularity: session, question-type: how-long, modality: input-events, representation: timestamped-observation-log, mechanism-type: change-data-at-source}
+  object: "spec.md section 1: 'A session can be n hours'"
+  situation: "A 3-hour session has two 12-minute toilet and coffee breaks; 'time on tutorial' and 'time to first quest' both include them"
+  consequence: "Duration answers subtract logged and inferred breaks; 'how long' answers over 500 players stop being inflated by 5-15% from breaks"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'A session can be n hours'"
+  proposed: "breaks {session_id, start_ms, end_ms, kind: logged or inferred}; all duration views subtract overlapping breaks; a per-session active_seconds field"
+  mechanism: "Changes session-stitching and store: a breaks table and active-time arithmetic in every duration view"
+  example: "'Median time to finish the tutorial' returns 38 min active (42 min wall clock) over 480 finishers"
+  cost: S
+  depends_on: ops-22
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table cannot express any duration beyond one video and includes breaks; this gives active time"
+  shallow: false
+
+- id: ops-29
+  title: "Task-mode tag per session: free-play, scripted ('reach the first boss then stop'), or timed; question templates for progression default to free-play sessions"
+  level: L4
+  cell: {part: collection-protocol, subject-domain: progression-difficulty, granularity: session, question-type: how-many, mechanism-type: narrow-or-clarify-the-question, modality: player-profile-metadata}
+  object: "spec.md Constraints: 'Their questions are not known in advance'"
+  situation: "Half the cohort was told to reach the first boss; 'what share of players reached the first boss' is 95% in that half and 40% in free play"
+  consequence: "Reach-rate and progression answers are filtered to the task mode that matches the question, and the chatbot says which mode it used"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'a question over, say, 500 players'"
+  proposed: "Header field task_mode enum plus script_id; the planner's progression templates filter task_mode=free-play and name the n; a scripted-mode question is served only when the user asks for it"
+  mechanism: "Changes collection-protocol and query-path: one enum; template-level default filters with the filter echoed in the answer"
+  example: "'How many players reached the first boss' returns '40% of 250 free-play players; scripted-arm players excluded (instructed to reach it)'"
+  cost: S
+  depends_on: ops-10
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table pools instructed and natural behaviour; this separates them"
+  shallow: false
+
+- id: ops-30
+  title: "Silence-triggered in-game prompt: after 3 minutes with no speech and no step progress, a one-line 'What are you trying to do right now?' text box, stored as an intent row at that timestamp"
+  level: L4
+  cell: {part: collection-protocol, modality: silence-or-absence-of-speech, extraction-trigger: continuous-during-live-session, question-type: counterfactual-why-not, granularity: variable-length-moment-or-episode, subject-domain: ui-navigation}
+  object: "memo.md item 1: 'action, utterance, friction signal'"
+  situation: "A player wanders the hub for 4 minutes without progressing; the transcript is empty, the frames show walking"
+  consequence: "The pipeline gets the player's stated goal at the moment of the stall, which is the direct input to 'why not' questions ('why did they not find the quest board')"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'friction signal'"
+  proposed: "Trigger from mic silence plus no step_enter event in 180 s (max 1 per 15 min, respecting the ops-5 budget); row {session_id, video_ms, stated_goal_text}; extractor links the goal to the next step reached"
+  mechanism: "Changes collection-protocol and store: intent rows with origin=prompt; the 'why-not' question template retrieves intent rows whose stated goal does not match the next step reached"
+  example: "'Why did players not find the quest board' returns 31 intent rows such as 'looking for the quest guy' from players who then opened the map 2-4 times"
+  cost: S
+  depends_on: ops-2
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no 'what were you trying to do'; this captures intent at the stall"
+  shallow: false
+
+- id: ops-31
+  title: "Post-cohort instrument audit: for each pre-registered studio question, compute which instrument answered it (telemetry, survey, speech, vision, none) and the share of players covered; questions under 60% coverage change the next protocol version"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, question-origin: failed-query-log, extraction-trigger: on-new-field-added, moment-in-journey: renewal-review, evidence-form: coverage-statement-n-of-m-players, mechanism-type: change-data-at-source, user-segment: jev-internal-ops}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "After cohort 1, 4 of the studio's 10 questions were answered from speech with 38% coverage; the memo's fix is more extraction, the protocol fix is a micro-survey"
+  consequence: "The memo's coverage test gains a second lever: when coverage is low because the data was never recorded, the next cohort records it, which is cheaper than any extraction change"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'coverage of real studio questions'"
+  proposed: "Table question_coverage {game_id, question_id, instrument, players_covered, players_total, cohort}; a review before each cohort assigns an instrument change to each row under 60%"
+  mechanism: "Changes feedback-loop and collection-protocol: coverage computed from the query log and the answers; protocol_changelog rows are created from the review"
+  example: "'Do players understand the stamina bar' was answered for 190 of 500 from speech; cohort 2 adds a step-2 micro-survey and coverage rises to 470 of 500"
+  cost: S
+  depends_on: ops-20
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table never learns that a question was unanswerable because of how the session was run; this feeds that back into the protocol"
+  shallow: false
+
+- id: ops-32
+  title: "REFUSE: cross-studio benchmark on churn rates from recruited panels; incentive, task mode and moderation differ per study so only the PXI items and step durations are benchmarked"
+  level: L3
+  cell: {part: evaluation, scope: cross-studio-benchmark, question-type: compare-versions, uncertainty-policy: abstain-below-coverage, tenancy-and-deployment: shared-multi-tenant, user-segment: publisher-portfolio}
+  object: "spec.md section 4: 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "A publisher asks 'is this game's tutorial churn worse than the other 5 games we tested with JEV'"
+  consequence: "Persona refuses a churn benchmark: the 6 cohorts differed on incentive_type, natural_quit_allowed and moderated; the planner returns the benchmark only for fields that are protocol-independent (PXI items, telemetry step durations) and lists the confounded fields"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios'"
+  proposed: "A benchmarkable flag per field in the schema; cross-game queries on non-benchmarkable fields return the per-game numbers with their protocol fields side by side and no ranking"
+  mechanism: "Changes evaluation and query-path: field metadata benchmarkable boolean; the cross-game template refuses to pool or rank fields marked false"
+  example: "'Rank our 6 games by tutorial churn' returns 'churn not benchmarkable (protocol differs); step-4 median duration and PXI clarity ranked instead'"
+  cost: S
+  depends_on: ops-18
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table would rank by a number that means something different in each study; this ranks only what is comparable"
+  shallow: false
