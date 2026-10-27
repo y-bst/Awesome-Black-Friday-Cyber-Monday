@@ -6,7 +6,7 @@ for f in glob.glob('K-scores-*-run*.yaml'):
         for k in F:
             if e.get(k) is not None: scores[e['id']][k].append(float(e[k]))
 leaves={}
-for n in range(1,7):
+for n in range(1,8):
     p=f'I-verified-{n}.yaml'
     if not os.path.exists(p): p=f'G-merged-{n}.yaml'
     for it in yaml.safe_load(open(p)):
@@ -64,5 +64,5 @@ with open('options.md','w') as f:
         f.write('\n## Audit: expert-missing options\n')
         for e in H.get('expert_missing',[]) or []: f.write(f'- {esc(e)}\n')
     f.write('\n## Run stats\n')
-    f.write(f"- perspectives: 35 (20 written, 15 added by the critique stage, including the deal-blockers and external buyers)\n- axes: 17 solution-space axes, 227 values\n- research notes: 4, ~13,700 words, ~300 cited URLs (search-extract based; vendor pages were unreachable from the sandbox)\n- raw options: 997; merged inside buckets: 943; after cross-bucket dedupe: {len(R)}\n- scoring: 3 runs per option, medians by script\n")
+    f.write(f"- perspectives: 35 (20 written, 15 added by the critique stage, including the deal-blockers and external buyers)\n- axes: 17 solution-space axes, 227 values\n- research notes: 4, ~13,700 words, ~300 cited URLs (search-extract based; vendor pages were unreachable from the sandbox)\n- raw options: 997 + 71 targeted fill; merged inside buckets: 943 + 70; after cross-bucket dedupe: {len(R)}\n- scoring: 3 runs per option, medians by script\n")
 print('options',len(R),'positive',len(pos),'refusals',len(ref),'scored',sum(1 for x in R if x['scores']),'verdict files',len(glob.glob('J-verdicts-*.yaml')))

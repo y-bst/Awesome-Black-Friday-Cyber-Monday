@@ -1,0 +1,2633 @@
+# Stage I verified, bucket 7 (targeted fill after audit 1: netcode, takedown, ugc-platform, catalogue).
+# 71 in; 0 rejected; 0 within-fill duplicates; 1 duplicate of an existing option dropped (takedown-14 -> scout-6); 70 survivors.
+# Fields added: bucket, perspective (id prefix), already_offered, variants_of, contested_by / contests, refusal, verify_note where a field was changed.
+# Off-axis keys (companion-data-off-axis; buyer-org-type subscription-catalogue-operator / ugc-platform-operator) kept as written.
+- id: netcode-1
+  title: 'Tick-stamped ring buffer: each captured frame carries a 16-byte sidecar (client frame no., last server snapshot tick, RTT estimate, interp delay ms, prediction-error mm) so any clip can be laid
+    against the server log tick by tick'
+  level: L4
+  cell:
+    buyer-role: engineering-performance
+    video-source: own-players-consented-sdk
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: root-cause-of-a-metric-change
+    delivery-form: api-or-sdk
+    game-platform-and-genre:
+    - competitive-multiplayer
+    - pc
+    - console
+    capture-trigger-and-sampling: always-on-ring-buffer
+    constraint-to-overcome: joining-video-to-events
+    processing-location: on-device
+    effort: M-one-quarter
+    companion-data: telemetry-events
+    companion-data-off-axis: server-tick-ping-and-region-logs
+  object: The netcode layer's own per-frame state (last acked snapshot tick, smoothed RTT, interpolation delay) that the engine already holds in memory; the 30-120 s on-device ring buffer pattern in methods-churn-funnel.md
+    section 7 (b)
+  situation: 'A PC and console 5v5 shooter at 64 Hz server tick: the netcode lead cannot use any player clip as evidence because the video has a wall-clock timestamp and the server log has a tick number,
+    and client clocks drift 20-80 ms'
+  consequence: Without the sidecar every netcode option below is guesswork on alignment; with it, frame N of a clip maps to server tick T and RTT R to within one frame (16.6 ms at 60 fps)
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'methods-churn-funnel.md section 7 INFERRED (b): ''a 30-120 s on-device ring buffer uploaded only on trigger ... as Sentry does for errors''; methods-churn-funnel.md section 6: Sentry onErrorSampleRate
+    keeps ''about the last minute before the error'''
+  already_offered: false
+  proposed: Engine plugin (Unreal NetDriver hook, Unity Netcode for GameObjects / Photon Fusion callback) that writes 16 bytes per frame into the encoder's SEI/user-data channel; server log keyed by match
+    ID and tick
+  shallow: false
+  mechanism: The capture SDK embeds the netcode state in the video stream itself, so the clip and the server's per-tick log join on (match_id, tick) with no clock sync step; all analysis runs in the vendor
+    cloud on trigger uploads only
+  example: 'A clip uploaded after a ''that''s not fair'' report: frame 3,412 = server tick 118,902, RTT 74 ms, interp 31 ms; the server''s lag-compensated hitbox history for that tick is pulled and overlaid
+    automatically'
+  cost: M
+  depends_on: A low-cost capture path (cto-5 hardware encoder) and the cto-2 self-cost limiter; one integration per netcode stack (Unreal, NGO, Photon, custom)
+  buyer: Lead network or online-services programmer at a PC/console competitive multiplayer studio; CTO signs the allow-list
+  input: Consented ring-buffer video plus the engine's per-frame netcode state; server per-tick logs (hit validation, snapshot send, region, server instance ID)
+  why_existing_tools_cannot: 'adjacent-usecases.md section 9: no vendor ships a rolling game-client buffer at all; market.md section 2: IV Metrics, PostHog and UXCam record screens with no engine or server
+    tick join; adjacent-usecases.md section 2: anti-cheat work is server-side ML on input and timing with no video'
+  willingness_to_pay: 3 - enabler, not bought alone; the paying use is the options below; Sentry-style on-error buffering is a pattern studios already accept (methods-churn-funnel.md section 6)
+  variants_of: cto-5
+  bucket: 7
+  perspective: netcode
+- id: netcode-2
+  title: '''I shot first'' hit-registration adjudicator: victim and shooter clips at the same tick, server''s rewound hitbox overlaid, each disputed death classed as lag-comp cap exceeded, favour-the-shooter
+    window, hitbox/animation desync bug, or clean miss'
+  level: L4
+  cell:
+    buyer-role: engineering-performance
+    video-source: own-players-consented-sdk
+    signal-extracted: player-skill-and-mechanics
+    analysis-type: root-cause-of-a-metric-change
+    delivery-form: issue-tracker-ticket
+    game-platform-and-genre:
+    - competitive-multiplayer
+    - pc
+    - console
+    capture-trigger-and-sampling: on-player-report
+    automation-level: auto-created-ticket-or-asset
+    companion-data: touch-and-controller-input
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    lifecycle-moment: new-version-release
+    constraint-to-overcome: joining-video-to-events
+  object: The server's lag-compensation rewind (hitbox positions stored per tick, rewind cap e.g. 200 ms) and the player's crosshair over the enemy model in the shooter's frame at fire time
+  situation: After patch 7.2, 'my shots don't register' posts triple on Reddit; telemetry shows hit rate flat, so the netcode team cannot tell a perception problem from a hitbox bug
+  consequence: Only the 'hitbox/animation desync' class becomes a Jira ticket (with the frame pair and tick); the others become counts by region and ping bucket, so the team stops chasing 1,000 anecdotes
+  p_typical: 0.12
+  grounded: inferred
+  evidence: 'adjacent-usecases.md section 2 ''What is manual today'': players submit video clips and forum posts by hand; adjacent-usecases.md section 3: ''only about 23% of player reports contained actionable
+    evidence'''
+  already_offered: false
+  proposed: On a 'shot did not register' report button or on a server-side 'fire with crosshair-on-model but no hit' event, upload 3 s around the shot; classifier outputs one of 4 classes with the frame
+    pair and the rewound hitbox render
+  shallow: false
+  mechanism: Vision locates crosshair and enemy silhouette in the shooter's frame at the fire tick; server log gives the rewound hitbox at (fire tick - RTT - interp); if the silhouette and the rewound hitbox
+    diverge by more than 5 cm with RTT under the cap, it is an animation-replication bug and a ticket is filed
+  example: '1,240 disputed shots in 48 h: 61% clean misses, 22% RTT over the 200 ms cap (mostly Sao Paulo players on the Virginia server), 14% favour-the-shooter, 3% hitbox lag on the new crouch-slide animation;
+    one ticket, fixed in 7.2.1'
+  cost: M
+  depends_on: netcode-1 tick sidecar; server hit-validation log retained 72 h
+  buyer: Netcode lead at a PC/console shooter studio (5v5 tactical, battle royale)
+  input: Shooter and victim ring-buffer clips, controller or mouse input, server hit-validation and rewind log
+  why_existing_tools_cannot: 'adjacent-usecases.md section 2: Vanguard and Ricochet publish server-side ML on input/timing/recoil, not video; no vendor in market.md section 9 joins player footage to server
+    state'
+  willingness_to_pay: '4 - hit-reg complaints are a top live-service grievance and the studio already staffs this by hand; no published price, enterprise quote like anti-cheat (adjacent-usecases.md section
+    2 ''Price signals: None published. INFERRED: enterprise quote only'')'
+  bucket: 7
+  perspective: netcode
+- id: netcode-3
+  title: 'Cross-POV desync detector: two consented players in the same match, frames at the same server tick compared on shared world state (door open vs closed, enemy alive vs ragdoll, objective owner),
+    mismatches lasting 300+ ms filed per build'
+  level: L4
+  cell:
+    buyer-role: engineering-performance
+    video-source: own-players-consented-sdk
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: build-to-build-regression-diff
+    lifecycle-moment: new-version-release
+    delivery-form: issue-tracker-ticket
+    game-platform-and-genre: competitive-multiplayer
+    capture-trigger-and-sampling: random-sample
+    companion-data: build-and-config-metadata
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    constraint-to-overcome: joining-video-to-events
+    automation-level: auto-created-ticket-or-asset
+  object: Replicated actors whose state the server owns (doors, destructibles, capture points, death state); two clients' frames tagged with the same tick via netcode-1
+  situation: A new build changes replication priority to save bandwidth; on 1-2% of matches one teammate sees a door open and walks into it while another sees it closed, and no counter flags this because
+    each client is self-consistent
+  consequence: 'Desync that is invisible to single-client telemetry becomes a per-build rate (''door-state mismatches per 1,000 match-minutes: 0.4 on 7.1, 6.8 on 7.2'') with two side-by-side clips per ticket'
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'methods-churn-funnel.md section 4: computer vision on game UI reads HUD and state from frames; market.md section 9: ''Session-replay SDKs record or screenshot but do not interpret game state'''
+  already_offered: false
+  proposed: Sample 2% of matches where 2+ players are consented; for each tick bucket, run a per-game state reader on both POVs and diff a list of 20 replicated objects
+  shallow: false
+  mechanism: Per-title object detector (door, capture-point flag colour, enemy health bar) reads state from both POVs; server log is the referee; a disagreement with the server on one client for more than
+    300 ms is a desync event keyed by object class, build and region
+  example: 'Build 7.2: destructible-wall state disagrees between squadmates in 3.1% of Frankfurt matches vs 0.2% on 7.1; root cause a relevancy-distance change; ticket includes two clips and the actor ID'
+  cost: L
+  depends_on: netcode-1; per-title state reader (structured-game-state-reconstruction) for 20 object classes; matches with 2+ consented players
+  buyer: Netcode or online-services lead; QA director reads the per-build rate at release gate
+  input: Two or more players' consented clips from the same match plus build metadata and server state log
+  why_existing_tools_cannot: 'market.md section 3: AI QA agents (modl.ai, nunu.ai, Razer) test builds with bots in isolation, not live multi-client matches; adjacent-usecases.md section 1: video bug detection
+    is per-stream'
+  willingness_to_pay: 3 - QA spend is proven (outsourced QA USD 15-50/hour, adjacent-usecases.md 'Signals of willingness to pay') but multi-client desync is a narrow bug class
+  bucket: 7
+  perspective: netcode
+- id: netcode-4
+  title: 'Peeker''s-advantage meter from esports VOD: for each first-contact duel, frames between attacker first seeing the defender and defender first seeing the attacker, read from both player POVs, per
+    server region and tick rate (64 vs 128 Hz)'
+  level: L4
+  cell:
+    buyer-role: engineering-performance
+    video-source: esports-vod
+    signal-extracted: player-skill-and-mechanics
+    analysis-type: cohort-comparison
+    delivery-form: per-cohort-report
+    game-platform-and-genre: competitive-multiplayer
+    value-lever-b2b: create-data-that-did-not-exist
+    companion-data: telemetry-events
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    constraint-to-overcome: joining-video-to-events
+  object: Pro league POV VODs (all 10 player cams recorded per match) and the match's server tick rate and per-player ping
+  situation: Pros claim peeker's advantage is worse on the new Seoul servers; the studio's server log shows ping but not the asymmetric visibility delay players actually experience on screen
+  consequence: A measured 'peeker's window' (e.g. 71 ms Seoul vs 48 ms Frankfurt at 128 Hz) decides whether to raise tick rate or move the league's server, instead of arguing from anecdotes
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'adjacent-usecases.md section 8: ClutchLabs derives VOD metrics ''without data feeds''; esports VOD is already recorded per player; market.md section 9: ''Relo-style CV exists in sports but
+    was not found for in-game moments or esports'''
+  already_offered: false
+  proposed: Per duel, detect first frame of enemy silhouette in each POV, align POVs by the broadcast round timer OCR, subtract, aggregate by region and tick rate
+  shallow: false
+  mechanism: Enemy-visible detector run on both POVs; alignment by OCR of the round clock and kill-feed; window = attacker-first-sight minus defender-first-sight; server log adds RTT per player so the residual
+    not explained by ping is attributed to tick and interpolation
+  example: 'Champions qualifier, 2,400 duels: median window 64 ms at 64 Hz and 41 ms at 128 Hz; the league moves playoff servers to 128 Hz and the studio budgets the extra server cost'
+  cost: M
+  depends_on: League VOD rights for per-player POV; per-title enemy-visible detector
+  buyer: Netcode lead at the publisher of an esports title; league operations co-funds
+  input: Esports POV VODs plus server tick rate, region and per-player ping from the match log
+  why_existing_tools_cannot: 'adjacent-usecases.md section 8: Mobalytics, StatStack, ClutchLabs and Omnic sell player-skill metrics to players and teams, none measures network fairness; esports-4 measures
+    reaction latency, not the network-induced window'
+  willingness_to_pay: 3 - publisher engineering budget, no price signal in the notes; nearest is Hudl at USD 1,500 per programme per year (adjacent-usecases.md section 8)
+  variants_of: esports-4
+  bucket: 7
+  perspective: netcode
+- id: netcode-5
+  title: 'Tick-rate A/B explainer: 30 Hz vs 60 Hz servers in two regions, visible rubber-band snaps per match-minute and fire-to-hit-marker frames per arm, next to server cost per CCU, so the tick decision
+    has a player-facing number'
+  level: L4
+  cell:
+    buyer-role: engineering-performance
+    video-source: own-players-consented-sdk
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: ab-test-variant-explanation
+    lifecycle-moment: ab-test-running
+    delivery-form: per-cohort-report
+    game-platform-and-genre: competitive-multiplayer
+    value-lever-b2b: de-risk-a-go-kill-decision
+    companion-data:
+    - telemetry-events
+    - touch-and-controller-input
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    capture-trigger-and-sampling: random-sample
+  object: Server fleet config (tick rate per region) and the cloud cost line per concurrent user; local-camera snap-back events and hit-marker frames in consented clips
+  situation: Doubling tick rate on a 60-player battle royale roughly doubles server CPU; finance asks whether players will notice, and retention A/B tests take 4 weeks to read
+  consequence: 'Within 5 days the test reads ''rubber-band snaps over 30 cm: 2.1 vs 0.6 per match-minute; fire-to-marker 5.2 vs 3.4 frames'' with 10 example clips per arm, beside D7 and cost per CCU'
+  p_typical: 0.07
+  grounded: inferred
+  evidence: 'methods-churn-funnel.md section 2 INFERRED: signals ''that exist in screen video (plus touch overlay) but not in standard event streams''; adjacent-usecases.md section 6: ''reliable fps/load
+    measurement uses in-game profiling or GameBench rather than video alone'' and INFERRED ''its edge is rendering/visual defects''. Inference: a count of visible corrections is the perception-side number
+    that server and fps counters do not give.'
+  already_offered: false
+  proposed: Random 1% sample of matches per arm, 60 s ring-buffer uploads every 10 minutes of play; snap detector on camera optical flow; arm label from server config
+  shallow: false
+  mechanism: Optical-flow discontinuity on the local camera (backwards jump over 30 cm with no player input reversal) counts as a visible correction; hit-marker detector times frames from muzzle flash to
+    marker; results split by arm, ping bucket and device
+  example: 'EU-West at 60 Hz: visible snaps fall 71%, D7 flat; NA-East at 60 Hz: snaps fall 18% because NA players are ping-bound; the studio ships 60 Hz in EU only and saves the NA spend'
+  cost: M
+  depends_on: netcode-1; an A/B framework at server-fleet level
+  buyer: Head of online services or CTO at a battle royale or extraction shooter studio; CFO is the second reader
+  input: Consented ring-buffer samples, controller input, server tick config per match, cloud cost per region
+  why_existing_tools_cannot: 'market.md section 2 and 6: GameAnalytics, IV Metrics and UXCam report events and screens, none counts visible corrections; methods-churn-funnel.md section 2: event analytics
+    ''cannot see'' what was on screen'
+  willingness_to_pay: 4 - the decision is a server bill in the millions per year; the closest priced analogue is UXCam's median USD 21k/year for replay (market.md 'Signals of willingness to pay')
+  verify_note: 'evidence rewritten: the original cited a paraphrase (''event analytics ... cannot see what the player saw'') as if quoted'
+  bucket: 7
+  perspective: netcode
+- id: netcode-6
+  title: 'ISP-route incident alert during a live event: visible rubber-band rate in sampled clips spikes 4x for one ASN (e.g. one Brazilian ISP) while other ISPs in the region are flat; Slack alert to live-ops
+    with 3 clips, the ASN, and the relay to reroute through'
+  level: L4
+  cell:
+    buyer-role: live-ops
+    video-source: own-players-consented-sdk
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: anomaly-alert
+    lifecycle-moment: live-event-or-update
+    delivery-form: alert-or-slack
+    game-platform-and-genre: competitive-multiplayer
+    capture-trigger-and-sampling: on-crash-or-anomaly
+    companion-data: telemetry-events
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    processing-location: on-device
+    value-lever-b2b: cut-time-to-insight
+  object: Client IP's ASN and region from the matchmaking log; per-ASN rate of visible snaps from netcode-5's detector
+  situation: 'Saturday of a season-launch event: 18,000 players in Sao Paulo are rubber-banding; ping graphs look normal because packet loss and jitter on one ISP''s peering path are not in the ping average'
+  consequence: Live-ops posts a known-issue message in 20 minutes instead of after 600 support tickets, and the network team turns on the alternate relay for that ASN
+  p_typical: 0.11
+  grounded: inferred
+  evidence: 'adjacent-usecases.md section 9: Helpshift ''auto-captures device, version, patch, entitlements, session state; no video/replay confirmed''; methods-churn-funnel.md section 7 INFERRED (b): ''a
+    30-120 s on-device ring buffer uploaded only on trigger''. Inference: no note covers per-ISP visible-lag alerting; demand rests on the ticket pattern.'
+  already_offered: false
+  proposed: Detector runs on-device on the ring buffer; only counts are sent each minute, with clip upload when the session's snap count passes 5 per minute
+  shallow: false
+  mechanism: On-device snap counter emits a 4-byte metric per minute; the backend computes per-ASN baselines over 7 days and alerts at 4x; three representative clips are uploaded for the alert so a human
+    sees the problem, not a chart
+  example: 'Event day 1, 14:20 BRT: Vivo-fibre ASN snaps 9.1/min vs 1.8 baseline, Claro flat; alert links clips; reroute via the Rio relay at 14:42; tickets for ''lag'' stop growing'
+  cost: S
+  depends_on: netcode-5 snap detector running on-device; ASN lookup in matchmaking; a relay or route-override control
+  buyer: Live-ops manager or live-service network ops at a competitive multiplayer publisher
+  input: On-device snap counts and 3 trigger clips; matchmaking log with ASN, region, server instance
+  why_existing_tools_cannot: 'adjacent-usecases.md section 9: Helpshift captures device, version and session state but no video; support-16 and oem-15 diagnose local fps and thermal lag, not route-level
+    network lag'
+  willingness_to_pay: '3 - live-ops buys incident speed; ticket deflection is priced per issue in Helpshift (adjacent-usecases.md section 9: monthly fee plus per-issue rate)'
+  verify_note: 'evidence rewritten: the original pointer (adjacent-usecases.md section 7, live-ops monitoring staffed by hand) is about competitor live events, not network incidents'
+  bucket: 7
+  perspective: netcode
+- id: netcode-7
+  title: 'Lag-switch vs genuine-lag ruling for a T&S report: accused''s server-side packet gaps (inputs silent 400-1,500 ms then burst-delivered) matched to the reporter''s clip showing the accused teleporting
+    into a kill; clean jitter elsewhere in the match'
+  level: L4
+  cell:
+    buyer-role: trust-safety
+    video-source: own-players-consented-sdk
+    signal-extracted: bot-or-fraud-behaviour
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: enforcement-or-cert-evidence-pack
+    game-platform-and-genre:
+    - competitive-multiplayer
+    - console
+    capture-trigger-and-sampling: on-player-report
+    constraint-to-overcome: accuracy-and-trust
+    companion-data: touch-and-controller-input
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    value-lever-b2b: reduce-cost-per-incident
+  object: Server input-receipt log per player (gap length, burst size, timestamps of buffered inputs) and the reporter's clip around the reported kill
+  situation: '''He''s lag switching'' reports on console ranked: some are real (deliberate packet holding), most are players on bad Wi-Fi; banning the second group is a false accusation'
+  consequence: Pack shows pattern 'gap only when in combat, 9 of 9 kills preceded by a 600-900 ms gap, burst of 40+ inputs' vs 'random gaps across the match'; the moderator rules with evidence instead of
+    guessing
+  p_typical: 0.09
+  grounded: inferred
+  evidence: 'adjacent-usecases.md section 2: server-side LSTM at 88.6% accuracy, ''authors stress false accusations as the key risk''; FACEIT says ''no ban is triggered solely by its flag'''
+  already_offered: false
+  proposed: 'Correlate gap timing with combat state (from the clip: enemy on screen, damage taken) over the whole match; output a 1-page pack with the 3 clearest gap-kill clips and the gap histogram'
+  shallow: false
+  mechanism: Server log flags input gaps; reporter and other consented players' clips show what the gap looked like (accused frozen then teleported); a combat-conditioned gap ratio above 5x the non-combat
+    ratio marks deliberate lag switching
+  example: 'Ranked report on a PS5 player: combat gap ratio 11x, kills during gap-burst 9 of 9; 30-day ban upheld on appeal using the pack; a second accused with ratio 1.1x is cleared and the reporter gets
+    a ''network issue, not cheating'' reply'
+  cost: M
+  depends_on: netcode-1; server input-receipt log retained 7 days; tns-16 tamper-evident pack format
+  buyer: Trust and safety lead or anti-cheat ops lead at a console or PC competitive publisher
+  input: Reporter's ring-buffer clip, accused's server input-receipt log, match combat events
+  why_existing_tools_cannot: 'adjacent-usecases.md section 2: Anybrain and FACEIT Human Input Detection judge inputs, not network timing seen on screen; tns-2 second-looks cheat flags but has no packet-gap
+    evidence'
+  willingness_to_pay: 4 - T&S teams pay at scale (Modulate up to USD 20,000/month, adjacent-usecases.md section 3); 77% of reports lack actionable evidence (same section)
+  variants_of: tns-2
+  bucket: 7
+  perspective: netcode
+- id: netcode-8
+  title: '''Died behind the wall'' report filter: cheat reports whose clip shows the reporter killed after reaching cover are matched to the server''s rewound position and auto-answered as lag compensation,
+    not wallhack, and counted per region for the netcode team'
+  level: L4
+  cell:
+    buyer-role: trust-safety
+    video-source: own-players-consented-sdk
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: root-cause-of-a-metric-change
+    delivery-form: issue-tracker-ticket
+    game-platform-and-genre: competitive-multiplayer
+    capture-trigger-and-sampling: on-player-report
+    automation-level: recommendation
+    value-lever-b2b: reduce-cost-per-incident
+    companion-data: support-ticket-text
+    companion-data-off-axis: server-tick-ping-and-region-logs
+  object: Moderation queue category 'wallhack/aimbot'; the server's rewound hitbox position of the victim at the shooter's fire tick vs the victim's own POV at death
+  situation: A third of 'wallhack' reports in a 5v5 shooter are victims killed 100-180 ms after they reached cover on their own screen; moderators spend 4 minutes each before closing them
+  consequence: 'Those reports leave the cheat queue with an explanation card to the reporter; the per-region count (''behind-cover deaths per 100 deaths: 7.2 in OCE vs 2.1 in EU'') goes to the netcode team
+    as a KPI ticket'
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'adjacent-usecases.md section 3: ''only about 23% of player reports contained actionable evidence''; adjacent-usecases.md section 2: players submit clips of suspected cheaters by hand'
+  already_offered: false
+  proposed: 'Classifier: victim on-screen position at death inside cover polygon AND server rewind shows victim exposed at (fire tick - shooter RTT) AND shooter RTT under cap -> ''lag compensation'' class'
+  shallow: false
+  mechanism: Victim POV frame at death plus map cover geometry gives 'in cover on own screen'; server rewind gives 'exposed on shooter's timeline'; if both, the report is reclassified and a weekly aggregate
+    ticket is filed for netcode by region and ping gap
+  example: 'Week 12: 3,900 wallhack reports, 1,310 reclassified as lag comp (most from players with 140+ ms vs shooters at 20 ms); moderators save about 87 hours; netcode ticket proposes lowering the rewind
+    cap from 200 to 140 ms'
+  cost: M
+  depends_on: netcode-1; map cover geometry per map; tns-1 report-button clip attach
+  buyer: Trust and safety lead (queue cost) with netcode lead as second consumer
+  input: Victim's report clip, reporter's free-text reason, server rewind log, shooter RTT
+  why_existing_tools_cannot: 'adjacent-usecases.md section 3: GGWP and Modulate classify voice and text, not gameplay frames; tns-11 summarises report clips but does not test them against server rewind'
+  willingness_to_pay: 4 - moderator hours are a direct cost and the queue is mostly unactionable (77% per adjacent-usecases.md section 3)
+  variants_of: netcode-2
+  bucket: 7
+  perspective: netcode
+- id: netcode-9
+  title: 'Esports referee desync ruling kit: when a team pauses for a netcode dispute, both teams'' POV VODs and the server demo are tick-aligned within 3 minutes and the referee sees a 4-panel replay plus
+    ''server saw / player saw'' delta for the disputed event'
+  level: L4
+  cell:
+    buyer-role: esports-team-or-league
+    video-source: esports-vod
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: enforcement-or-cert-evidence-pack
+    game-platform-and-genre: competitive-multiplayer
+    lifecycle-moment: live-event-or-update
+    automation-level: insight-for-human
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    value-lever-b2b: cut-time-to-insight
+    constraint-to-overcome: joining-video-to-events
+  object: The league rulebook's technical-pause and round-restart clauses; per-player POV recordings and the server demo file of the match
+  situation: 'Online qualifier, round 22: a player claims his defuse was not registered; under the ruleset the referee must decide restart or play-on, and today rewinds a spectator demo by hand for 15 minutes'
+  consequence: A ruling in 3-5 minutes with an archived pack, which the losing team can see; fewer forfeits and disputes after the event
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'adjacent-usecases.md section 8: ''coaches/analysts scrub VODs and comment by hand''; Insights.gg is annotation, not automated analysis'
+  already_offered: false
+  proposed: 'Referee console: pick the disputed timestamp; system aligns POVs by tick and shows defuse input frame, server receipt tick and the player''s RTT'
+  shallow: false
+  mechanism: Ingest POV VODs live from the league's recorder plus the server demo; event detector finds the disputed action (defuse, plant, shot) in POV; server log gives receipt tick; delta and a 4-panel
+    clip are rendered for the referee
+  example: 'Defuse input at POV frame tick 51,204, server received at 51,209 (78 ms), spike timer ran out at 51,207: server-correct, play on; pack posted to the dispute channel'
+  cost: M
+  depends_on: League per-player POV recording; server demo access from the publisher
+  buyer: League operations or tournament integrity officer at a third-party league or publisher-run circuit (off-axis buyer in the netcode cell)
+  input: Esports POV VODs, server demo, per-player ping
+  why_existing_tools_cannot: 'adjacent-usecases.md section 8: StatStack, Mobalytics, ClutchLabs sell coaching metrics; tns-24 checks stream-sniping, not netcode rulings'
+  willingness_to_pay: 2 - leagues pay modestly (StatStack Organization USD 149/month, Hudl USD 1,500/programme/year, adjacent-usecases.md section 8); value rises with prize pool
+  variants_of: esports-10
+  bucket: 7
+  perspective: netcode
+- id: netcode-10
+  title: 'Muzzle-flash-to-hit-marker clock from VOD alone: frame count from muzzle flash to hit marker in pro POVs estimates each player''s effective RTT per match, so a league can verify ''equal ping''
+    claims on online events without server access'
+  level: L4
+  cell:
+    buyer-role: esports-team-or-league
+    video-source: esports-vod
+    signal-extracted: performance-fps-and-load
+    analysis-type: cohort-comparison
+    delivery-form: per-cohort-report
+    game-platform-and-genre: competitive-multiplayer
+    companion-data: none-video-only
+    value-lever-b2b: create-data-that-did-not-exist
+  object: Server-confirmed hit markers in games where the hit marker waits for server confirmation; 60 or 144 fps POV captures
+  situation: Online regional league for a third-party shooter; teams in Cairo and Riyadh play on a Bahrain server and the Cairo team protests that their ping is 80 ms higher than shown on the scoreboard
+  consequence: League has an independent RTT estimate per player (median of 200+ hits) from footage only, and can reseat servers or add a ping cap rule
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: Detector for muzzle flash and hit marker; per-hit delay in frames times frame time; subtract the title's fixed client delay measured once on LAN
+  shallow: false
+  mechanism: Per-title calibration on LAN (0 ms network) gives the fixed client latency; online VODs give total delay; the difference is the network round trip as seen by the player
+  example: Cairo players median 112 ms, Riyadh 34 ms against scoreboard 70 and 30; league moves the next split to a Frankfurt-Bahrain midpoint and publishes the numbers
+  cost: S
+  depends_on: Title where hit marker is server-confirmed; LAN calibration footage
+  buyer: League operations at a third-party esports organiser
+  input: Esports POV VODs only
+  why_existing_tools_cannot: 'adjacent-usecases.md section 8: no listed tool measures network delay from VOD; esports-4 measures human reaction time, not network RTT'
+  willingness_to_pay: 2 - small league budgets (StatStack USD 49-149/month, adjacent-usecases.md section 8)
+  verify_note: 'author pointer kept here: ClutchLabs ''VOD-derived metrics without data feeds'' (adjacent-usecases.md section 8) shows VOD metrics are feasible, but nothing in the notes supports RTT-from-VOD
+    or league demand for it'
+  variants_of: esports-4
+  bucket: 7
+  perspective: netcode
+- id: netcode-11
+  title: 'Remote-player jitter vs interpolation-delay tuner: visible stutter of enemy models (position steps over 8 cm between frames) measured per ping and loss bucket at interp 50/75/100 ms, with a recommended
+    per-region interp default'
+  level: L4
+  cell:
+    buyer-role: engineering-performance
+    video-source: own-players-consented-sdk
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: cohort-comparison
+    delivery-form: per-cohort-report
+    game-platform-and-genre: competitive-multiplayer
+    automation-level: recommendation
+    capture-trigger-and-sampling: random-sample
+    companion-data: telemetry-events
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    lifecycle-moment: ab-test-running
+  object: Client interpolation-buffer setting (ms) per region, packet-loss and jitter per session; tracked enemy model positions frame to frame
+  situation: The netcode team set interp to 100 ms globally to hide loss in South-East Asia; EU players complain enemies feel 'behind', but lowering it risks visible stutter for lossy players
+  consequence: A curve per region ('at 2% loss, 50 ms interp = 4.1 visible steps per second; 75 ms = 0.6') lets the team ship 60 ms in EU and keep 100 ms in SEA, with evidence
+  p_typical: 0.03
+  grounded: inferred
+  evidence: 'adjacent-usecases.md section 6: GameBench ''measures FPS, frame stability, memory, CPU/GPU, battery, thermals'' on the local device; INFERRED: ''its edge is rendering/visual defects per device
+    model''. Inference: remote-entity stutter is a visual defect that no local counter reports.'
+  already_offered: false
+  proposed: Server-side randomised interp setting for 5% of sessions; 10 s 60 fps clips with enemies on screen; tracker measures step size distribution
+  shallow: false
+  mechanism: Enemy-model tracker computes per-frame displacement; steps above 8 cm at under 6 m/s speed count as visible jitter; aggregated by interp setting, loss and jitter bucket, and region
+  example: 'Patch 8.0 ships region-specific interp: EU 60 ms, NA 75 ms, SEA 100 ms; follow-up clips show EU ''enemy behind'' complaints down and no stutter rise'
+  cost: M
+  depends_on: netcode-1; per-title enemy tracker; server-controlled interp experiment
+  buyer: Netcode lead at a PC/console shooter or fighting-game studio
+  input: 60 fps consented ring-buffer clips, interp setting, session loss and jitter, region
+  why_existing_tools_cannot: 'adjacent-usecases.md section 6: GameBench and device clouds measure local fps and frame stability, not remote-entity smoothness; cto-18 hitch clips are local frame-time spikes'
+  willingness_to_pay: 3 - engineering tooling, quote priced; no direct price in the notes
+  verify_note: 'evidence rewritten: the original cited the low-fps sampling knob (methods-churn-funnel.md section 7 (c)), which does not support the option'
+  bucket: 7
+  perspective: netcode
+- id: netcode-12
+  title: 'Server-tick overrun finder: when one server instance drops from 60 to 35 ticks per second, every consented clip from that match shows world-wide rubber-banding at the same tick; the clips show
+    what was on screen (30 grenades, 12 vehicles) and the ticket names the ability or map zone'
+  level: L4
+  cell:
+    buyer-role: engineering-performance
+    video-source: own-players-consented-sdk
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: root-cause-of-a-metric-change
+    delivery-form: issue-tracker-ticket
+    game-platform-and-genre: competitive-multiplayer
+    capture-trigger-and-sampling: on-crash-or-anomaly
+    automation-level: auto-created-ticket-or-asset
+    companion-data: build-and-config-metadata
+    companion-data-off-axis: server-tick-ping-and-region-logs
+  object: Server frame-time log per instance (achieved tick rate per second), match ID, map coordinates; the end-circle scene in clips
+  situation: 'Battle royale final circles: server tick rate falls under load, every player rubber-bands at once, and server logs show the drop but not what game situation caused it'
+  consequence: Instead of 'server perf bad late game', the ticket reads 'tick drop in 64% of incidents when 8+ smoke grenades plus 2+ vehicles in final circle on map Delta, build 4.6' with 5 clips
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'market.md section 3: Razer QA Companion and ManaMind detect bugs in builds, not live server load; methods-churn-funnel.md section 4: CV reads in-game state from frames'
+  already_offered: false
+  proposed: Server tick drop below 80% of target for 2+ s triggers upload requests to all consented clients in that match; VLM tags the scene (counts of grenades, vehicles, players visible) and clusters
+    incidents
+  shallow: false
+  mechanism: Server-side trigger fans out an upload request; scene tagger lists visible entities and effects; incidents clustered by scene features, map zone and build; the top cluster becomes a ticket
+    with server profile capture
+  example: 'Build 4.6: 412 tick-drop incidents in a week, 64% with 8+ smoke grenades in the circle; fix caps smoke particle simulation on the server; incidents fall to 90'
+  cost: M
+  depends_on: netcode-1; server-to-client upload request channel; consent on 2+ clients per match
+  buyer: Server or online-services engineering lead at a battle royale or large-lobby shooter
+  input: Consented clips from every player in the affected match, server tick log, build config
+  why_existing_tools_cannot: 'adjacent-usecases.md section 6: performance tools measure the client device; no vendor in market.md shows the scene behind a server-side perf drop'
+  willingness_to_pay: 3 - server cost and player-facing quality both move; no price signal in the notes
+  bucket: 7
+  perspective: netcode
+- id: netcode-13
+  title: 'New-region server placement test: before opening Middle East servers, beta players in Cairo, Riyadh, Dubai and Istanbul play 2 weeks on Bahrain vs Frankfurt routing; per-city visible-snap and
+    hit-dispute rates decide the site'
+  level: L3
+  cell:
+    buyer-role: live-ops
+    video-source:
+    - own-players-consented-sdk
+    - beta-and-early-access-testers
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: cohort-comparison
+    lifecycle-moment: new-market-or-language-launch
+    delivery-form: per-cohort-report
+    game-platform-and-genre: competitive-multiplayer
+    value-lever-b2b: de-risk-a-go-kill-decision
+    capture-trigger-and-sampling: opt-in-panel
+    companion-data-off-axis: server-tick-ping-and-region-logs
+  object: Candidate data-centre list and the matchmaking routing rule per country; netcode-5 snap rate and netcode-2 dispute classes per city
+  situation: Ping maps say Bahrain is 30 ms closer for Cairo, but Egyptian ISPs route via Marseille and real play may be worse; a wrong site costs a multi-year hosting contract
+  consequence: 'The decision uses what players see per city, not ping maps: e.g. Cairo snaps 1.4/min on Frankfurt vs 2.9 on Bahrain'
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'methods-churn-funnel.md section 7 (d): ''user-level sampling (e.g. 1-5% of new installs) with Wi-Fi-only upload''; market.md section 1: studios pay for recruited panels (PlaytestCloud)'
+  already_offered: false
+  proposed: Opt-in beta panel of 400 players across 6 cities, alternating routing by day, ring-buffer samples plus on-device snap counts
+  shallow: false
+  mechanism: Server-side routing alternation; on-device counters; per-city report with clips of the worst and median sessions per route
+  example: Report shows Bahrain wins for Riyadh and Dubai, Frankfurt wins for Cairo and Istanbul; publisher opens Bahrain and keeps Cairo on Frankfurt by ASN rule
+  cost: S
+  depends_on: netcode-1 and netcode-5 detectors; a beta with server routing control
+  buyer: Live-ops or regional publishing lead with online-services engineering; head of business for the new region
+  input: Opt-in beta panel clips, routing config, per-session ping, loss, ASN
+  why_existing_tools_cannot: 'adjacent-usecases.md section 6: device labs and GameBench measure the device, not the network path; market.md section 9: no vendor joins production player footage to infrastructure
+    data'
+  willingness_to_pay: 3 - one-off project priced like a managed playtest (PlaytestCloud about EUR 113-141 per session, market.md 'Signals of willingness to pay')
+  bucket: 7
+  perspective: netcode
+- id: netcode-14
+  title: 'Netcode-verified loss forgiveness: ranked points not deducted when the server log shows over 15% packet loss or a tick overrun for that player AND the player''s on-device clip counter shows 5+
+    visible snaps per minute in the losing rounds'
+  level: L4
+  cell:
+    buyer-role: live-ops
+    video-source: own-players-consented-sdk
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: real-time-in-session-intervention
+    delivery-form: api-or-sdk
+    game-platform-and-genre: competitive-multiplayer
+    automation-level: closed-loop-in-game-action
+    lifecycle-moment: season-or-battle-pass-start
+    companion-data: telemetry-events
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    processing-location: on-device
+    value-lever-b2b: enable-automated-action
+  object: Ranked-points ledger and the end-of-match result screen; on-device snap counter (netcode-5) and server loss and tick logs
+  situation: Ranked players quit the ladder after losing points to matches they felt were unplayable; a ping-only forgiveness rule is gamed by players who throttle their own connection
+  consequence: 'Forgiveness needs two independent signals (server network log and the player''s visible experience); the result screen says ''Network issues detected: no points lost'', and abuse is harder
+    because the video counter needs real snaps'
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'market.md section 3: HeadSpin CEO ''over 30 per cent of people left their game due to a bad experience''; methods-churn-funnel.md section 3 INFERRED: ''churn is tied to specific failure moments''.
+    Inference: forgiving visibly network-broken losses removes one such moment; no note covers ranked loss forgiveness.'
+  already_offered: false
+  proposed: On-device counter sends one value per round; server decides at match end; monthly audit compares forgiveness rate to self-throttle detections
+  shallow: false
+  mechanism: No video upload in the common path; only counters; an audit sample of 1% of forgiven matches uploads clips so live-ops can check the rule is not abused
+  example: 'Season 5 launch: 2.3% of ranked matches forgiven, ladder quit rate after a forgiven loss 30% lower than after a normal loss in the 14-day holdout'
+  cost: S
+  depends_on: netcode-5 on-device counter; ranked service hook
+  buyer: Live-ops or competitive product lead at a ranked PC/console/mobile shooter or MOBA
+  input: On-device snap counts, server loss and tick logs, ranked results
+  why_existing_tools_cannot: 'market.md section 9: no vendor turns production player video into an in-game action; existing forgiveness relies on server-only signals that players can manipulate'
+  willingness_to_pay: 3 - retention lever priced per MAU; no direct signal in the notes
+  verify_note: 'raised from speculative to inferred: the bad-experience churn framing and the failure-moment reading are in the notes'
+  bucket: 7
+  perspective: netcode
+- id: netcode-15
+  title: 'Netcode regression gate per build: 24 bot clients on 4 emulated network profiles (20 ms clean, 80 ms 1% loss, 150 ms 3% loss, 250 ms jitter 40 ms) play 30 minutes; visible snaps, desyncs and dispute
+    classes per profile diffed against the last build'
+  level: L4
+  cell:
+    buyer-role: engineering-performance
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: build-to-build-regression-diff
+    lifecycle-moment:
+    - new-version-release
+    - pre-launch-qa
+    delivery-form: issue-tracker-ticket
+    game-platform-and-genre: competitive-multiplayer
+    capture-trigger-and-sampling: scheduled-bot-playthrough
+    automation-level: auto-created-ticket-or-asset
+    companion-data-off-axis: server-tick-ping-and-region-logs
+  object: Network link conditioner profiles (tc netem) and bot clients rendering real frames; the netcode-3 and netcode-5 detectors
+  situation: Netcode changes break only under loss; QA tests on the studio LAN at 1 ms; the player base finds the regression on launch day
+  consequence: Release blocked when, for example, snaps at the 150 ms / 3% profile rise from 0.8 to 2.6 per minute; ticket shows the profile, clips and the commit range
+  p_typical: 0.08
+  grounded: inferred
+  evidence: 'market.md section 3: modl.ai, nunu.ai and GameDriver run bot QA on builds; adjacent-usecases.md section 1: QA video bug detection exists for builds, none cites network-conditioned runs'
+  already_offered: false
+  proposed: Nightly CI job; bots with GPU rendering in the cloud, netem per client, same detectors as production
+  shallow: false
+  mechanism: Same detectors as on players (snap, desync, hit dispute) run on bot render output under controlled network profiles, so pre-release and live numbers share one definition
+  example: 'Build 9.3 nightly: 3% loss profile desync rate up 5x on vehicle seats; commit that changed vehicle replication priority reverted before branch cut'
+  cost: M
+  depends_on: netcode-1, netcode-3, netcode-5 detectors; bot clients that can render frames (modl.ai or in-house)
+  buyer: Netcode lead and QA director at a multiplayer studio
+  input: Bot playthrough render, network profile, server logs, build metadata
+  why_existing_tools_cannot: 'market.md section 3: AI QA agents test for functional and visual bugs on builds, not under network impairment; cto-3 and platform-3 gates measure frame cost and render faults'
+  willingness_to_pay: 3 - QA automation priced from USD 150/month (GameDriver) to enterprise (market.md 'Signals of willingness to pay')
+  variants_of: platform-3
+  bucket: 7
+  perspective: netcode
+- id: netcode-16
+  title: 'Ask-a-question agent over netcode clips: the netcode lead types ''show disputed headshots on Ascent from players over 120 ms against defenders under 30 ms since 7.2'' and gets a table plus aligned
+    clip pairs'
+  level: L3
+  cell:
+    buyer-role: engineering-performance
+    video-source: own-players-consented-sdk
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: ask-a-question-over-footage
+    delivery-form: ask-question-agent-chat
+    game-platform-and-genre: competitive-multiplayer
+    effort: XS-repackage-existing-user-test-product
+    companion-data-off-axis: server-tick-ping-and-region-logs
+    value-lever-b2b: cut-time-to-insight
+  object: The tagged clip store built by netcode-2 to netcode-12 (class, RTT, region, map, build) and the existing User Test ask-question agent (A-frame assumption 2)
+  situation: A designer proposes a map change; the netcode lead needs 20 examples of one dispute type in one region in minutes, not a new pipeline
+  consequence: Repackages the existing ask-a-question agent over netcode tags; turns every netcode investigation into a query
+  p_typical: 0.1
+  grounded: inferred
+  evidence: 'A-frame.yaml assumptions: ''the company building this already has video ingestion, transcription and a report/ask-question agent''; market.md section 1: PlaytestCloud First Findings links each
+    finding to its clip'
+  already_offered: false
+  proposed: Expose clip metadata as SQL-queryable fields to the existing agent; return clip pairs aligned by tick
+  shallow: false
+  mechanism: Agent turns the question into a filter over (class, map, RTT pair, build, region), retrieves aligned pairs and renders a table with links
+  example: Query returns 48 pairs; 31 show the new elevated window on Ascent B-site exposing heads 6 cm above cover during the rewind; level design moves the window
+  cost: S
+  depends_on: netcode-1 and at least netcode-2 tags; existing ask-question agent
+  buyer: Netcode lead and level designers at a competitive shooter
+  input: Tagged consented clips and joined server metadata
+  why_existing_tools_cannot: 'market.md section 2: session-replay tools filter by screen and event, not by server-joined netcode class; bi-23 MCP tables cover funnel tables, not netcode'
+  willingness_to_pay: 3 - add-on to the clip pipeline; seat-priced like Hatchet USD 249-1,249/month (market.md 'Signals of willingness to pay')
+  variants_of: qa-24
+  bucket: 7
+  perspective: netcode
+- id: takedown-1
+  title: 'Own-footage ad finder: weekly frame-match of Meta Ads Library and TikTok Creative Center game ads against the studio''s 400 trailer and gameplay keyframes, one row per rival ad with matched timestamps'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source: competitor-store-and-ad-video
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: enforcement-or-cert-evidence-pack
+    lifecycle-moment: live-event-or-update
+    value-lever-b2b: reduce-cost-per-incident
+    game-platform-and-genre: mobile-casual-hypercasual
+    buyer-org-type: publisher
+    automation-level: insight-for-human
+  object: 'competitor-and-ua.md section 2: ''Meta Ads Library is free, shows only active ads on Facebook/Instagram, no spend data''; weekly monitoring uses Meta Ads Library plus TikTok Creative Center'
+  situation: a mid-size mobile studio's top-grossing match-3 game has a 0:21 trailer and 14 UA video ads; a rival advertiser starts running a 15-second ad whose seconds 3-11 are the studio's own level-clear
+    sequence with the logo cropped out
+  consequence: the studio's UA team sees CPI rise on the same audience while legal learns of the ad only when a colleague spots it; with no frame-matched proof, legal cannot file a Meta IP report that the
+    reviewer will act on within days
+  p_typical: 0.12
+  grounded: inferred
+  evidence: 'competitor-and-ua.md section 2: libraries show active ads only; section 3: every creative tool ''analyses the ad video plus network metrics'' (Segwise, Alison.ai, Vidmob, Replai) and none matches
+    a rival ad back to the studio''s own source footage'
+  already_offered: false
+  proposed: studio uploads 300-500 keyframes of its own footage once; a weekly crawl of the two libraries for ads in the game's genre and country list is sampled at 1 fps and matched by perceptual hash
+    plus a VLM check; each hit gets a row with ad ID, advertiser page, first-seen date, matched timestamps and the two frames side by side
+  shallow: false
+  mechanism: crawler collects ad video from the public libraries, samples at 1 fps, compares each frame with the studio's reference set (perceptual hash first, a vision-language model second to confirm
+    same scene and not just same genre); runs of 3 or more consecutive matched seconds become a candidate; the report agent writes the evidence row
+  example: 'Match-3 studio: the scan on Monday finds 6 ads from 4 advertiser pages that reuse 3-9 seconds of the studio''s footage; legal reviews the 6 rows in 40 minutes and files 4 reports the same day.'
+  cost: M
+  depends_on: ad-library crawler (the studio's own video ingestion and report agent already exist); reference-frame upload; a legal reviewer for every hit
+  buyer: head of legal or IP counsel at a mobile publisher, with the UA director as co-sponsor
+  input: competitor-store-and-ad-video from Meta Ads Library and TikTok Creative Center + the studio's own trailer and gameplay frames
+  why_existing_tools_cannot: 'competitor-and-ua.md section 3: creative-analytics tools tag the ad and join it to network metrics; none compares a rival ad to the studio''s own source footage; section 2:
+    Meta Ads Library only lists active ads, so a removed ad leaves no record'
+  willingness_to_pay: 3 - no price for enforcement tooling in the notes; the anchors are Segwise $499-$1,699/month for UA creative tagging and Sensor Tower median $75,000/yr (competitor-and-ua.md sections
+    3 and 1); a legal budget would pay on avoided incident cost, not per scan
+  variants_of: ciso-3
+  bucket: 7
+  perspective: takedown
+- id: takedown-2
+  title: 'Preview-video lookalike watch: new App Store and Google Play listings whose 30-second preview or screenshots reuse the studio''s footage, checked daily in the 21 days after each launch or major
+    update'
+  level: L4
+  cell:
+    buyer-role:
+    - brand-advertiser
+    - ua-marketing
+    - finance-exec
+    video-source: competitor-store-and-ad-video
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: anomaly-alert
+    lifecycle-moment: ua-campaign-launch
+    delivery-form: alert-or-slack
+    capture-trigger-and-sampling: random-sample
+    game-platform-and-genre: mobile-casual-hypercasual
+    constraint-to-overcome: store-or-platform-policy
+    buyer-org-type: publisher
+  object: 'competitor-and-ua.md section 2: ''Apple allows app preview videos up to 30 seconds, up to three per product page''; ''AI Vidia states App Store previews may only use footage captured in the app
+    itself (vendor)'''
+  situation: day 4 of a global launch that cost USD 600k in UA; a new listing in the same category appears with a preview whose second 5-14 is the studio's FTUE tutorial screens and a near-identical icon
+  consequence: the clone's listing competes for the same search keywords during the launch window; every day it stays up diverts installs, and an Apple App Review complaint filed after day 10 costs the
+    launch window
+  p_typical: 0.08
+  grounded: inferred
+  evidence: 'competitor-and-ua.md section 2: previews are capped at 30 s and 3 per page and may only show in-app footage, so a preview that shows the studio''s UI is a policy breach as well as an IP issue;
+    section 1: GameRefinery ''automated tags'' read store metadata, not video'
+  already_offered: false
+  proposed: daily poll of new releases in the category's top-200 new list and keyword searches for the game name and 5 mechanic phrases in 8 languages; matching of preview frames to the studio's reference
+    set; Slack alert with listing URL, matched seconds and a prefilled store-complaint text
+  shallow: false
+  mechanism: scheduled store crawl pulls preview videos and screenshots of new and updated listings, frame-matches them against the studio's reference set, and scores icon, screenshot and preview similarity
+    separately; alert fires when preview similarity exceeds a threshold set by legal
+  example: 'A casual-puzzle publisher launching in 40 countries gets an alert on day 4: a listing published 9 hours earlier reuses 11 seconds of the tutorial; the complaint goes to Apple the same afternoon.'
+  cost: M
+  depends_on: store crawler and rate-limit-safe access to public listings; legal-approved complaint templates
+  buyer: ASO manager and IP counsel at a mobile publisher (UA marketing budget)
+  input: competitor-store-and-ad-video (listing previews and screenshots) + the studio's reference frames and launch calendar
+  why_existing_tools_cannot: 'competitor-and-ua.md section 6: Apple Product Page Optimization and Play listing experiments test the studio''s own page; adjacent-usecases.md section 7: AppTweak and ASOMobile
+    ''track store-listing changes and in-app events, not in-game events''; competitor-and-ua.md section 1: GameRefinery auto-tagging reads store metadata; none checks whether a new listing''s preview contains
+    the studio''s own footage'
+  willingness_to_pay: 2 - cheap versus a launch budget but sold by value protected; no price for IP watch or ASO monitoring in the notes; the nearest monitoring-tool anchor is AppMagic Premium 'from $380/month'
+    (competitor-and-ua.md section 1 Prices)
+  verify_note: 'willingness_to_pay and why_existing_tools_cannot re-cited: the notes give no AppTweak price, and ASO monitoring is in adjacent-usecases.md section 7, not competitor-and-ua.md section 1'
+  variants_of: compintel-16
+  bucket: 7
+  perspective: takedown
+- id: takedown-3
+  title: 'Asset-level reuse matcher: finds the studio''s character sprites, 3D model silhouettes and UI atlases inside clone-game gameplay videos, even when recoloured or rescaled'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source:
+    - competitor-store-and-ad-video
+    - platform-or-emulator-capture
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: enforcement-or-cert-evidence-pack
+    game-platform-and-genre: mobile-midcore-f2p
+    companion-data: build-and-config-metadata
+    buyer-org-type: publisher
+  object: 'methods-churn-funnel.md section 4: ''button/popup detection (mAP ~90% on mobile games)'' and ''a per-title detector trained on a few hundred labelled frames is plausibly enough'''
+  situation: a clone of a midcore collector game ships with 38 of the studio's 120 hero portraits and the studio's currency icon, each recoloured by 15% and scaled 80%
+  consequence: text-only store complaints ('looks similar') are rejected; frame crops of identical hero art with the studio's asset file names in a side-by-side table are what an IP reviewer accepts, and
+    without them the studio cannot show the copying is of expression and not of the idea
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'methods-churn-funnel.md section 4: a per-title detector trained on a few hundred labelled frames is plausibly enough; market.md section 9: ''No vendor found that does CV-based competitor gameplay
+    analysis'''
+  already_offered: false
+  proposed: 'build a per-title template set from the studio''s art repository (hero portraits, currency icons, button atlas: 200-1,000 images), run local-feature matching over 1 fps frames from the clone''s
+    store preview and a 10-minute recorded install session, output one cropped pair per asset with a similarity score'
+  shallow: false
+  mechanism: the studio exports its art bundle to a reference index; each frame of the clone video is segmented into regions and matched by local-feature and embedding similarity tolerant to recolour and
+    scale; matched regions are cropped and paired with the source asset file name and its commit date
+  example: Legal at a collector-game studio gets a table of 38 matched hero portraits with source file names and first-commit dates, attached to a Google Play developer-policy report on a clone.
+  cost: L
+  depends_on: access to the studio's art repository and its commit history; competitor install capture on a test device
+  buyer: IP counsel at a midcore publisher, with the art director signing off the matches
+  input: competitor-store-and-ad-video + a recorded 10-minute install session of the clone + the studio's art repository and build-and-config-metadata
+  why_existing_tools_cannot: 'market.md section 9: no vendor does CV competitor gameplay analysis; competitor-and-ua.md section 1: feature tagging is human-play-and-log, not asset matching'
+  willingness_to_pay: 3 - sold per case to a studio facing a damaging clone; no published price, anchored on a managed-project engagement in the PlaytestCloud EUR 13.6k-33.9k band (market.md signals)
+  bucket: 7
+  perspective: takedown
+- id: takedown-4
+  title: 'Tamper-evident ad capture: every suspect ad is archived at first sight with MP4, library URL, advertiser page ID, country, capture clock and SHA-256, because Meta Ads Library lists only active
+    ads'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source: competitor-store-and-ad-video
+    signal-extracted: on-screen-text-ocr
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: enforcement-or-cert-evidence-pack
+    constraint-to-overcome: accuracy-and-trust
+    pricing-model: per-audit-or-certification
+    buyer-org-type: publisher
+  object: 'competitor-and-ua.md section 2: ''Meta Ads Library is free, shows only active ads on Facebook/Instagram, no spend data'''
+  situation: a rival stops its infringing ad 36 hours after the studio's first complaint and the ad disappears from the library; two weeks later legal needs the ad to support a claim against the same advertiser's
+    next account
+  consequence: with no archived copy the studio has only a colleague's phone screenshot, which an opposing counsel or platform reviewer can dismiss; archiving after the fact is impossible
+  p_typical: 0.07
+  grounded: quote
+  evidence: 'competitor-and-ua.md section 2 (VERIFIED, vendor): ''Meta Ads Library is free, shows only active ads on Facebook/Instagram, no spend data''. This is a stated gap: an ad that stops running leaves
+    no public record, which is the need a first-sight archive meets.'
+  already_offered: false
+  proposed: on first match, store the video, a full-page render of the library entry, response headers and a hash with an RFC 3161 timestamp; export a PDF/ZIP evidence file with a chain-of-capture log that
+    legal can hand to outside counsel
+  shallow: false
+  mechanism: 'the crawler snapshots each candidate at detection time: raw media bytes, rendered page, URL, advertiser page ID, country and capture clock, hashes them and requests a third-party timestamp;
+    the evidence file lists every capture step so a reviewer can re-run it'
+  example: Four months after a rival's ad ran for 9 days, the studio's counsel attaches the archived MP4 and timestamp to a letter before action; the ad has long been gone from Meta Ads Library.
+  cost: S
+  depends_on: takedown-1 or any crawler that surfaces candidates; a timestamping service account
+  buyer: IP counsel or paralegal at a publisher; outside law firm as the consumer of the file
+  input: competitor-store-and-ad-video (public ad library pages) + crawler metadata
+  why_existing_tools_cannot: 'competitor-and-ua.md section 2: the free library drops inactive ads and offers no capture record; section 1: Sensor Tower Creative Gallery shows impressions, network and duration
+    per ad but is a research view, not a signed archive'
+  willingness_to_pay: 2 - a feature of takedown-1 rather than a stand-alone buy; priced per audit file, with no price anchor in the notes
+  verify_note: 'raised from inferred to quote: the note states the gap the option fills'
+  variants_of: tns-16
+  bucket: 7
+  perspective: takedown
+- id: takedown-5
+  title: 'Per-platform notice drafter: from one evidence row, generates the Apple, Google Play, Meta, TikTok and YouTube report text, each filling that platform''s own required fields and attaching the
+    matched frames'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source:
+    - public-streams-and-ugc
+    - competitor-store-and-ad-video
+    signal-extracted: on-screen-text-ocr
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: ask-question-agent-chat
+    automation-level: auto-created-ticket-or-asset
+    effort: XS-repackage-existing-user-test-product
+    buyer-org-type: publisher
+  object: 'competitor-and-ua.md section 2: previews and ad libraries sit on separate platforms (Apple, Google Play, Meta, TikTok) with different rules, e.g. ''App Store previews may only use footage captured
+    in the app itself'''
+  situation: one infringing asset lives as a Meta ad, a TikTok Creative Center entry, a YouTube upload and an App Store preview at once; today legal writes four different complaints by hand in 25 minutes
+    each
+  consequence: inconsistent reports get rejected on one platform and accepted on another, so the clone is removed from 2 of 4 places; legal spends 100 minutes on a single asset
+  p_typical: 0.09
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: template library per platform, filled by the existing report agent from the evidence row; output is a draft in a legal queue, never sent without a named reviewer clicking approve
+  shallow: false
+  mechanism: the report agent reads the evidence row (matched frames, timestamps, advertiser IDs, source file names, first-publication date) and writes four platform-specific drafts with the field names
+    each platform's form asks for; a legal reviewer edits and submits
+  example: Counsel at a publisher approves 4 drafts in 12 minutes instead of writing them in 100 minutes, and the pack is reused for the next hit from the same advertiser.
+  cost: S
+  depends_on: takedown-1 or takedown-4 producing the evidence rows; templates reviewed by the studio's counsel
+  buyer: IP counsel at a publisher
+  input: evidence rows + public-streams-and-ugc and ad URLs for the same asset
+  why_existing_tools_cannot: the notes show no vendor in this area; the User Test report agent already writes structured findings from footage (A-frame assumptions), so the gap is templates and a reviewer
+    queue, not a new model
+  willingness_to_pay: 2 - labour saving of about 90 minutes per asset; no price in the notes, small seat licence feel (Alison.ai $10-$25 per user per month, competitor-and-ua.md section 3)
+  bucket: 7
+  perspective: takedown
+- id: takedown-6
+  title: 'Repeat-offender graph: clusters rival ads, store listings and developer accounts by which of the studio''s frames they reuse, to show one actor behind 14 accounts and support an account-termination
+    request'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source: competitor-store-and-ad-video
+    signal-extracted: bot-or-fraud-behaviour
+    analysis-type: cohort-comparison
+    delivery-form: dashboard
+    buyer-org-type: publisher
+    value-lever-b2b: reduce-cost-per-incident
+  object: 'competitor-and-ua.md section 2: ''screenshotting ads seen inside another game mislabels them as that game''s creative (vendor guide)''; section 1 Sensor Tower Creative Gallery rows carry network
+    and advertiser'
+  situation: over 5 weeks, 14 Meta advertiser pages and 3 Play developer accounts publish ads and listings that all reuse the same 6 clips from the studio's footage, each with a new page name after a takedown
+  consequence: each complaint removes one item and the actor re-registers, so legal files 40 complaints a quarter; a single graph showing a common creative fingerprint is what makes a platform terminate
+    the account
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'competitor-and-ua.md section 2 and section 1: tools list ads one by one with network metadata; no source shows linking ads to an actor by shared reused footage'
+  already_offered: false
+  proposed: node = ad, listing, advertiser page, developer account; edge = shares a matched clip, same end-card store URL, same payment descriptor shown on the page; dashboard shows clusters with first-seen
+    date and takedown history
+  shallow: false
+  mechanism: matched clips from takedown-1 and takedown-2 are tagged with a clip ID; ads and listings that share clip IDs, end-card links or identical caption text are joined into one cluster; the dashboard
+    counts reports filed, removed and re-appeared per cluster
+  example: Legal sees one cluster of 17 items from 14 pages in 5 weeks, files one escalation to Meta's repeat-infringer team, and the cluster stops re-appearing for 60 days.
+  cost: M
+  depends_on: takedown-1 and takedown-4 running for at least 4-6 weeks to build history
+  buyer: IP counsel and brand protection lead at a publisher with several top-grossing titles
+  input: competitor-store-and-ad-video over many weeks + the studio's takedown log
+  why_existing_tools_cannot: 'competitor-and-ua.md section 1: ad-intelligence tools rank creatives by impressions and show network per ad but have no notion of one actor reusing one source clip'
+  willingness_to_pay: 2 - only worth buying after takedown-1 shows a repeat pattern; no price anchor, would sit in the annual enterprise band of Sensor Tower $29,500-$115,460 (competitor-and-ua.md section
+    8)
+  bucket: 7
+  perspective: takedown
+- id: takedown-7
+  title: 'Ad-network sweep: a nightly bot plays 30 top rewarded-ad slots across 25 mid-core and casual games, records every ad shown, and matches them to the studio''s footage, because AppLovin and similar
+    networks publish no ad library'
+  level: L4
+  cell:
+    buyer-role: ua-marketing
+    video-source:
+    - competitor-store-and-ad-video
+    - ad-and-playable-ad-sessions
+    signal-extracted: ad-render-and-viewability
+    analysis-type: evidence-pack-for-enforcement
+    capture-trigger-and-sampling: scheduled-bot-playthrough
+    delivery-form: enforcement-or-cert-evidence-pack
+    game-platform-and-genre:
+    - mobile-casual-hypercasual
+    - mobile-midcore-f2p
+    buyer-org-type: publisher
+  object: 'competitor-and-ua.md section 2: ''AppLovin publishes no public competitor ad library; screenshotting ads seen inside another game mislabels them as that game''s creative (vendor guide)'''
+  situation: an infringing ad runs only inside other publishers' rewarded-video slots on AppLovin and Unity Ads, where there is no public library to search
+  consequence: the ad reaches the studio's own lapsed players for weeks without ever appearing in Meta or TikTok libraries; the studio finds out from a Discord complaint
+  p_typical: 0.05
+  grounded: quote
+  evidence: 'competitor-and-ua.md section 2 (VERIFIED, vendor guide): ''AppLovin publishes no public competitor ad library; screenshotting ads seen inside another game mislabels them as that game''s creative''.
+    The note states the gap that a device sweep of live ad slots fills; device clouds exist (adjacent-usecases.md section 6: AWS Device Farm, BrowserStack; market.md section 3: HeadSpin).'
+  already_offered: false
+  proposed: 10 real devices on a rotating schedule, each opening 3 host games and triggering rewarded and interstitial ad slots; each ad is recorded to its end card, the store link read, and the ad matched
+    to the reference set
+  shallow: false
+  mechanism: a device rig plays host games, triggers ad slots, records ad video plus end-card URL, labels the host game and network, and runs the footage matcher; an ad containing a run of 3 or more matched
+    seconds is stored with a hash and the device clock
+  example: A casual publisher's rig records 1,900 ad impressions in a week across 25 host games and finds 3 ads with 8 seconds of its footage, all ending on one Play listing, none ever in Meta Ads Library.
+  cost: L
+  depends_on: device farm or in-house rig; takedown-1 matcher; legal check that host-game terms allow automated play
+  buyer: UA director plus IP counsel at a mobile publisher; the UA budget funds the rig
+  input: competitor-store-and-ad-video captured from live ad slots + the studio's reference frames
+  why_existing_tools_cannot: 'competitor-and-ua.md section 2: AppLovin has no public library and hand screenshots mislabel the ad''s owner; Sensor Tower Creative Gallery (section 1) covers networks it ingests,
+    with impressions, but not frame-level reuse of a given studio''s footage'
+  willingness_to_pay: 2 - UA teams already pay $499-$1,699/month (Segwise) and Sensor Tower $75,000 median; a rig is costlier to run, so only studios with repeated ad theft pay
+  verify_note: raised from inferred to quote; device-lab citation corrected (HeadSpin and WeTest are in market.md section 3, not adjacent-usecases.md section 6)
+  variants_of: adnet-8
+  bucket: 7
+  perspective: takedown
+- id: takedown-8
+  title: 'Harm quantifier: joins a matched rival ad''s impressions from ad intelligence with the studio''s CPI to estimate diverted installs, giving legal a damages line for a demand letter'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source: competitor-store-and-ad-video
+    signal-extracted: ad-render-and-viewability
+    analysis-type: root-cause-of-a-metric-change
+    delivery-form: per-cohort-report
+    companion-data: attribution-campaign-and-creative-id
+    value-lever-b2b: de-risk-a-go-kill-decision
+    buyer-org-type: publisher
+  object: 'competitor-and-ua.md section 1: Sensor Tower Ad Intelligence ''Creative Gallery ... showing impressions, network and duration per ad, share-of-voice ranking''; section 3: ''top 2% of gaming video
+    creatives took 60.7% of spend (unverified)'''
+  situation: a rival ad with 6 seconds of the studio's footage ran 19 days and the studio's iOS CPI in the same country rose 22% over the same 19 days
+  consequence: without a number, a demand letter says 'significant harm' and counsel cannot decide whether to sue, settle or only file a takedown; the 22% CPI move is not linked to the ad by any tool
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'competitor-and-ua.md section 3: GeekLab says it is ''hard to see which creative acquired players who later retain and pay, especially on iOS''; section 1: Sensor Tower Creative Gallery shows
+    ''impressions, network and duration per ad''. Inference: joining a rival ad''s impressions to the studio''s own CPI is a named attribution gap, but no note covers damages estimates.'
+  already_offered: false
+  proposed: 'report: impressions of the infringing ad by country and day, the studio''s CPI and installs by day, a difference-in-differences vs 2 control countries, with the confidence interval stated;
+    marked as an estimate, never as proof of causation'
+  shallow: false
+  mechanism: takes matched-ad exposure by day and country, the studio's MMP installs and spend by day, builds a control from countries with no matched ad, and reports the estimated lost installs and cost
+    with a range
+  example: Counsel reads 'estimated 31k diverted installs, USD 90k-140k at the studio's CPI' in a demand letter and the rival settles within 3 weeks.
+  cost: M
+  depends_on: takedown-1 matches; MMP exports (companion-data); ad-intelligence impressions licence (Sensor Tower or AppMagic)
+  buyer: general counsel or finance partner at a publisher
+  input: competitor-store-and-ad-video impressions + attribution-campaign-and-creative-id data
+  why_existing_tools_cannot: 'competitor-and-ua.md section 3: ''Every tool above analyses the ad video plus network metrics''; none ties a rival''s ad to the studio''s own CPI and installs'
+  willingness_to_pay: 2 - valuable only in a dispute; a one-off managed project, anchored on analyst-led work at Keywords-class vendors (market.md section 3) with no price in the notes
+  verify_note: 'raised from speculative to inferred: the attribution complaint and per-ad impression data are both in the notes'
+  bucket: 7
+  perspective: takedown
+- id: takedown-9
+  title: 'Fan-versus-infringer triage: classifies public videos that use the studio''s footage as fan content, creator-programme content or commercial reuse, so legal sends notices only to the third group'
+  level: L4
+  cell:
+    buyer-role: community-and-creator-marketing
+    video-source: public-streams-and-ugc
+    signal-extracted: on-screen-text-ocr
+    analysis-type: content-rating-classification
+    delivery-form: weekly-digest-email
+    constraint-to-overcome: accuracy-and-trust
+    buyer-org-type: publisher
+    automation-level: insight-for-human
+  object: 'competitor-and-ua.md section 5: ''Monitoring today is by viewership counts, tracked links and keys, not by what is shown in the clip. Nothing found reads clip content'''
+  situation: of 600 public videos a month that show the studio's gameplay, 580 are fans and 20 are a rival's promo, a free-to-play funnel page or a re-upload with ads; a blanket automated takedown tool
+    hits a top streamer
+  consequence: a notice sent to a 400k-subscriber creator by mistake costs the community team a week of repair; legal cannot tell the 20 from the 580 without watching them
+  p_typical: 0.07
+  grounded: inferred
+  evidence: 'competitor-and-ua.md section 5: Gamesight, Lurkit, Hatchet measure viewership and tracked links; market.md section 5: Hatchet ''measures viewership metadata''; nothing reads the clip'
+  already_offered: false
+  proposed: 'per video: is the channel in the studio''s creator programme, is a competing store link or QR on screen or in the description, is the footage cropped to hide the logo; output is three bins
+    and a weekly digest of the third bin only'
+  shallow: false
+  mechanism: VLM and OCR read the video frames and its on-screen overlays, compare channel ID with the creator-programme list, detect a competing install CTA or store link, and assign a bin with the evidence
+    frame; humans review bin 3
+  example: Community lead gets a Monday digest of 23 videos that carry a rival game's install link on top of the studio's footage, and sends none of the 577 fan videos a notice.
+  cost: M
+  depends_on: public clip crawler; creator-programme list; legal rule for what counts as commercial reuse
+  buyer: community and creator-marketing lead with legal as approver, publisher or mid-size studio
+  input: public-streams-and-ugc + creator programme list
+  why_existing_tools_cannot: 'competitor-and-ua.md section 5: creator tools count views and clicks and do not read clip content; no tool separates fan, programme and commercial reuse'
+  willingness_to_pay: 2 - Hatchet-class stream analytics $249-$1,249+/month (market.md signals) is the budget the community team already holds
+  variants_of: ciso-19
+  bucket: 7
+  perspective: takedown
+- id: takedown-10
+  title: 'Watermark and credit leftover detector: finds clone videos that still carry the studio''s logo traces, studio name or a ripped ''Powered by'' end card in blurred or cropped corners'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source:
+    - public-streams-and-ugc
+    - competitor-store-and-ad-video
+    signal-extracted: brand-logo-exposure
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: enforcement-or-cert-evidence-pack
+    constraint-to-overcome: ground-truth-labels
+    buyer-org-type: publisher
+  object: 'market.md section 5 Relo Metrics: ''CV detects every visible sponsor logo across broadcast, streaming and social video (prominence, screen share, duration)'''
+  situation: a rival's 20-second ad pans over a corner where the studio's logo was blurred, with a 12 px ghost edge and half of a copyright line visible for 0.8 seconds
+  consequence: frame-level feature matching misses it because the rest of the scene was re-rendered; a human watching at normal speed never sees the 0.8 seconds, yet it is the strongest proof of copying
+  p_typical: 0.03
+  grounded: inferred
+  evidence: 'market.md section 5 Relo Metrics: logo detection in sports video is a mature product but ''Search found no esports or in-game equivalent''; methods-churn-funnel.md section 4: OCR is limited
+    by low-resolution, stylised fonts'
+  already_offered: false
+  proposed: a detector for blurred, inpainted and cropped logo remnants, trained on 2,000 synthetic samples made from the studio's own logo with blur, crop and inpaint variants; output the timestamps and
+    corner crops
+  shallow: false
+  mechanism: synthetic augmentation of the studio's logo and copyright text produces training data for a small detector that flags residual shapes, colours and text fragments at 5 fps over ad and video
+    frames
+  example: A scan flags 3 ads where the studio's logo remains as a 9 px edge in the top-left corner, and counsel cites those frames as the first exhibit.
+  cost: M
+  depends_on: studio logo and font assets; takedown-1 crawler
+  buyer: IP counsel at a publisher
+  input: public-streams-and-ugc and ad video + the studio's logo and copyright line assets
+  why_existing_tools_cannot: 'market.md section 5: Relo Metrics finds clean sponsor logos in sports broadcasts, not residue of a deleted logo in game footage; methods-churn-funnel.md section 4 shows OCR
+    struggles on low-resolution HUD fonts'
+  willingness_to_pay: 1 - useful as an add-on feature, not a purchase on its own; no price anchor in the notes
+  variants_of: brand-16
+  refusal: true
+  refusal_note: 'tagged refusal: willingness_to_pay 1 (add-on feature, not bought alone), same rule as adnet-12 in bucket 6'
+  bucket: 7
+  perspective: takedown
+- id: takedown-11
+  title: 'Bait-and-switch evidence: compares what a rival ad shows (our footage) with a recorded 10-minute install session of the advertised app, and writes the mismatch as a misleading-advertising complaint'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source:
+    - competitor-store-and-ad-video
+    - platform-or-emulator-capture
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: ad-verification-and-fraud
+    delivery-form: enforcement-or-cert-evidence-pack
+    lifecycle-moment: post-churn-winback
+    buyer-org-type: publisher
+  object: 'competitor-and-ua.md section 2: ''Competitor ad libraries expose creatives but not what happens after install; gameplay recorded from a device is the only path to post-install flow (FTUE, offers,
+    shops, events)'''
+  situation: a rival ad shows the studio's boss fight; the advertised app on install opens a different, simpler game with 3 interstitial ads in the first 60 seconds
+  consequence: lapsed players of the studio's game click the ad, install the rival and blame the studio for a poor experience; the studio's store rating drops by reviews written about the rival's app
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'competitor-and-ua.md section 2: ad libraries show creatives, not post-install flow; methods-churn-funnel.md section 4: menu and screen classification is a mature piece (button and popup detection
+    mAP ~90%)'
+  already_offered: false
+  proposed: a recorded install session of the advertised app (emulator capture), screen-flow labelled, aligned side by side with the ad's seconds; the report states which promised scenes never appear in
+    10 minutes of play
+  shallow: false
+  mechanism: the ad and an emulator-recorded install session are both segmented into scenes and labelled; the matcher shows promised scenes absent from the product, and the report quotes the claims on screen
+  example: Legal files a misleading-advertising complaint with scene 1 (boss fight, our footage) shown against 10 minutes of the rival app that contains no boss fight.
+  cost: M
+  depends_on: takedown-1; emulator capture of the rival install; legal view of local advertising law
+  buyer: legal and brand protection at a publisher with a licensed or high-profile IP
+  input: competitor-store-and-ad-video + an emulator capture of the rival install
+  why_existing_tools_cannot: 'competitor-and-ua.md section 2: libraries hide post-install flow; section 1: GameRefinery feature data comes from analysts playing by hand and is not set up for a one-off ad-versus-product
+    comparison'
+  willingness_to_pay: 2 - occasional high-value case; no price in the notes; a managed project priced like analyst work
+  variants_of: compintel-9
+  bucket: 7
+  perspective: takedown
+- id: takedown-12
+  title: 'Authorised-use expiry watch: flags agency, creator or partner ads that keep using licensed studio footage after the 90-day licence ends, or in another client''s ad'
+  level: L4
+  cell:
+    buyer-role: ua-marketing
+    video-source: competitor-store-and-ad-video
+    signal-extracted: brand-logo-exposure
+    analysis-type: compliance-audit
+    delivery-form: alert-or-slack
+    pricing-model: per-month-seat
+    buyer-org-type: agency
+  object: 'competitor-and-ua.md section 3: agencies are paid per creative, ''EUR 363-500 per AI video (Admiral), $3,000-$5,000 per playable (AppAgent)'''
+  situation: a UA agency was given 12 gameplay clips for a 90-day campaign; on day 104 the same clips appear in a different client's Meta ad
+  consequence: the studio's footage appears in ads for a rival title; the studio has the agency contract but no dated proof of reuse, so the claim rests on a screenshot
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: each licensed clip gets an ID and an expiry date; the scan matches new ads against the licensed clip set and raises an alert when a match appears after expiry or on an advertiser page that is
+    not the licensee's
+  shallow: false
+  mechanism: the studio registers licensed clips with licensee, start, end and territories; matches from takedown-1 are checked against the registry; a match after expiry or on another advertiser creates
+    a Slack alert with the clause reference
+  example: 'UA director gets an alert on day 104: 4 of the 12 licensed clips are running in an ad from a page owned by the agency''s other client.'
+  cost: S
+  depends_on: takedown-1; a licence registry the studio keeps already in contract tooling
+  buyer: UA director and legal at a publisher that uses 2-5 external agencies
+  input: competitor-store-and-ad-video + the studio's licence registry
+  why_existing_tools_cannot: 'competitor-and-ua.md section 3: creative tools tag and score ads, but none tracks licence terms on source footage'
+  willingness_to_pay: 2 - small per-seat price; $10-$25 per user per month (Alison.ai) to $499/month (Segwise) as the nearest UA-tool budget
+  verify_note: 'author pointer: agencies are paid per creative (competitor-and-ua.md section 3, EUR 363-500 per AI video); nothing in the notes covers licence terms on source footage'
+  variants_of: takedown-1
+  bucket: 7
+  perspective: takedown
+- id: takedown-13
+  title: 'Cross-language clone sweep: matches the studio''s footage inside Vietnamese, Turkish, Arabic, Indonesian and Portuguese-language ads, translates on-screen text and writes the evidence in the platform''s
+    language'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source:
+    - public-streams-and-ugc
+    - competitor-store-and-ad-video
+    signal-extracted: text-overflow-and-untranslated
+    analysis-type: evidence-pack-for-enforcement
+    lifecycle-moment: new-market-or-language-launch
+    delivery-form: enforcement-or-cert-evidence-pack
+    buyer-org-type: publisher
+  object: 'adjacent-usecases.md section 5 (localisation QA from video and screenshots): OCR of on-screen text in many languages is the basis of localisation review'
+  situation: two weeks after the studio opens Vietnam and Turkey, ads in those markets show the studio's gameplay with Vietnamese and Turkish captions that promote a different app; the studio's legal team
+    reads neither language
+  consequence: queries on English keywords find nothing in those two markets; the infringement runs for the first 6 weeks of the launch unseen
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'adjacent-usecases.md section 5: Gridly sells ''LQA with screenshots, sounds, video next to text, AI checks'' and reviewers check text from screenshots of every screen; competitor-and-ua.md
+    section 2: Meta Ads Library and TikTok Creative Center are the free monitoring sources. Inference: no note says anyone sweeps those libraries for reused footage in other languages.'
+  already_offered: false
+  proposed: country-by-country sweep in the 8 launch markets, OCR plus machine translation of captions, and an evidence row that carries both the original and the English caption
+  shallow: false
+  mechanism: the crawler runs per country, OCRs captions, translates them, and attaches both versions to the frame match; legal sees English and the reviewer at the platform sees the local text
+  example: Legal at a publisher launching in 8 new markets sees 5 matches in Turkey and Vietnam with translated captions the first week after launch.
+  cost: M
+  depends_on: takedown-1; localisation vendor or machine translation with human spot-check
+  buyer: legal and market-launch lead at a publisher
+  input: public-streams-and-ugc and ad video per country + the studio's reference frames
+  why_existing_tools_cannot: 'adjacent-usecases.md section 5: localisation tools check the studio''s own text; no note shows cross-country search for third-party reuse'
+  willingness_to_pay: 2 - bundled into takedown-1 for publishers with 5+ markets; no separate price in the notes
+  verify_note: 'evidence corrected: the notes do not state that the ad libraries are filterable by country, and adjacent-usecases.md section 5 does not name OCR'
+  variants_of: takedown-1
+  bucket: 7
+  perspective: takedown
+- id: takedown-15
+  title: 'Licensed-IP policing report: quarterly pack for a film, anime or sports licensor showing every public ad or clone app that uses the licensed characters, with matched frames and what the studio
+    did about each'
+  level: L4
+  cell:
+    buyer-role: brand-advertiser
+    video-source: competitor-store-and-ad-video
+    signal-extracted: brand-logo-exposure
+    analysis-type: compliance-audit
+    delivery-form: enforcement-or-cert-evidence-pack
+    pricing-model: per-audit-or-certification
+    buyer-org-type: brand-advertiser
+  object: 'market.md section 5 Relo Metrics: sponsor logo detection with ''prominence, screen share, duration'' sold to marketers; no in-game equivalent found'
+  situation: a studio holds a game licence for a film franchise; the licence requires it to police unauthorised use of the characters and report each quarter to the licensor
+  consequence: with no systematic scan the studio reports 'none found' while the licensor's own agency finds a clone ad using the characters; the licence renewal is at risk
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: character reference set provided by the licensor; quarterly sweep of ads, store listings and public videos; report lists each hit, its status and the action taken
+  shallow: false
+  mechanism: the licensor supplies reference art; the system matches ads, listings and clips by character face and costume embeddings; the output is a counts-and-status table per quarter
+  example: Studio sends its licensor a 12-page quarterly report with 9 hits, 7 removed, 2 pending, instead of a one-line email.
+  cost: M
+  depends_on: licensor reference art; takedown-1 crawler
+  buyer: licensing manager at the studio, report consumed by the licensor's brand team
+  input: competitor-store-and-ad-video + licensor character art
+  why_existing_tools_cannot: 'market.md section 5: logo-detection vendors cover sponsorship exposure, not unauthorised character use in game ads'
+  willingness_to_pay: 2 - annual licence cost makes a report of this size a small line; no price in the notes
+  verify_note: 'author pointer: Relo Metrics sells CV logo detection to sports marketers (market.md section 5); nothing covers licensed-character policing'
+  bucket: 7
+  perspective: takedown
+- id: takedown-16
+  title: 'Paste-a-link triage in chat: a community manager pastes a player-reported ad or listing URL into the existing ask-a-question agent and gets ''matches our footage / does not match'' with frames
+    in under 2 minutes'
+  level: L4
+  cell:
+    buyer-role:
+    - player-support
+    - community-and-creator-marketing
+    video-source: public-streams-and-ugc
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: ask-a-question-over-footage
+    delivery-form: ask-question-agent-chat
+    capture-trigger-and-sampling: on-player-report
+    effort: XS-repackage-existing-user-test-product
+    buyer-org-type: mid-size-studio
+  object: 'A-frame assumption: ''the company building this already has video ingestion, transcription and a report/ask-question agent (the User Test product)'''
+  situation: a player writes in Discord 'this ad is your game but it is not yours, 3 of 5 stars on the install'; the community manager cannot tell if the ad contains the studio's footage
+  consequence: the report sits for 3 days in a Discord thread, then nobody forwards it to legal; the clone runs on
+  p_typical: 0.09
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: 'a Slack or web chat box: paste a URL, the agent downloads the public video, matches against the reference set, answers with matched timestamps and a button ''send to legal queue'''
+  shallow: false
+  mechanism: the existing ingestion pipeline fetches the public video, a matcher runs against the reference set, the agent answers with matched seconds and a confidence, and a button files the row to the
+    legal queue
+  example: A community manager pastes 5 player-reported links on a Friday and sends 2 to legal in 10 minutes.
+  cost: S
+  depends_on: takedown-1 reference set; public video fetch rights
+  buyer: community manager or player-support lead at a mid-size studio
+  input: public-streams-and-ugc reported by players + reference frames
+  why_existing_tools_cannot: 'competitor-and-ua.md section 5: UGC monitoring tools do not read clip content; community managers use viewership dashboards'
+  willingness_to_pay: 2 - a feature in the same bundle as takedown-1; seat price level (Alison.ai $10-$25 per user per month)
+  bucket: 7
+  perspective: takedown
+- id: takedown-17
+  title: 'REFUSAL: fully automatic filing of takedown notices with no human reviewer, because one wrong notice against a creator or a rival''s genuine game creates liability'
+  level: L3
+  cell:
+    buyer-role: finance-exec
+    video-source: competitor-store-and-ad-video
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: enforcement-or-cert-evidence-pack
+    automation-level: closed-loop-in-game-action
+    buyer-org-type: publisher
+  object: 'adjacent-usecases.md section 2: one paper''s server-side LSTM reached 88.6% accuracy with 0.97% false positives and ''the authors stress false accusations as the key risk'''
+  situation: a matcher with a 1% false-positive rate scans 10,000 ads a month and would file about 100 wrong notices a month
+  consequence: counsel refuses to put the studio's name to notices nobody read; a false claim creates liability and platform blocking; the buyer pays only for drafts in a review queue
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'adjacent-usecases.md section 2: false accusations are the key risk in automated detection; the studio''s counsel would see the same risk'
+  already_offered: false
+  proposed: keep takedown-5 as a drafter with a named human approver; never a submit-without-review mode
+  shallow: false
+  mechanism: the product would auto-submit reports when the match score exceeds a threshold; this is the version the legal buyer refuses
+  example: A vendor demo that files 40 notices overnight is rejected by the general counsel at the first meeting.
+  cost: S
+  depends_on: takedown-5
+  buyer: general counsel at a publisher (refuses)
+  input: competitor-store-and-ad-video + match scores
+  why_existing_tools_cannot: no tool is needed to make this; the item records what the buyer will not buy
+  willingness_to_pay: 1 - refused; buyers pay for review-queue drafts instead
+  variants_of: takedown-5
+  refusal: true
+  bucket: 7
+  perspective: takedown
+- id: takedown-18
+  title: 'REFUSAL: ''mechanic clone'' accusation reports that claim a rival copied a core loop or UI layout, sold per accusation, when game mechanics are not protected by the notice routes the stores accept'
+  level: L3
+  cell:
+    buyer-role:
+    - competitive-intel
+    - finance-exec
+    video-source: competitor-store-and-ad-video
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: benchmark-vs-competitor
+    delivery-form: enforcement-or-cert-evidence-pack
+    pricing-model: outcome-based-per-bug-or-uplift
+  object: 'competitor-and-ua.md section 1: GameRefinery tracks about 260 features per game by hand, with a taxonomy of ''4 categories, 12 genres and 52 subgenres'' (market.md section 6)'
+  situation: a vendor offers a 'clone score' for any rival whose loop matches 8 of the studio's 12 tracked features and sells it per accusation
+  consequence: legal knows feature similarity within a genre is common (12 genres, 52 subgenres) and stores will not remove a game for sharing a mechanic; the score creates noise and false claims
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'market.md section 6: GameRefinery taxonomy of 12 genres and 52 subgenres means many titles share features by design; competitor-and-ua.md section 1: feature coverage is analyst-built'
+  already_offered: false
+  proposed: restrict the product to expression-level evidence (footage, art, UI assets, audio); show mechanic similarity only as an internal benchmark, never as a complaint
+  shallow: false
+  mechanism: the refused product would rank rivals by feature overlap with the studio's game and propose notices on that basis
+  example: 'Counsel at a publisher rejects a vendor''s ''clone score'' pitch: 8 of 12 features shared is normal within match-3.'
+  cost: M
+  depends_on: feature-tag data (GameRefinery-style)
+  buyer: competitive-intel lead (would like it) and legal (refuses)
+  input: competitor-store-and-ad-video + feature tags
+  why_existing_tools_cannot: this is a refusal item
+  willingness_to_pay: 1 - refused by legal; competitive-intel may buy the benchmark view alone, at the GameRefinery $45k-$51k per year band (competitor-and-ua.md section 1)
+  variants_of: scout-6
+  contests:
+  - scout-6
+  refusal: true
+  bucket: 7
+  perspective: takedown
+- id: takedown-19
+  title: 'REFUSAL: outcome-based pricing where the vendor earns a fee per ad or listing removed, because the vendor then has a reason to file borderline claims'
+  level: L3
+  cell:
+    buyer-role: finance-exec
+    video-source: public-streams-and-ugc
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: managed-service-with-analyst
+    pricing-model: outcome-based-per-bug-or-uplift
+    buyer-org-type: publisher
+  object: 'competitor-and-ua.md section 5: Jestr pays per 1,000 views and Lurkit takes a 15-20% commission on paid quests; commission-for-outcome models exist in creator marketing'
+  situation: a vendor proposes USD 40 per removed ad; at 100 ads a month that is USD 4,000 a month and the vendor controls which ads are reported
+  consequence: a fee on removal invites borderline claims against fan videos; the studio's general counsel refuses any structure where the filer is paid by volume
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'competitor-and-ua.md section 5: commission models in creator marketing (Lurkit 15-20% on paid quests) show the pricing pattern a vendor would copy'
+  already_offered: false
+  proposed: price per seat or per audit file, never per removal
+  shallow: false
+  mechanism: the refused model charges per successful removal
+  example: A counsel at a mid-size studio crosses out the per-removal clause in a vendor's order form.
+  cost: S
+  depends_on: none
+  buyer: general counsel at a publisher (refuses)
+  input: n/a
+  why_existing_tools_cannot: this is a refusal item
+  willingness_to_pay: 1 - refused
+  refusal: true
+  bucket: 7
+  perspective: takedown
+- id: takedown-20
+  title: 'Prior-art dating file: dated archive of the studio''s own store previews, trailers and 20 stable UI screens, so a counter-notice from a clone developer claiming first publication can be answered
+    with a dated record'
+  level: L4
+  cell:
+    buyer-role: finance-exec
+    video-source: competitor-store-and-ad-video
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: evidence-pack-for-enforcement
+    delivery-form: enforcement-or-cert-evidence-pack
+    lifecycle-moment: prototype-and-greenlight
+    buyer-org-type: publisher
+  object: 'competitor-and-ua.md section 2: ''Apple allows app preview videos up to 30 seconds, up to three per product page''; store previews change with each page experiment'
+  situation: a clone developer files a counter-notice saying its game was published first; the studio's soft-launch build was visible in 4 test markets 5 months before the clone's listing, but nobody kept
+    dated copies of the page
+  consequence: the studio cannot prove priority; the platform restores the clone after 10-14 days under the counter-notice process
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: weekly snapshot of the studio's own listings in every market, with hash and timestamp, kept for 7 years, plus an auto-built first-seen table
+  shallow: false
+  mechanism: a weekly crawl of the studio's own pages stores media with hashes and timestamps; a table of first appearance per asset is generated on demand
+  example: 'Counsel answers a counter-notice with a table: ''hero portrait H12 first seen 14 March, 5 months before the clone''s listing''.'
+  cost: S
+  depends_on: nothing beyond a crawler and storage
+  buyer: IP counsel at a publisher
+  input: competitor-store-and-ad-video methods applied to the studio's own listings
+  why_existing_tools_cannot: 'competitor-and-ua.md section 6: store tools run experiments on the page but do not keep an evidential record of what was live and when'
+  willingness_to_pay: 2 - a cheap add-on to takedown-4; cloud storage is about USD 0.04 per player-hour-month equivalent (methods-churn-funnel.md section 7), so the cost is trivial
+  verify_note: 'author pointer: store page experiments change previews and screenshots (competitor-and-ua.md section 6); nothing covers prior-art records or counter-notices'
+  variants_of: takedown-4
+  bucket: 7
+  perspective: takedown
+- id: ugc-1
+  title: 'Self-declared maturity check: an agent plays each newly published experience for 10 minutes and a VLM labels blood, weapon use, horror, crude humour, romance and random-reward spending, then diffs
+    the labels against the creator''s questionnaire answers'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: content-rating-classification
+    lifecycle-moment: prototype-and-greenlight
+    delivery-form: api-or-sdk
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    capture-trigger-and-sampling: scheduled-bot-playthrough
+    automation-level: auto-created-ticket-or-asset
+    constraint-to-overcome: per-game-ui-generalisation
+  object: the maturity or content-descriptor questionnaire on the experience publish form, versus the 10-minute bot footage of the same place; the same mismatch idea exists for app builds in platform-9
+    but no leaf covers creator-made experiences
+  situation: a creator publishes an experience declared 'all ages' whose first 4 minutes include a bleeding NPC and a chainsaw prop; the platform receives thousands of publishes and republishes per week
+    and reviews almost none by hand
+  consequence: a child sees content that the label said was safe; the platform's ratings team learns of it from parent complaints, not from its own check, and has no timestamped evidence to show the creator
+  p_typical: 0.14
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: per experience, emit a label vector (violence, blood, fear, sexual themes, crude language, simulated gambling) with the first timestamp and one keyframe per label, plus a match or mismatch flag
+    against each questionnaire answer; mismatches go to a human queue
+  shallow: false
+  mechanism: A general vision agent (not a per-game script) joins the experience as a test account, explores for a fixed budget, and a VLM classifies sampled frames against the platform's own maturity rubric.
+    Changes who produces the label evidence (the platform, not only the creator) and when (at every publish, not on complaint).
+  example: 'A tycoon-style experience declared ''all ages'' shows a skull-and-blood vending machine at minute 3; the bot files a mismatch with the frame and the questionnaire line ''blood: none''.'
+  cost: L
+  depends_on: a general exploring agent that can start in an unknown experience (the nunu.ai or Cradle class), the platform's maturity rubric in machine-readable form, and the existing frame-annotation
+    and report agent of the User Test product
+  buyer: Head of ratings and content policy, or trust and safety director, at a UGC game platform
+  input: Footage from an automated playthrough of the published place plus the creator's declaration fields and the place-version ID
+  why_existing_tools_cannot: AI QA agents look for rendering and physics bugs in one studio's build (adjacent-usecases.md s1; market.md s3 modl.ai 'does NOT do'), moderation vendors score voice and text
+    (adjacent-usecases.md s3 'vision-based toxicity was not evidenced'), and zero-shot VLMs reach only precision 0.50 on bug videos (adjacent-usecases.md s1), so a rubric-tuned labeller on exploration footage
+    is not on the shelf.
+  willingness_to_pay: '4 - signal: UGC platforms are trust and safety buyers at scale; the nearest priced anchor is voice moderation at up to USD 20,000 per month for 200,000 hours (Modulate, adjacent-usecases.md
+    s3); no UGC rating price in the notes; a per-experience fee of USD 0.20-1.00 is my assumption'
+  verify_note: 'author pointer: exploring agents exist (market.md section 3 nunu.ai vision-only agent; methods-churn-funnel.md section 4 Cradle); no note covers UGC platforms or self-declared maturity labels'
+  variants_of: platform-9
+  bucket: 7
+  perspective: ugc
+- id: ugc-2
+  title: 'Update-triggered re-rating: when a creator publishes a new place version above a player-count threshold, a bot replays only the changed areas and alerts if any maturity label rises a level compared
+    with the previous version''s footage'
+  level: L4
+  cell:
+    buyer-role: rating-and-consumer-compliance
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: build-to-build-regression-diff
+    lifecycle-moment: live-event-or-update
+    delivery-form: alert-or-slack
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    companion-data: build-and-config-metadata
+    automation-level: auto-created-ticket-or-asset
+  object: 'the place-version hash on each republish and the prior version''s label vector; maturity is judged once at launch today and never again (H-audit-1.yaml brief: ''re-rating after an update'')'
+  situation: an experience with 80,000 daily players and an 'all ages' label adds a seasonal 'haunted' map at 18:00; no reviewer sees it until the weekend
+  consequence: the label stays frozen at the launch version while the content changes under 80,000 players a day; an update is the cheapest moment to slip content past a one-time label
+  p_typical: 0.07
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: trigger on version hash change for experiences above 5,000 daily players; diff scene graph or visited-area footage, re-label only changed spawn points, page the ratings on-call only when a label
+    rises one or more levels
+  shallow: false
+  mechanism: A version-change event starts a targeted bot run that navigates to areas whose assets changed (from the build metadata) and re-labels them; the result is a label delta, not a new full rating.
+    Changes the cadence of rating from once to per-update, at a cost proportional to the change.
+  example: 'A roleplay hangout adds a ''morgue'' interior in a Thursday update; the bot reaches it in 90 seconds and raises ''graphic injury: new, mild to moderate'' with 2 frames.'
+  cost: M
+  depends_on: ugc-1 labeller; a publish-event hook from the platform's place store; asset diff metadata per version
+  buyer: Ratings operations lead at a UGC game platform
+  input: Bot footage per place version plus the version-to-version asset diff and daily active player count
+  why_existing_tools_cannot: QA regression diff tools compare one studio's own builds against its own baseline (adjacent-usecases.md s1 Razer QA Companion-AI), and rating tools run at submission, not per
+    live update (adjacent-usecases.md s4 human audits at 150-250 hours per pass); no vendor in market.md s9 gap map sells post-publish monitoring of third-party content.
+  willingness_to_pay: '3 - signal: avoiding one child-safety incident per quarter is the lever; no price in the notes; per-update pricing under USD 0.30 per changed area is my assumption'
+  verify_note: 'lowered from inferred: the author''s support is E-platform-owner.yaml (not a research note) and its base option ugc-1 is speculative; build-to-build visual diffing exists only on a studio''s
+    own builds (methods-churn-funnel.md section 4, VideoGameQA-Bench ''visual unit/regression tests'')'
+  variants_of: ugc-1
+  bucket: 7
+  perspective: ugc
+- id: ugc-3
+  title: 'Gambling-like mechanic spotter for creator-made experiences: agent finds coin flips, crash games, slot reels and case-opening scenes that stake premium currency or player-to-player items, with
+    the odds screen (or its absence) captured'
+  level: L4
+  cell:
+    buyer-role: rating-and-consumer-compliance
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted:
+    - economy-and-store-events
+    - dark-pattern-and-disclosure-ui
+    analysis-type: content-rating-classification
+    lifecycle-moment: live-event-or-update
+    delivery-form: issue-tracker-ticket
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    constraint-to-overcome: per-game-ui-generalisation
+    capture-trigger-and-sampling: scheduled-bot-playthrough
+  object: an in-experience 'spin' or 'bet' panel that spends the platform's virtual currency; analogue is the simulated-gambling spotter for one studio's build in rating-7
+  situation: a creator ships a 'lucky wheel' that costs 100 premium currency for a random pet, with the percentages absent and a countdown on the 'x5 luck' boost
+  consequence: a mechanic that adult regulators treat as gambling-like sits in an experience open to 9-year-olds; the platform is the party answering the regulator, not the creator
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: per experience, list each randomised-reward purchase path with taps to odds, currency spent, and a 3-frame strip; severity High when real-money currency is staked on a chance outcome and no
+    odds are shown
+  shallow: false
+  mechanism: The bot hunts for purchase prompts and chance animations (VLM plus OCR on button text reading 'Spin', 'Open' or 'Bet'), triggers them with a test wallet, and records currency in, reward out,
+    and whether odds text exists. Output is a mechanic inventory per experience that feeds the rating bump.
+  example: 'A pet-simulator clone: ''Mythic Egg 500 gems'' with no odds; the bot opens 5 eggs, logs 5 outcomes and files a ticket ''random paid reward, no odds, countdown boost''.'
+  cost: L
+  depends_on: ugc-1 exploring agent; a sandbox test wallet that cannot spend real money; platform rubric for 'simulated gambling'
+  buyer: Consumer protection and ratings lead at a UGC game platform
+  input: Bot footage of purchase and reward screens with test-wallet transaction logs from the platform side
+  why_existing_tools_cannot: Human audits are priced by testing hours (MGATS 150-250 hours, adjacent-usecases.md s4) and cannot cover 100,000+ experiences; session-replay SDKs record canvas as black boxes
+    (market.md s2 'Does NOT do') and creators do not install them; analytics vendors see events only for the owner's own game (methods-churn-funnel.md s1).
+  willingness_to_pay: '3 - signal: regulator exposure, no price in notes; per-flagged-experience review pricing near USD 2-5 is my assumption against outsourced QA at USD 15-50 per hour (adjacent-usecases.md
+    s1)'
+  verify_note: 'author note kept: platform liability for gambling-like UGC mechanics is not in the notes; rating-7 is the single-title version'
+  variants_of: rating-7
+  bucket: 7
+  perspective: ugc
+- id: ugc-4
+  title: 'Cloaking detector: the same experience is played with an under-13, a 13-17 and a verified-adult test account, at minute 0 and minute 45, and the footage sets are compared for content that appears
+    only for some accounts or only late'
+  level: L4
+  cell:
+    buyer-role: trust-safety
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: cohort-comparison
+    lifecycle-moment: live-event-or-update
+    delivery-form: enforcement-or-cert-evidence-pack
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    capture-trigger-and-sampling: targeted-cohort
+    constraint-to-overcome: accuracy-and-trust
+  object: the age-band attribute on the bot account and the scene reached at join versus after a 45-minute wait; the 'clean for reviewers, different for players' pattern
+  situation: an experience checks the visitor's account age, join time or a hidden server flag and swaps a sanitized lobby for an explicit one for a subset
+  consequence: a one-time review or a single bot run sees only the clean version; the label passes while the experience shows different content to the players it targets
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: run 6 profile x time combinations on 1% of experiences plus all those with a creator-reputation drop; compute frame-set difference; alert when two profiles differ above a threshold in violence
+    or sexual-theme label
+  shallow: false
+  mechanism: Parallel bot sessions under different synthetic account profiles and dwell times; footage per profile is labelled by the same classifier and compared pairwise. Differences are the evidence,
+    and the clip pair goes into an enforcement pack.
+  example: A hangout shows a plain lobby to the 'under 13' profile and an alcohol bar with graphic posters to the 'adult' profile after 20 minutes; the pair of clips with timestamps becomes the removal
+    evidence.
+  cost: M
+  depends_on: ugc-1; synthetic test accounts per age band allowed by platform policy
+  buyer: Trust and safety investigations lead at a UGC game platform
+  input: Parallel bot playthrough footage under 3 account age bands and 2 dwell times per experience
+  why_existing_tools_cannot: Anti-cheat and fraud tools judge player input, not creator content (adjacent-usecases.md s2 Anybrain, FACEIT); one-shot rating tools run once with one profile (adjacent-usecases.md
+    s4); no vendor sells multi-profile differential playthroughs (market.md s9 gap map).
+  willingness_to_pay: '3 - signal: sold as an investigation tool for a small team; no price in notes; per-investigation value is the human hours saved (outsourced QA at USD 15-50 per hour, adjacent-usecases.md
+    s1)'
+  verify_note: 'author note kept: the cloaking pattern is not evidenced in the notes'
+  bucket: 7
+  perspective: ugc
+- id: ugc-5
+  title: 'Coverage-stamped labels: each maturity label ships with the percentage of the map''s navigable volume and scripted events the bot actually saw, and labels below 60% coverage are routed to a human
+    reviewer'
+  level: L4
+  cell:
+    buyer-role: rating-and-consumer-compliance
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: content-rating-classification
+    lifecycle-moment: certification-submission
+    delivery-form: dashboard
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    constraint-to-overcome: sampling-bias
+  object: 'a ''coverage'' number next to the label: visited cells of the place''s floor-plan or camera-position grid over total, plus count of trigger events the bot fired'
+  situation: a 10-minute bot run on a 400-room horror mansion sees 7 rooms and returns 'mild'
+  consequence: 'a clean-looking label produced from a thin sample is worse than none: the ratings team and parents trust it; a reviewer cannot tell a certain label from a lucky one'
+  p_typical: 0.04
+  grounded: inferred
+  evidence: sampling bias is named for player footage in methods-churn-funnel.md s7; the agent-coverage limit follows from VLMs struggling with unpredictable behaviour (adjacent-usecases.md s1 citing arXiv
+    2501.11782) and from only 16% of devs fully trusting AI QA outcomes (market.md s3 modl.ai survey).
+  already_offered: false
+  proposed: attach {coverage_pct, events_fired, minutes_played, label_confidence} to every label; route below-threshold labels to a queue sorted by daily players; re-run with a different exploration seed
+    when below 60%
+  shallow: false
+  mechanism: The agent logs visited positions and fired triggers (from the engine's game-state view or from footage-derived position estimates), computes coverage, and the platform uses coverage to decide
+    human review versus auto-label. Changes the label from a verdict to a verdict with a confidence.
+  example: A 'Backrooms' style maze labelled mild at 12% coverage is sent to a human; the second seed finds a jump-scare chase at minute 14.
+  cost: M
+  depends_on: ugc-1; engine-level position telemetry for bot accounts or footage-derived minimap estimates
+  buyer: Ratings operations manager at a UGC game platform
+  input: Bot footage plus bot position and trigger logs, place geometry bounds
+  why_existing_tools_cannot: AI QA vendors report bugs found, not how much of the content they saw (market.md s3 modl.ai, nunu.ai, no coverage-of-content claims found); trust in AI QA outcomes is low (16%
+    fully trust, market.md s3) and a coverage number is what moves it.
+  willingness_to_pay: '3 - signal: an add-on to ugc-1 rather than a stand-alone buy; priced inside the labelling fee; no direct price evidence'
+  bucket: 7
+  perspective: ugc
+- id: ugc-6
+  title: 'Report-time clip triage: on a player report, the platform''s 60-second ring buffer is classified as ''creator-made content'' (route to ratings team, counts against the experience) or ''other players''
+    conduct'' (route to conduct moderation)'
+  level: L4
+  cell:
+    buyer-role: trust-safety
+    video-source: platform-or-emulator-capture
+    signal-extracted: social-or-chat-content
+    analysis-type: evidence-pack-for-enforcement
+    lifecycle-moment: live-event-or-update
+    delivery-form: issue-tracker-ticket
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    capture-trigger-and-sampling: on-player-report
+    constraint-to-overcome: privacy-and-consent
+  object: the 'Report experience' versus 'Report player' choice, and the attached 60-second clip; tns-1 attaches a clip to a player report but does not split creator content from player conduct
+  situation: a 12-year-old taps Report after seeing a gore scene; the clip shows the scene is a pre-built prop, not another player
+  consequence: reports about creator content land in the conduct queue, age while a team that cannot act on them reads them, and never feed the experience's mismatch rate
+  p_typical: 0.08
+  grounded: inferred
+  evidence: only about 23% of Activision voice reports contained actionable evidence (adjacent-usecases.md s3); tns-1 and tns-12 in E-trust-and-safety-lead.yaml show the clip-on-report and clustering pattern.
+  already_offered: false
+  proposed: 'classifier outputs {content_source: creator|player, severity, category}; per-experience count of creator-source reports per 1,000 visits feeds ugc-11 reliability score'
+  shallow: false
+  mechanism: 'A VLM labels each reported clip''s offending element as scripted (static or repeating across 2+ reports of the same coordinates) or dynamic (a player avatar''s action), then routes accordingly
+    and aggregates per place. Changes what a report is used for: an input to the label audit, not a one-off ticket.'
+  example: 11 reports in one day show the same blood-pool prop at the same coordinates of a hangout; the system opens one ratings case with the 3 clearest clips.
+  cost: M
+  depends_on: platform-side ring-buffer capture on report with consent and redaction; clustering by place coordinates
+  buyer: Trust and safety operations lead at a UGC game platform
+  input: Player-report clips from platform or emulator capture plus the place ID, version and coordinates of the camera
+  why_existing_tools_cannot: Voice and text moderation vendors take chat as input (adjacent-usecases.md s3 Modulate, GGWP); report triage today is manual with about 77% lacking actionable evidence (adjacent-usecases.md
+    s3); consented SDK capture belongs to the game owner, not to a visiting player of a third-party experience (methods-churn-funnel.md s7 consent floor).
+  willingness_to_pay: '3 - signal: reports at platform scale; moderation per-hour pricing of 7.5-12 cents (Modulate, adjacent-usecases.md s3) is the nearest anchor for per-report cost'
+  variants_of: tns-11
+  bucket: 7
+  perspective: ugc
+- id: ugc-7
+  title: 'Creator appeal pack: when an experience is age-restricted or down-rated, the creator gets the cited rule, 3 timestamped frames, and a ''fix list'' of which props or scenes triggered it; a re-test
+    bot replays only the cited route'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: evidence-pack-for-enforcement
+    lifecycle-moment: certification-submission
+    delivery-form: enforcement-or-cert-evidence-pack
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    effort: M-one-quarter
+  object: 'the creator-facing moderation notice and the ''Appeal'' button; today it names a policy but not the frame (H-audit-1.yaml brief: ''creator appeal packs'')'
+  situation: an obby is re-rated 'teen' for a skeleton-and-blood checkpoint; the creator cannot tell which of 40 checkpoints triggered it, and files a support ticket
+  consequence: creators churn from the platform or re-publish a clone to dodge the label; each appeal costs a human reviewer 15-30 minutes
+  p_typical: 0.07
+  grounded: inferred
+  evidence: bug-report enrichment with video and repro steps is the accepted pattern in QA (adjacent-usecases.md s1; MGATS 'concerns' with video examples, s4); no source on UGC appeals.
+  already_offered: false
+  proposed: 'notice template: rule name, label raised, 3 clips of 8 seconds with burn-in timestamps, and a one-click ''request re-test of this route'' that runs the same bot path and returns pass or fail
+    within 1 hour'
+  shallow: false
+  mechanism: 'The labelling run keeps the route and frames that justified each label; the pack renders them for the creator and the re-test replays that route. Changes who does the fix loop: the creator
+    self-serves it, rather than a reviewer.'
+  example: A creator removes one checkpoint prop, clicks re-test, and the bot passes the route 54 seconds later; the label returns to 'all ages' without a ticket.
+  cost: M
+  depends_on: ugc-1 with stored routes and keyframes; a creator-facing console page
+  buyer: Creator support and ratings policy lead at a UGC game platform
+  input: Stored bot footage per label, route logs and creator re-submission build
+  why_existing_tools_cannot: Human accessibility and rating services deliver reports after 7 business days (MGATS, adjacent-usecases.md s4); QA tools give repro to the studio that owns the build, not to
+    an external creator under a platform's policy (adjacent-usecases.md s1).
+  willingness_to_pay: '3 - signal: the lever is support-cost reduction; assume 15-30 minutes saved per appeal at USD 15-50 per hour (adjacent-usecases.md s1), so USD 4-25 per appeal'
+  bucket: 7
+  perspective: ugc
+- id: ugc-8
+  title: 'Regional restriction verifier: the bot joins the same experience with region profiles where paid random rewards or certain content types are restricted and confirms the experience hides or disables
+    them'
+  level: L4
+  cell:
+    buyer-role: rating-and-consumer-compliance
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: dark-pattern-and-disclosure-ui
+    analysis-type: compliance-audit
+    lifecycle-moment: new-market-or-language-launch
+    delivery-form: per-cohort-report
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    constraint-to-overcome: store-or-platform-policy
+  object: the platform's region switch on the bot account and the creator-exposed 'region policy' API; rating-8 does this for one studio's build, not for a catalogue where creators may ignore the flag
+  situation: the platform opens a market where paid random items are restricted and asks creators to read a region flag; 3,000 of the top experiences are 'supposed to' comply
+  consequence: a non-compliant experience in a restricted market is the platform's liability; today compliance is checked by creator attestation
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: for the top 3,000 experiences by daily players, run 1 bot per restricted region and list those still showing a randomised paid reward within 5 minutes, with the frame
+  shallow: false
+  mechanism: Replay of the ugc-3 inventory under region profiles; any randomised paid path visible in a restricted region is a failure. Changes verification from creator attestation to observed behaviour.
+  example: A pet-simulator experience hides its 'Egg' shop in region A but not in region B; the report lists 41 non-compliant experiences before launch day.
+  cost: M
+  depends_on: ugc-3 inventory; region-profile bot accounts; the platform's region policy flag
+  buyer: Regional compliance lead at a UGC game platform
+  input: Region-profile bot footage of the top experiences and the platform's region policy configuration
+  why_existing_tools_cannot: Localisation QA vendors compare translations by screenshot (adjacent-usecases.md s5 Gridly, Alconost), not regional content gating; human audits are per hour and per title (adjacent-usecases.md
+    s4).
+  willingness_to_pay: '2 - signal: regulatory driver but market-by-market and episodic; no price in notes; per-market sweep sold as a managed project is my assumption'
+  verify_note: 'author note kept: regional restriction rules are not in the notes; localisation-from-video is an evidenced gap (adjacent-usecases.md Count and gaps) but a different one'
+  variants_of: rating-8
+  bucket: 7
+  perspective: ugc
+- id: ugc-9
+  title: 'Child-profile purchase-prompt audit: a bot with an under-13 account counts how many seconds to the first paid prompt and how often prompts reappear, flags countdown or scarcity text, and checks
+    that no prompt shows a real-money price without a confirm step'
+  level: L4
+  cell:
+    buyer-role: rating-and-consumer-compliance
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted:
+    - dark-pattern-and-disclosure-ui
+    - economy-and-store-events
+    analysis-type: compliance-audit
+    lifecycle-moment: d1-to-d7
+    delivery-form: warehouse-table-export
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    constraint-to-overcome: minors-coppa-gdpr-k
+    pricing-model: per-audit-or-certification
+    capture-trigger-and-sampling: scheduled-bot-playthrough
+  object: the in-experience purchase prompt (game pass or developer product) and its confirm dialog, seen with a child-age test account; altdata-13 measures seconds to first purchase prompt for an investor,
+    not as a consumer-protection check
+  situation: a creator's experience shows a 'Limited! 10:00' prompt every 90 seconds to every visitor, including accounts flagged under 13
+  consequence: pressure aimed at children is the pattern that consumer authorities pursue; the platform has no per-experience measurement of it
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: 'columns: experience_id, seconds_to_first_prompt, prompts_per_10_min, countdown_text_present, odds_present, confirm_step_present, price_visible_in_real_money; rank worst 100 for review'
+  shallow: false
+  mechanism: A bot with a child-age profile plays 10 minutes and OCR/VLM records every purchase prompt and its wording; a table of metrics is exported to the platform's warehouse. Uses synthetic accounts,
+    so no real child's footage is recorded.
+  example: The weekly table shows 212 experiences with a prompt under 30 seconds after join and 37 with countdown text; the 37 go to review.
+  cost: M
+  depends_on: ugc-1 exploring agent; synthetic child-age test accounts with a no-spend wallet
+  buyer: Consumer protection lead at a UGC game platform
+  input: Bot footage under a child-age profile plus the platform's purchase-prompt event log for the bot account
+  why_existing_tools_cannot: Analytics SDKs measure prompts for the owner of one game (methods-churn-funnel.md s1), not across third-party creators; human audits are 150-250 hours per pass (adjacent-usecases.md
+    s4); capturing real children's sessions is blocked by consent rules (methods-churn-funnel.md s7).
+  willingness_to_pay: '3 - signal: avoiding a regulator finding; no price in notes; table-per-week fee near USD 2,000-5,000 per month is my assumption'
+  verify_note: 'author note kept: no child-protection law or UGC purchase-prompt data in the notes'
+  variants_of: altdata-13
+  bucket: 7
+  perspective: ugc
+- id: ugc-10
+  title: 'Live-server sampler: a headless spectator bot joins servers of a popular experience that show a spike in reports or concurrency and labels what players have built or staged inside that instance,
+    giving a per-server risk score'
+  level: L4
+  cell:
+    buyer-role: trust-safety
+    video-source: platform-or-emulator-capture
+    signal-extracted: social-or-chat-content
+    analysis-type: anomaly-alert
+    lifecycle-moment: live-event-or-update
+    delivery-form: alert-or-slack
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    capture-trigger-and-sampling: on-crash-or-anomaly
+  object: a single server instance ID of a sandbox or roleplay experience, not the place itself; tns-5 reads signs and banners on screen but not the staged scenes players assemble
+  situation: a roleplay experience with a clean place label has one server where 40 players have built a staged scene; reports on that instance triple in 10 minutes
+  consequence: the experience-level label is right while one instance is not; a place-level takedown punishes the creator and a label-only system misses the instance
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: on report rate above 3x the experience baseline in 10 minutes, a spectator bot joins that instance for 60 seconds, labels visible scenes and avatar poses, and posts a risk score with 3 frames
+    to the on-call channel
+  shallow: false
+  mechanism: A trigger from report or concurrency anomalies sends a no-avatar spectator capture into one instance; the same labeller as ugc-1 scores it. Changes the unit of moderation from place to server
+    instance.
+  example: 'Server 7f3a of a hangout scores ''sexual theme: high'' while the 400 other servers score low; the instance is closed and the place stays up.'
+  cost: L
+  depends_on: platform ability to spawn spectator sessions; ugc-1 labeller; report-rate telemetry per instance
+  buyer: Trust and safety on-call lead at a UGC game platform
+  input: Spectator capture of a flagged instance plus report counts per instance
+  why_existing_tools_cannot: Anti-cheat vendors score player input (adjacent-usecases.md s2), voice moderation scores audio (adjacent-usecases.md s3), and vision-based toxicity is 'not evidenced' in the
+    notes (adjacent-usecases.md s3 INFERRED).
+  willingness_to_pay: '3 - signal: platform T and S budgets; no price in notes; priced per triggered capture is my assumption'
+  verify_note: 'author note kept: trigger pattern from methods-churn-funnel.md section 7 INFERRED (b); nothing on per-instance UGC moderation'
+  variants_of: tns-5
+  bucket: 7
+  perspective: ugc
+- id: ugc-11
+  title: 'Creator declaration reliability score: monthly precision and recall of each creator''s self-declared labels against bot audits, used to route trusted creators to light sampling and risky ones
+    to every-publish audits'
+  level: L4
+  cell:
+    buyer-role: rating-and-consumer-compliance
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: cohort-comparison
+    lifecycle-moment: soft-launch
+    delivery-form: warehouse-table-export
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    constraint-to-overcome: cost-per-session
+    value-lever-b2b: replace-labour-hours
+  object: 'a per-creator row: declared labels, audited labels, mismatch count over the last 20 publishes; no leaf prices the audit by creator risk'
+  situation: 100,000+ experiences cannot all be audited at full depth; 2% of creators produce most mismatches
+  consequence: uniform auditing wastes budget on honest creators or leaves repeat offenders sampled at the same low rate
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'cost per session is named as a constraint in methods-churn-funnel.md s7 (sampling knobs: user-level sampling 1-5%); risk-based sampling is my adaptation. No creator-risk evidence in the notes.'
+  already_offered: false
+  proposed: score = mismatches/audits over the last 20 publishes with a 90-day decay; creators under 0.05 get 5% sampling, over 0.2 get 100% plus a human review of the first 3 publishes
+  shallow: false
+  mechanism: The audit results of ugc-1 are aggregated per creator; the score sets sampling depth for future publishes. Changes the budget allocation from uniform to risk-weighted.
+  example: Studio-account A (84 clean publishes) is sampled at 5%; account B (6 of 9 mismatches) is audited on every publish and its updates are gated for 24 hours.
+  cost: S
+  depends_on: ugc-1 output; a creator ID join
+  buyer: Head of ratings operations at a UGC game platform
+  input: Audit label vectors per publish, creator IDs, declared labels
+  why_existing_tools_cannot: QA vendors price by run and by build (market.md s3 quote-based), and no tool exposes a per-creator reliability score for third-party content; session-replay vendors price per
+    video (market.md s2 IV Metrics capped at 50-100 videos).
+  willingness_to_pay: '2 - signal: a cost-saving layer on top of ugc-1, not a stand-alone product; no price evidence'
+  bucket: 7
+  perspective: ugc
+- id: ugc-12
+  title: 'Parent-facing ''what to expect'' reel: 3 neutral 8-second clips per experience, chosen as the highest-severity moments from bot footage, shown in the family dashboard next to the maturity label'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: highlight-or-clip-generation
+    lifecycle-moment: new-version-release
+    delivery-form: clip-reel
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    constraint-to-overcome: minors-coppa-gdpr-k
+  object: the label chip on an experience's page and the parental-controls screen, plus 3 clips from bot footage (no real player in them)
+  situation: a parent sees 'Moderate' on an experience and cannot tell if it means cartoon bats or realistic gore
+  consequence: labels are abstract; parents either block broadly or trust blindly; a reel makes the platform's label verifiable and cuts the 'what does this mean' ticket
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'competitor-and-ua.md section 4: highlight tools (Hypetrigger, Eklipse, Outplayed) cut clips from recorded gameplay; methods-churn-funnel.md section 7 INFERRED: ''player names and chat in HUD/social
+    panels'' are privacy hazards, which bot footage avoids. Inference: no note covers rating-evidence reels for parents.'
+  already_offered: false
+  proposed: choose top-3 severity segments from the label run, mask avatar names, loop 8 seconds, show in the parental view with the label reasons as text
+  shallow: false
+  mechanism: 'Segments with the highest rubric severity are cut from the ugc-1 footage and shown as the label''s evidence. Changes who can verify a label: a parent, not only the platform.'
+  example: The reel for a 'Moderate' zombie shooter shows cartoon-style hits, a screaming enemy and a dark corridor; a parent sets the account to allow it.
+  cost: S
+  depends_on: ugc-1 with stored per-segment severity; a parental dashboard surface
+  buyer: Product lead for family safety and parental controls at a UGC game platform
+  input: Bot footage segments with severity scores, version ID
+  why_existing_tools_cannot: Highlight tools pick exciting moments from the player's own play (competitor-and-ua.md s4 'trigger on noise or need hand configuration'), not the moments that justify a rating.
+  willingness_to_pay: '2 - signal: a product feature rather than a cost line; no price evidence; adoption depends on parent engagement'
+  verify_note: 'evidence softened: competitor-and-ua.md section 4 lists highlight tools but says no major studio was shown using them, so ''a bought product'' was overstated'
+  variants_of: ugc-1
+  bucket: 7
+  perspective: ugc
+- id: ugc-13
+  title: 'Label provenance archive: for every experience version, hash-chained bot footage, label vector, rubric version and reviewer decision kept so the platform can answer ''why was this rated all-ages
+    on date X'' within an hour'
+  level: L4
+  cell:
+    buyer-role: rating-and-consumer-compliance
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: evidence-pack-for-enforcement
+    lifecycle-moment: certification-submission
+    delivery-form: enforcement-or-cert-evidence-pack
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    constraint-to-overcome: security-review-soc2-residency
+  object: a record keyed by place-version hash with the rubric version used; rating-11 archives a studio's own purchase screens, not a platform's rating decisions on others' content
+  situation: a regulator or a parent's lawyer asks why an experience was 'all ages' 5 weeks ago
+  consequence: without the footage and the rubric version, the platform cannot show what the label was based on; the answer is a manual search over reviewer notes
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: 'store per version: footage hash, label vector, rubric version, coverage, reviewer id and decision; export a signed PDF plus clips for a given experience and date range'
+  shallow: false
+  mechanism: Every label run writes an immutable record; a query tool assembles the pack. Changes the audit cost from days of reconstruction to a query.
+  example: 'A legal request for experience X on 12 September returns the 3 clips, the ''violence: none'' vector and the rubric v14 within 40 minutes.'
+  cost: S
+  depends_on: ugc-1 and ugc-5 outputs; immutable storage with residency choice
+  buyer: Legal and ratings operations at a UGC game platform
+  input: Label run artifacts, rubric versions, reviewer decisions
+  why_existing_tools_cannot: Human audit reports are one-off documents (MGATS, adjacent-usecases.md s4); QA tools store video per bug, not per rating decision (adjacent-usecases.md s1).
+  willingness_to_pay: '2 - signal: avoids legal reconstruction cost; no price in notes; bundled with ugc-1'
+  verify_note: 'lowered from inferred: the author''s support is two G-titles rows (tns-16, rating-11), not a research note; no note covers rating-decision archives or regulator inquiries on UGC'
+  variants_of: rating-11
+  bucket: 7
+  perspective: ugc
+- id: ugc-14
+  title: 'Portal-chain audit: the bot follows teleport doors and ''play next'' links up to 3 hops from an all-ages experience and flags destinations whose labels are higher than the entry experience'
+  level: L4
+  cell:
+    buyer-role: trust-safety
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: content-rating-classification
+    lifecycle-moment: live-event-or-update
+    delivery-form: issue-tracker-ticket
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    constraint-to-overcome: per-game-ui-generalisation
+  object: an in-world portal or door that sends the player to another experience, and the destination's label; no leaf follows these links
+  situation: an all-ages 'hub' experience has a doorway with the text 'Secret party' that teleports to an unlabeled 17+ experience
+  consequence: labels are per place, but children move between places in 2 taps; the unit of exposure is the chain
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: detect portals from footage (door, glowing ring, 'Teleport' sign), trigger up to 3 hops, label each landing, and list chains where max label minus entry label is 1 or more
+  shallow: false
+  mechanism: The agent treats teleports as edges in an exposure graph and applies ugc-1 to each node; output is a list of chains with entry to destination footage. Changes the object rated from a place
+    to a reachable path.
+  example: '''Birthday Hub'' to ''Dark Club'' to ''Casino Night'' is flagged as a 2-hop chain with 3 frames.'
+  cost: M
+  depends_on: ugc-1; platform API listing teleport destinations or footage-based portal detection
+  buyer: Trust and safety policy lead at a UGC game platform
+  input: Bot footage across hops plus the destination labels
+  why_existing_tools_cannot: QA tools test one build in isolation (adjacent-usecases.md s1); label systems score nodes, not links; no vendor in market.md s9 gap map covers cross-experience flows.
+  willingness_to_pay: '2 - signal: low-volume but severe cases; no price in notes'
+  verify_note: 'author note kept: the portal-chain scenario is the author''s inference'
+  bucket: 7
+  perspective: ugc
+- id: ugc-15
+  title: 'Audio descriptor pass on bot footage: lyrics, voice-over and sound effects scored for profanity, screams, gunfire and sudden loudness jumps above 15 dB, added to the label vector beside the visual
+    labels'
+  level: L4
+  cell:
+    buyer-role: rating-and-consumer-compliance
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: game-audio-and-sfx
+    analysis-type: content-rating-classification
+    lifecycle-moment: prototype-and-greenlight
+    delivery-form: api-or-sdk
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+  object: audio track of the bot playthrough, scored per 5-second window; creator-uploaded audio assets are a known blind spot for image-only checks
+  situation: a horror experience declared mild plays a sustained scream loop and explicit lyrics from an uploaded track, with a clean-looking visual scene
+  consequence: a visual-only labeller gives 'mild'; the exposure is audible
+  p_typical: 0.07
+  grounded: inferred
+  evidence: voice and text toxicity is mature (adjacent-usecases.md s3); sound-effect and lyric classification for rating is not evidenced there; the 'game-audio-and-sfx' axis value is unused in the leaf
+    lists.
+  already_offered: false
+  proposed: per 5-second window emit {profanity, scream, gunfire, loudness_jump_db}; add max and count to the label vector and attach the 3 loudest windows to the evidence pack
+  shallow: false
+  mechanism: Audio is transcribed and classified in windows from the same run as the visual labeller; labels merge into one vector. Changes the rating signal from picture-only to picture and sound.
+  example: A 'Scary Elevator' experience triggers a 94-dB scream at minute 6 with explicit lyrics in the lobby track; the audio vector raises 'fear' and 'language'.
+  cost: S
+  depends_on: ugc-1; audio capture in the bot sessions
+  buyer: Ratings and content policy lead at a UGC game platform
+  input: Audio track of bot footage
+  why_existing_tools_cannot: Voice moderation tools are built for live player voice (Modulate ToxMod, adjacent-usecases.md s3), not for scripted audio and music in creator-made places; accessibility reviews
+    check subtitles, not content (adjacent-usecases.md s4).
+  willingness_to_pay: '2 - signal: Modulate hours-based pricing 7.5-12 cents per hour (adjacent-usecases.md s3) is the unit anchor; small incremental revenue over ugc-1'
+  bucket: 7
+  perspective: ugc
+- id: ugc-16
+  title: 'REFUSE: always-on recording of child players'' sessions inside third-party experiences to derive maturity labels from what they actually saw'
+  level: L4
+  cell:
+    buyer-role: rating-and-consumer-compliance
+    video-source: platform-or-emulator-capture
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: content-rating-classification
+    lifecycle-moment: live-event-or-update
+    delivery-form: dashboard
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    capture-trigger-and-sampling: always-on-ring-buffer
+    constraint-to-overcome: minors-coppa-gdpr-k
+  object: continuous footage of children in UGC experiences, as an alternative to synthetic-account bots (ugc-1)
+  situation: a faster way to cover dynamic servers would be to watch real players, most of whom are minors on a UGC platform
+  consequence: it creates a store of minors' sessions with names, chat and other players' avatars; the privacy, security and trust cost exceeds the labelling gain, because bots reach the same footage without
+    a child present
+  p_typical: 0.03
+  grounded: inferred
+  evidence: Apple 2019 action on screen-recording analytics and consent floor (methods-churn-funnel.md s7); hazards of names, chat and payment sheets on video (same section); refused in a related form as
+    rating-26 and tns-27.
+  already_offered: false
+  proposed: decline; use synthetic-account bots and report-triggered clips with redaction (ugc-1, ugc-6)
+  shallow: false
+  mechanism: 'Not built. A refusal leaf: always-on capture of minors for a rating purpose.'
+  example: A platform asks for 1% of all sessions from under-13 accounts recorded at 480p to 'verify labels'; the vendor declines and offers ugc-1 plus ugc-6 instead.
+  cost: L
+  depends_on: parental consent flows and a retention policy; none would make the trade-off acceptable here
+  buyer: Trust and safety lead at a UGC game platform (the likely requester, who would still decline after a privacy review)
+  input: Platform capture of minors' sessions
+  why_existing_tools_cannot: Consent and minor-protection rules (methods-churn-funnel.md s7) and the low trust in AI outputs (market.md s3) argue against it; the same labels are available from synthetic
+    bots.
+  willingness_to_pay: '1 - signal: legal and privacy teams would block the purchase; no price evidence'
+  variants_of: rating-26
+  refusal: true
+  bucket: 7
+  perspective: ugc
+- id: ugc-17
+  title: 'REFUSE: auto-delisting of an experience and automatic creator bans triggered by the maturity classifier alone, with no human review'
+  level: L4
+  cell:
+    buyer-role: trust-safety
+    video-source: automated-bot-or-agent-playthrough
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: content-rating-classification
+    lifecycle-moment: live-event-or-update
+    delivery-form: enforcement-or-cert-evidence-pack
+    game-platform-and-genre: ugc-platform-experiences
+    buyer-org-type: ugc-platform-operator
+    automation-level: closed-loop-in-game-action
+  object: an automatic 'unpublish plus strike' action fired by a classifier score
+  situation: a VLM at precision 0.50 flags a cartoon skeleton as gore on a popular family experience with 200,000 daily players
+  consequence: false removals hit honest creators and income; creator appeal volume spikes; trust in the label falls; a one-sided automatic ban is the product the persona would not buy
+  p_typical: 0.04
+  grounded: quote
+  evidence: best off-the-shelf VLM zero-shot reached precision 0.50 and accuracy 0.72 on 100 industrial videos (adjacent-usecases.md s1); FACEIT states no ban from the ML flag alone (adjacent-usecases.md
+    s2); related refusal tns-28.
+  already_offered: false
+  proposed: decline; keep the classifier as a triage queue with human confirmation before any restriction, per ugc-1, ugc-5, ugc-7
+  shallow: false
+  mechanism: 'Not built. A refusal leaf: closed-loop enforcement from a classifier.'
+  example: A 'Halloween Obby' is delisted 2 hours before a seasonal event by a false flag and the creator publishes a cloned place under another account.
+  cost: M
+  depends_on: none that would change the verdict at current accuracy
+  buyer: Trust and safety lead at a UGC game platform
+  input: Classifier output from bot footage
+  why_existing_tools_cannot: 'Accuracy is not enough for unattended action (adjacent-usecases.md s1 INFERRED: triage, not unattended detection); an anti-cheat precedent forbids single-flag bans (adjacent-usecases.md
+    s2).'
+  willingness_to_pay: '1 - signal: the persona refuses; creator backlash is the cost'
+  variants_of: ugc-1
+  refusal: true
+  bucket: 7
+  perspective: ugc
+- id: catalog-1
+  title: 'Tried-and-bounced share per catalogue title: % of subscribers whose total lifetime play is under 20 minutes, split by the screen class they left on (character creator, shader-compile wait, publisher
+    account-link, forced tutorial, first fail screen), benchmarked against the catalogue median for the genre'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: benchmark-vs-competitor
+    lifecycle-moment: sunset-decision
+    delivery-form: per-cohort-report
+    game-platform-and-genre: cloud-streamed
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+    companion-data: telemetry-events
+    value-lever-b2b: de-risk-a-go-kill-decision
+  object: 'methods-churn-funnel.md section 2 INFERRED: ''the exact screen state at the moment of app kill (rage quit vs. interruption)'' is visible in video but not in standard event streams'
+  situation: A catalogue lead holds 400 titles and sees launches and hours per title, but not why 41% of a title's launchers never pass 20 minutes; the licence for that title renews in 90 days
+  consequence: Without the exit-screen split, a high bounce share reads as 'players do not like it' and the title is dropped; with it, the lead sees that 60% of bouncers left on a publisher account-link
+    screen, which is a fixable contract item and not a content verdict
+  p_typical: 0.16
+  grounded: inferred
+  evidence: '''Signals that exist in screen video ... the exact screen state at the moment of app kill'' (methods-churn-funnel.md section 2 INFERRED); ''a 30-minute first session at 2 Mbps is about 450
+    MB of upload'' does not apply when frames render in the service''s data centre (methods-churn-funnel.md section 7)'
+  already_offered: false
+  proposed: 'Quarterly per-title row: launchers, bounce share, top 3 exit screens with share and 3 clips each, genre-median bounce share'
+  shallow: false
+  mechanism: Server-side tap of the cloud encoder output at 1 fps for the last 120 s of every session under 20 cumulative minutes; per-title screen classifier bootstrapped by a general VLM labels the exit
+    screen; aggregates joined to the service's own launch and hours tables
+  example: 'A AAA open-world title: 41% bounce vs 22% genre median; 58% of bouncers exit on the publisher account-link screen; the lead asks the publisher to remove the link requirement before renewal instead
+    of dropping the title'
+  cost: M
+  depends_on: encoder tap on the cloud stack; per-title screen classifier; subscriber terms that cover service-quality analysis of streamed sessions
+  buyer: Catalogue and content lead at a subscription service with a cloud tier (Game Pass Ultimate / PlayStation Plus Premium class)
+  input: cloud-gaming-server-render frames + the service's own launch, session and hours tables
+  why_existing_tools_cannot: Funnels show where, not why, and only for events the studio instrumented (methods-churn-funnel.md Signals complaints); the catalogue operator does not receive studio telemetry,
+    and playtest vendors measure recruited testers only (market.md section 1 Antidote 'Does NOT do')
+  willingness_to_pay: 4 - catalogue operators already buy title-level intelligence at the scale of Sensor Tower's $75k median contract (competitor-and-ua.md section 1 Prices); the output feeds licence spend
+    far above that
+  variants_of: platform-16
+  bucket: 7
+  perspective: catalog
+- id: catalog-2
+  title: 'Engaged-hours audit for engagement-based payouts: of each title''s billed play hours, the share that is actual play vs pause menu, idle-in-hub over 5 minutes, login or matchmaking queue, and AFK
+    farming loops, reported per title per month'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: load-and-wait-screens
+    analysis-type: compliance-audit
+    lifecycle-moment: sunset-decision
+    delivery-form: warehouse-table-export
+    pricing-model: annual-enterprise-licence
+    value-lever-b2b: create-data-that-did-not-exist
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+    game-platform-and-genre: cloud-streamed
+    companion-data: touch-and-controller-input
+  object: 'methods-churn-funnel.md section 1 INFERRED / section 2: telemetry sees session length; ''pause/menu toggling'' and idle time are listed as video-only signals'
+  situation: Part of a title's licence fee is tied to hours played on the service; one title's hours rose 30% after an update that added an idle-reward loop
+  consequence: The operator pays for hours in which nobody is playing; the audit gives a per-title 'engaged-hours' column that renegotiation can cite, and exposes titles whose hours are inflated by AFK
+    loops
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: 'Monthly warehouse table: title_id, billed_hours, engaged_hours, pause_hours, queue_hours, afk_loop_hours, sample_n'
+  shallow: false
+  mechanism: 1 fps frame sample plus controller-input stream; a frame is 'engaged' when gameplay screen class and non-zero input within 30 s coincide; pause, queue and loading screens classified per title;
+    repeated identical input cycles over 10 minutes flagged as AFK loop
+  example: 'A survival title: 1.2M billed hours in March, 31% of them in a camp screen with no input for over 5 minutes after the idle-crafting update; the operator cites the engaged-hours figure in the
+    payout review'
+  cost: M
+  depends_on: catalog-1 encoder tap; contract language that defines engaged hours; publisher acceptance of the method
+  buyer: Catalogue finance and content-licensing lead at a subscription service
+  input: cloud-gaming-server-render frames + controller input + billed-hours ledger
+  why_existing_tools_cannot: Hours come from session start and end events, which cannot tell a pause menu or idle hub from play (methods-churn-funnel.md section 2); fps and counters tools measure performance,
+    not play (adjacent-usecases.md section 6)
+  willingness_to_pay: 4 - recovers licence spend directly; comparable 'pay to extend coverage' buying is Sensor Tower's acquisitions of Playliner and Video Game Insights (competitor-and-ua.md section 8)
+  verify_note: 'author note kept: engagement-linked licence terms are not in the notes; idle and menu toggling as video-only signals are (methods-churn-funnel.md section 2 INFERRED)'
+  variants_of: publisher-7
+  bucket: 7
+  perspective: catalog
+- id: catalog-3
+  title: 'Pre-signing catalogue fit test: a candidate title''s build is hosted on the service''s own cloud servers, 60 opted-in subscribers play 2 sessions each, and the report gives predicted bounce share,
+    minutes to first core action and session-2 return against the 5 most similar titles already in the catalogue'
+  level: L4
+  cell:
+    buyer-role: publishing-scout-bd
+    video-source: cloud-gaming-server-render
+    signal-extracted: input-timing-and-hesitation
+    analysis-type: benchmark-vs-competitor
+    lifecycle-moment: publisher-pitch-or-diligence
+    delivery-form: per-cohort-report
+    constraint-to-overcome: studio-ip-and-prerelease-leak
+    pricing-model: per-audit-or-certification
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+    game-platform-and-genre: cloud-streamed
+    companion-data: touch-and-controller-input
+    capture-trigger-and-sampling: opt-in-panel
+    value-lever-b2b: de-risk-a-go-kill-decision
+  object: 'market.md section 1 Antidote: ''Also offers cloud-streaming playtests'' (recruited testers, no churn link); scout-1 does the same for publishers with recruited testers'
+  situation: A publisher offers a mid-size title for a 24-month catalogue deal; the operator must decide in 3 weeks and has only the publisher's own sales and review numbers
+  consequence: The operator prices the deal against comparable in-catalogue titles measured the same way; the build never leaves the operator's servers, so the publisher accepts the test
+  p_typical: 0.12
+  grounded: inferred
+  evidence: 'Antidote cloud-streaming playtests exist for recruited testers (market.md section 1); ''Does NOT do: no churn or LTV link''; ciso-23 server-rendered playtests show the leak argument'
+  already_offered: false
+  proposed: Fixed-fee diligence pack, 10 working days, 6 metrics each as a percentile against the 5 nearest catalogue titles, 12 clips
+  shallow: false
+  mechanism: Build hosted on cloud blades; opted-in subscriber panel invited with a reward; encoder tap at 2 fps; same classifier and metric set as catalog-1 run on both the candidate and the 5 nearest
+    catalogue titles (nearest by genre tag and catalog-4 loop embedding)
+  example: 'A co-op roguelite: minutes to first run 4.1 vs comp median 2.3; session-2 return 68% vs comp 51%; the operator offers a longer term at a lower upfront fee'
+  cost: M
+  depends_on: ability to host unreleased or unlisted builds on the cloud tier; opted-in subscriber panel; catalog-1 metric library
+  buyer: Content acquisition lead at a subscription service
+  input: cloud-gaming-server-render frames of panel sessions + controller input + the service's own metrics for comparable titles
+  why_existing_tools_cannot: Playtest vendors report one game's recruited testers with no cross-title benchmark from pixels (market.md section 9 gap map); public benchmarks miss top studios that keep data
+    in-house (methods-churn-funnel.md section 1)
+  willingness_to_pay: 4 - publishers pay EUR 113-141 per recorded session (market.md section 1); 120 sessions here is about EUR 14-17k, small against a catalogue deal
+  variants_of: scout-1
+  bucket: 7
+  perspective: catalog
+- id: catalog-4
+  title: 'Catalogue overlap map: a loop embedding per title from 30 minutes of captured gameplay (screen classes, action rhythm, camera, HUD layout) places a candidate title among existing catalogue titles
+    and lists those within 0.8 similarity, plus how many of their active subscribers already play 2+ of them'
+  level: L3
+  cell:
+    buyer-role: platform-owner
+    video-source: platform-or-emulator-capture
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: cohort-comparison
+    lifecycle-moment: publisher-pitch-or-diligence
+    delivery-form: dashboard
+    value-lever-b2b: de-risk-a-go-kill-decision
+    buyer-org-type: subscription-catalogue-operator
+  object: 'competitor-and-ua.md section 1: GameRefinery tracks about 260 features ''manually'' by analysts; automated tags read ''app-store metadata ... not gameplay video'''
+  situation: The operator is offered a third extraction shooter while two similar titles are already in the catalogue
+  consequence: Licence spend goes to titles that add a new kind of session instead of a third copy of the same one; the curator sees overlap in play, not in store genre tags
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '''The input is store metadata, not gameplay video'' (competitor-and-ua.md section 1); scout-6 clone-risk check uses similarity for a different buyer and decision'
+  already_offered: false
+  proposed: 'Dashboard tile per candidate: 5 nearest catalogue titles with similarity score, side-by-side 10 s clips, co-play share among their subscribers'
+  shallow: false
+  mechanism: Embedding from sampled frames (screen-class sequence, action density per minute, camera mode, HUD layout) computed from platform capture of catalogue titles and from a bot or panel run of the
+    candidate; cosine similarity; joined with the service's co-play table
+  example: Candidate extraction shooter at 0.86 to an existing title whose 72% of active players also play the third; curator passes and licenses a cozy farming title at 0.41 to its nearest neighbour
+  cost: M
+  depends_on: platform capture across the catalogue; catalog-3 or a bot run for the candidate
+  buyer: Catalogue strategy lead at a subscription service
+  input: platform-or-emulator-capture of catalogue titles + candidate build or public footage + co-play table
+  why_existing_tools_cannot: Feature databases are analyst-built or store-metadata tagged (competitor-and-ua.md section 1); no vendor does CV deconstruction of gameplay (market.md section 9)
+  willingness_to_pay: 3 - intel buyers pay GameRefinery about $45-51k/year for feature data (competitor-and-ua.md section 1 Prices); this is one slice of that
+  variants_of: scout-6
+  bucket: 7
+  perspective: catalog
+- id: catalog-5
+  title: 'Completion curve and ''leaving soon'' timing: credits, ending and endgame-unlock screens detected in subscriber sessions give the week by which 80% of active starters of a narrative title have
+    finished, so removal is announced after that week, not before'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: anomaly-alert
+    lifecycle-moment: sunset-decision
+    delivery-form: alert-or-slack
+    game-platform-and-genre:
+    - single-player-narrative
+    - cloud-streamed
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+  object: 'scout-10 content-runway estimate (levels per player-day vs content pipeline, for soft launch); methods-churn-funnel.md section 4 INFERRED: per-title detectors need a small vocabulary (level-complete
+    screen, fail screen)'
+  situation: A 24-month narrative title leaves the catalogue at contract end; 9% of subscribers are mid-playthrough when the banner goes up, and complaints and cancellation threats follow
+  consequence: The lead either schedules removal after the completion curve flattens or buys a 3-month extension sized to the mid-playthrough cohort, with a number for each choice
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '''the needed vision vocabulary is small per game (... level-complete screen ...)'' (methods-churn-funnel.md section 4 INFERRED); scout-10 measures runway for soft-launch content, not catalogue
+    exit'
+  already_offered: false
+  proposed: 'Slack alert 120 days before licence end: mid-playthrough subscribers, projected completion week at 80%, cost of a 3-month extension'
+  shallow: false
+  mechanism: Per-title detector for chapter title cards, credits roll and endgame unlock screens on 1 fps server frames; per-subscriber furthest chapter; survival curve of time to credits; projection against
+    the licence end date
+  example: 'A 30-hour story RPG: 11,400 subscribers between chapter 6 and 10 at day minus 120; 80% completion projected 7 weeks after contract end; the lead negotiates a 2-month extension'
+  cost: S
+  depends_on: catalog-1 encoder tap; per-title chapter detector labelled from about 300 frames
+  buyer: Catalogue programming lead at a subscription service
+  input: cloud-gaming-server-render frames + licence end dates
+  why_existing_tools_cannot: Achievement events exist only where the studio placed them and are not passed to the operator; video captures progress retroactively for any screen (methods-churn-funnel.md
+    section 2 INFERRED)
+  willingness_to_pay: 3 - cheap to build; value is avoided subscriber churn around removals, with no price signal in the notes
+  variants_of: scout-10
+  bucket: 7
+  perspective: catalog
+- id: catalog-6
+  title: 'Account-link and launcher wall audit: share of first sessions in each catalogue title that hit a third-party account sign-in, EULA chain, or separate launcher before gameplay, the seconds spent
+    there, and the share who quit on it, packaged as an evidence pack for the publisher contract review'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: on-screen-text-ocr
+    analysis-type: evidence-pack-for-enforcement
+    lifecycle-moment: ftue-first-session
+    delivery-form: enforcement-or-cert-evidence-pack
+    automation-level: insight-for-human
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+    game-platform-and-genre: cloud-streamed
+  object: 'methods-churn-funnel.md section 2 INFERRED: ''a visible CTA never tapped'' and screen state at app kill are video-only signals; catalog-1 exit-screen class ''publisher account-link'''
+  situation: Three catalogue titles from one publisher require its own account before play; the operator suspects this costs a large share of first sessions but the publisher disputes it
+  consequence: The dispute moves from opinion to a per-title number with clips; the operator can make 'no blocking sign-in before first gameplay' a renewal condition
+  p_typical: 0.05
+  grounded: inferred
+  evidence: Video-only signals listed in methods-churn-funnel.md section 2 INFERRED; OCR on clean UI text is a 'mature, cheap piece' (methods-churn-funnel.md section 4 INFERRED)
+  already_offered: false
+  proposed: 'Per-publisher pack: titles, share of first sessions hitting the wall, median seconds, quit share at the wall, 5 clips, method page'
+  shallow: false
+  mechanism: OCR plus a VLM label on the first 10 minutes of first-session frames detects sign-in forms, QR-code link screens, EULA pages and launcher splash; timing from frame timestamps; quit at the wall
+    from session end
+  example: 'Publisher X''s 3 titles: 47% of first sessions hit a sign-in screen, median 96 s, 14% end there; operator adds a clause and the publisher moves sign-in to the multiplayer menu'
+  cost: S
+  depends_on: catalog-1 encoder tap
+  buyer: Partner management lead at a subscription service
+  input: cloud-gaming-server-render frames of first sessions
+  why_existing_tools_cannot: The publisher's own telemetry is not shared and does not log time on a screen that precedes its SDK init; event funnels show where, not why (methods-churn-funnel.md Signals
+    complaints)
+  willingness_to_pay: 3 - small project; value is in negotiation leverage, no direct price signal in the notes
+  variants_of: catalog-1
+  bucket: 7
+  perspective: catalog
+- id: catalog-7
+  title: 'Cloud-versus-local parity check per title: fail rate on timing-critical sections (QTEs, parries, platform jumps) and text legibility at the service''s 1080p and 720p stream bitrates, compared
+    between cloud-streamed sessions and locally installed sessions of the same title'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: player-skill-and-mechanics
+    analysis-type: cohort-comparison
+    lifecycle-moment: new-version-release
+    delivery-form: per-cohort-report
+    game-platform-and-genre: cloud-streamed
+    companion-data: device-perf-counters
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+  object: 'a11y-20 (refused as an accessibility test): ''subtitle and small-text readability after 5 Mbps video compression''; adjacent-usecases.md section 6: ''physical devices still needed for touch latency'''
+  situation: A rhythm-action title has a high cloud bounce share; the curator does not know whether the title is weak or the stream is
+  consequence: Titles that only fail on cloud get a 'best installed' tag or a patch request instead of being judged weak; the cloud catalogue stops promoting titles that are unplayable at 80 ms round trip
+  p_typical: 0.05
+  grounded: inferred
+  evidence: a11y-20 was refused as an accessibility check, leaving cloud parity unowned; 'physical devices still needed for touch latency' (adjacent-usecases.md section 6)
+  already_offered: false
+  proposed: 'Per-title parity row: fail rate on 5 detected timing sections, cloud vs local, by RTT bucket; small-text OCR success at each bitrate'
+  shallow: false
+  mechanism: Fail and success screens per section detected in server frames (cloud) and in platform capture from console or PC installs (local); fail rates compared within skill-matched cohorts; OCR confidence
+    on HUD and subtitle text at each encoder bitrate
+  example: 'A rhythm title: perfect-hit rate 61% local vs 38% cloud at RTT over 60 ms; curator removes it from the cloud row and keeps it in the download catalogue'
+  cost: M
+  depends_on: catalog-1 encoder tap; platform capture of local installs (console share or PC client)
+  buyer: Cloud catalogue lead at a subscription service
+  input: cloud-gaming-server-render + platform-or-emulator-capture of local sessions + network RTT
+  why_existing_tools_cannot: Performance tools measure fps and counters, not whether the player can still succeed at the mechanic (adjacent-usecases.md section 6); fps from video alone competes with cheap
+    counters, the edge is visual effects (adjacent-usecases.md section 6 INFERRED)
+  willingness_to_pay: 3 - device-lab buyers pay per device-hour (adjacent-usecases.md section 6); here the operator owns the frames, so cost is compute only
+  contested_by:
+  - a11y-20
+  bucket: 7
+  perspective: catalog
+- id: catalog-8
+  title: 'Region launch catalogue filter: before the cloud tier opens in a new country, each catalogue title''s fail rate on detected timing sections is computed by RTT bucket (under 40, 40-80, over 80
+    ms) from existing regions, and titles that degrade over 25% above 40 ms are held out of the launch catalogue'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: player-skill-and-mechanics
+    analysis-type: root-cause-of-a-metric-change
+    lifecycle-moment: new-market-or-language-launch
+    delivery-form: per-cohort-report
+    constraint-to-overcome: sampling-bias
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+    game-platform-and-genre: cloud-streamed
+  object: catalog-7 parity metric; platform-25 regional-launch localisation scan covers strings, not latency
+  situation: The cloud tier launches in a country where median RTT to the nearest data centre is 70 ms; the launch catalogue is picked from the global top 200
+  consequence: Launch-month reviews in the new market stop citing unplayable titles; titles that degrade are replaced by tolerant ones in the hero row
+  p_typical: 0.03
+  grounded: inferred
+  evidence: platform-25 scans localisation only; latency effect on mechanics is not covered by any note's vendor (adjacent-usecases.md section 6)
+  already_offered: false
+  proposed: 'Launch list with 3 columns per title: tolerant, degrades, fails; 2 clips per degrading title'
+  shallow: false
+  mechanism: Reuse catalog-7 section detectors; stratify existing-region sessions by measured RTT; per-title slope of fail rate on RTT; threshold at 25% degradation
+  example: 18 of the top 200 degrade over 25% at 70 ms, including 2 fighting games; they are listed as 'download recommended' and the hero row uses turn-based and open-world titles
+  cost: S
+  depends_on: catalog-7
+  buyer: Regional launch lead for a cloud subscription tier
+  input: cloud-gaming-server-render frames + per-session RTT
+  why_existing_tools_cannot: Localisation scans (platform-25) and fps tools (adjacent-usecases.md section 6) do not measure success at a mechanic under latency
+  willingness_to_pay: 2 - one-off per market; low price signal
+  variants_of: catalog-7
+  bucket: 7
+  perspective: catalog
+- id: catalog-9
+  title: 'Group-session share per title: share of a title''s hours spent in a party or co-op lobby with 2+ friends, detected from party UI and split-screen frames, and the 90-day subscription retention
+    of players whose last 5 sessions were group sessions in that title, as a renewal weight'
+  level: L3
+  cell:
+    buyer-role: platform-owner
+    video-source: platform-or-emulator-capture
+    signal-extracted: social-or-chat-content
+    analysis-type: cohort-comparison
+    lifecycle-moment: sunset-decision
+    delivery-form: per-cohort-report
+    game-platform-and-genre: competitive-multiplayer
+    buyer-org-type: subscription-catalogue-operator
+  object: 'methods-churn-funnel.md section 3: churn literature is log-based ''sessions, progression, spend, social''; platform-17 lost-to-which-game uses platform view of next app'
+  situation: Two titles have equal hours, but one is mostly played by friend groups; dropping it might take several subscriptions with it
+  consequence: The curator weights renewal by social anchoring, not hours alone; a small co-op title with high group share is kept over a larger solo title
+  p_typical: 0.07
+  grounded: inferred
+  evidence: Churn features in the literature are log-based (methods-churn-funnel.md section 3); party UI and split-screen are visible in frames even where the title does not use the platform party system
+  already_offered: false
+  proposed: 'Per-title row: group-session share, retention of group-anchored players vs solo players, number of distinct friend groups'
+  shallow: false
+  mechanism: Classifier for party lobby, co-op HUD with multiple names and split-screen layout on 1 fps frames; OCR of on-screen party names hashed, not stored; join to subscription status
+  example: 'A 4-player co-op title: 64% group hours; players anchored in it retain 9 points better at 90 days than matched solo players; renewed despite middling hours'
+  cost: M
+  depends_on: platform capture or encoder tap; hashing of on-screen names; subscription status table
+  buyer: Catalogue and retention lead at a subscription service
+  input: platform-or-emulator-capture + subscription status + platform friends graph where available
+  why_existing_tools_cannot: Platform party data misses in-game parties and local split-screen; studio telemetry is not shared with the operator (methods-churn-funnel.md section 1 'many top-performing studios
+    store data in-house')
+  willingness_to_pay: 3 - feeds a recurring renewal decision; no direct price signal
+  bucket: 7
+  perspective: catalog
+- id: catalog-10
+  title: 'No-ads and no-IAP catalogue rule check for mobile subscription catalogues (Apple Arcade, Netflix Games class): a bot plays each title''s first 30 minutes after every update on emulator capture
+    and flags any store screen, price string, ad end card, external link or sign-up wall, with frame evidence'
+  level: L4
+  cell:
+    buyer-role: certification-release
+    video-source: platform-or-emulator-capture
+    signal-extracted: dark-pattern-and-disclosure-ui
+    analysis-type: compliance-audit
+    lifecycle-moment: new-version-release
+    delivery-form: enforcement-or-cert-evidence-pack
+    capture-trigger-and-sampling: scheduled-bot-playthrough
+    game-platform-and-genre: mobile-casual-hypercasual
+    buyer-org-type: subscription-catalogue-operator
+    companion-data: build-and-config-metadata
+  object: platform-10 weekly dark-pattern sweep (detects countdowns, missing odds links) and platform-21 daily title-update sweep (emulator-detected dialogs); neither checks a catalogue's no-monetisation
+    rule
+  situation: A catalogue title is a port of a F2P game; an update re-enables a dormant store tab and a rewarded-ad button for subscribers
+  consequence: Subscribers paying for an ad-free catalogue see a price; the operator finds it from reviews days later. With the check, the update is blocked or the publisher gets a 48-hour fix notice with
+    frames
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: Per-update pass/fail with up to 10 flagged frames, sent to partner management
+  shallow: false
+  mechanism: Bot route through first 30 minutes and shop, settings and rewards menus; OCR for currency symbols and price patterns; ad end-card and close-button classifier; URL and QR detector
+  example: Update 2.4 of a puzzle port shows a 'Remove Ads' button and a $2.99 string in settings; flagged within 6 hours of the update; publisher removes it in 2.4.1
+  cost: S
+  depends_on: emulator or device-cloud bot harness with the catalogue build; per-title route recorded once
+  buyer: Catalogue quality lead at a mobile subscription catalogue
+  input: platform-or-emulator-capture from scheduled bot playthroughs + build-and-config metadata
+  why_existing_tools_cannot: AI QA tools hunt bugs, not policy content (market.md section 3); human review of each update does not scale across 200+ titles (competitor-and-ua.md section 7 manual work summary)
+  willingness_to_pay: 3 - per-update fee comparable to cert pre-flight per build (cfo-14); outsourced QA at $15-50 per hour is the labour it replaces (adjacent-usecases.md Signals)
+  verify_note: 'author note kept: the no-ads and no-IAP catalogue rules are not in the notes'
+  variants_of: platform-10
+  bucket: 7
+  perspective: catalog
+- id: catalog-11
+  title: 'Input-glyph and screen-fit acceptance gate before a title goes live on the service: an agent plays 20 minutes on each target surface (TV with controller, phone touch overlay, tablet) and flags
+    keyboard prompts shown to controller players, touch overlay covering HUD, and UI outside the TV safe area'
+  level: L4
+  cell:
+    buyer-role: certification-release
+    video-source: cloud-gaming-server-render
+    signal-extracted: visual-errors-and-glitches
+    analysis-type: compliance-audit
+    lifecycle-moment: certification-submission
+    delivery-form: issue-tracker-ticket
+    capture-trigger-and-sampling: scheduled-bot-playthrough
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+    game-platform-and-genre: cloud-streamed
+  object: cfo-14 cert pre-flight (save indicator, error message, safe-area margins) for console cert; platform-26 auto keymaps for emulator titles
+  situation: A PC title joins the cloud catalogue and is streamed to TVs and phones; the first tutorial says 'Press E' and the touch overlay covers the minimap
+  consequence: First sessions on TV and phone fail at the tutorial; the gate stops go-live until glyphs and overlay layout are fixed
+  p_typical: 0.07
+  grounded: inferred
+  evidence: Console cert UI checks exist for cert submissions (cfo-14), not for a subscription operator's own surfaces; VLMs detect spatial UI errors better than temporal ones (methods-churn-funnel.md section
+    4 2026 VLM study)
+  already_offered: false
+  proposed: One ticket per defect with surface, timestamp, frame and the expected glyph set
+  shallow: false
+  mechanism: Agent run on cloud blades with each client profile; OCR for keyboard key names and mouse icons when the client is controller or touch; overlay mask intersected with detected HUD widgets; safe-area
+    margin check on TV profile
+  example: 'Strategy title: 14 keyboard prompts in the first 20 minutes on TV profile, touch overlay covers 22% of the minimap; go-live slips one week'
+  cost: S
+  depends_on: agent playthrough harness on the cloud stack; client surface profiles
+  buyer: Cloud onboarding or release manager at a subscription service
+  input: cloud-gaming-server-render from agent playthrough + client surface profile metadata
+  why_existing_tools_cannot: Console cert covers the console surface only; AI QA vendors test the studio's build on its target, not the operator's touch and TV clients (market.md section 3)
+  willingness_to_pay: 3 - replaces manual onboarding passes at outsourced QA rates of $15-50 per hour (adjacent-usecases.md Signals)
+  variants_of: cfo-14
+  bucket: 7
+  perspective: catalog
+- id: catalog-12
+  title: 'Update-commitment verification: a licence clause requiring 2 content updates a year is checked by detecting new maps, modes or chapters in subscriber frames (scene classes not seen before the
+    update date) and the share of active players who reached them within 30 days'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: platform-or-emulator-capture
+    signal-extracted: structured-game-state-reconstruction
+    analysis-type: build-to-build-regression-diff
+    lifecycle-moment: live-event-or-update
+    delivery-form: enforcement-or-cert-evidence-pack
+    value-lever-b2b: avoid-fine-or-cert-failure
+    buyer-org-type: subscription-catalogue-operator
+  object: scout-21 milestone verification ties publishing tranches to FTUE thresholds; altdata-9 diffs soft-launch builds; neither covers catalogue content clauses
+  situation: A publisher claims its 'major update' satisfied the clause; subscribers see one new cosmetic set
+  consequence: The operator withholds the update-linked payment with evidence, or confirms delivery and how many players reached the new content
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: 'Per-update pack: new scene classes detected, minutes of new content per player, share reaching it, 6 clips'
+  shallow: false
+  mechanism: Scene embedding of sampled frames before and after the update date; novelty clusters over a distance threshold labelled by VLM as map, mode, chapter or cosmetic; reach share per cluster
+  example: 'Update 3: only cosmetic novelty clusters, 0 new maps; operator cites the pack and the publisher adds a mode in the next quarter'
+  cost: M
+  depends_on: platform capture or encoder tap; contract clause naming what counts as content
+  buyer: Content licensing manager at a subscription service
+  input: platform-or-emulator-capture before and after the update + update dates
+  why_existing_tools_cannot: Patch notes are written by the publisher; live-ops trackers log events by human analysts (competitor-and-ua.md section 1 Playliner 'hundreds of hours')
+  willingness_to_pay: 2 - used only in disputed renewals; no price signal
+  verify_note: 'author note kept: licence update clauses are not in the notes'
+  variants_of: scout-21
+  bucket: 7
+  perspective: catalog
+- id: catalog-13
+  title: 'Session-shape coverage map of the catalogue: titles grouped by video-derived session shape (under 15 minutes on phone, 30-60 minute evening console, multi-hour weekend, group co-op), with subscriber
+    demand per shape from the service''s own launch times, showing shapes the catalogue under-supplies'
+  level: L3
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: benchmark-vs-competitor
+    lifecycle-moment: publisher-pitch-or-diligence
+    delivery-form: dashboard
+    value-lever-b2b: create-data-that-did-not-exist
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+    game-platform-and-genre: cloud-streamed
+  object: 'competitor-and-ua.md section 1: GameRefinery taxonomy is analyst-built per feature; market.md section 6: taxonomy of 4 categories, 12 genres and 52 subgenres'
+  situation: The phone cloud audience grew 40% but most catalogue titles need 20 minutes before the first save point
+  consequence: Acquisition targets titles that fit an under-supplied shape, which genre tags do not show
+  p_typical: 0.05
+  grounded: inferred
+  evidence: Genre taxonomies (market.md section 6) do not describe minutes to first save point or interruptibility
+  already_offered: false
+  proposed: 'Quarterly 2x4 grid: shape by surface, supply titles, demand launches, top 5 gaps with candidate titles'
+  shallow: false
+  mechanism: 'From frames: minutes to first save or checkpoint indicator, pause-safe points, loading time per session start; clustering into 4 shapes; demand from launch times and device type'
+  example: 'Phone sessions: 31% of launches, but only 12% of titles reach a save point inside 10 minutes; acquisition shortlists 8 roguelites and puzzle titles'
+  cost: S
+  depends_on: catalog-1 classifier output
+  buyer: Catalogue strategy lead at a subscription service
+  input: cloud-gaming-server-render + launch and device tables
+  why_existing_tools_cannot: Intel taxonomies are store and analyst based (competitor-and-ua.md section 1); save-point timing is not in any event schema the operator receives
+  willingness_to_pay: 2 - planning input, no direct price signal
+  bucket: 7
+  perspective: catalog
+- id: catalog-14
+  title: 'Trial-conversion contribution per title: among free-trial or 1-month promo subscribers, the share whose first-launched title got them past its first gameplay checkpoint in session 1, and their
+    paid conversion rate, versus trials that bounced at that title''s menus'
+  level: L4
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: early-ltv-or-payer-prediction
+    lifecycle-moment: ftue-first-session
+    delivery-form: per-cohort-report
+    companion-data: purchase-and-ad-revenue-events
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+    game-platform-and-genre: cloud-streamed
+  object: 'methods-churn-funnel.md section 1 benchmarks: median D1 about 22% (GameAnalytics 2026); catalog-1 exit-screen classes'
+  situation: Marketing promotes 3 titles in trial campaigns; one is a top-hours title whose first 15 minutes are menus and cutscenes
+  consequence: Trial campaigns lead with titles that reach gameplay fast; titles that convert trials get a higher licence value in renewal
+  p_typical: 0.09
+  grounded: inferred
+  evidence: Benchmarks for first-day return exist (methods-churn-funnel.md section 1) but not per title inside a subscription; video gives the checkpoint reached, which launch logs do not
+  already_offered: false
+  proposed: 'Per-title row: trial first-launches, % reaching checkpoint in session 1, paid conversion of each group, uplift'
+  shallow: false
+  mechanism: catalog-1 classifier marks the first gameplay checkpoint per title; join first-launched title to trial conversion; matched comparison by acquisition channel
+  example: 'Title A: 62% reach checkpoint, 34% convert; Title B (top hours): 29% reach checkpoint, 21% convert; trial ads switch to A'
+  cost: S
+  depends_on: catalog-1; trial and conversion tables
+  buyer: Subscriber growth lead at a subscription service, with the catalogue lead
+  input: cloud-gaming-server-render first sessions + trial and conversion events
+  why_existing_tools_cannot: Launch logs record that a title started, not whether the player reached gameplay (methods-churn-funnel.md section 2 INFERRED)
+  willingness_to_pay: 3 - ties to subscriber revenue; spend-based UA budgets are the largest pool in competitor-and-ua.md section 8
+  bucket: 7
+  perspective: catalog
+- id: catalog-15
+  title: 'Day-one premium diligence on a pre-release build: 100 subscriber-panel players stream the unreleased build from the operator''s servers for 3 sessions, and the report converts hours to credits,
+    session-3 return and bounce share into a ''price per expected engaged hour'' for the publisher''s day-one fee ask'
+  level: L4
+  cell:
+    buyer-role: publishing-scout-bd
+    video-source: cloud-gaming-server-render
+    signal-extracted: player-skill-and-mechanics
+    analysis-type: early-ltv-or-payer-prediction
+    lifecycle-moment: publisher-pitch-or-diligence
+    delivery-form: managed-service-with-analyst
+    constraint-to-overcome: studio-ip-and-prerelease-leak
+    pricing-model: managed-project
+    buyer-org-type: subscription-catalogue-operator
+    processing-location: edge-or-platform-server
+    game-platform-and-genre: cloud-streamed
+    companion-data: touch-and-controller-input
+    capture-trigger-and-sampling: opt-in-panel
+    value-lever-b2b: de-risk-a-go-kill-decision
+  object: ciso-23 server-rendered playtests ('the build never leaves studio servers'); market.md section 1 Antidote anti-leak watermark SDK
+  situation: A publisher asks a large fee to launch its next title day one in the catalogue; the operator must accept within 6 weeks of launch
+  consequence: The fee is checked against expected engaged hours from real subscribers; leak risk is low because no client binary leaves the data centre, which the publisher needs before sharing the build
+  p_typical: 0.08
+  grounded: inferred
+  evidence: Server-rendered testing removes client binaries (ciso-23); Antidote watermarks testers against leaks (market.md section 1)
+  already_offered: false
+  proposed: 'Managed 3-week project: panel, analyst, per-viewer watermark, memo with 3 fee scenarios'
+  shallow: false
+  mechanism: Catalog-3 pipeline plus per-viewer frame watermark; engaged hours per session from catalog-2; projection to catalogue-wide hours from comparable titles' panel-to-catalogue ratio
+  example: Projected 4.1 engaged hours per starter vs 6.8 for the last day-one title; operator counters at 60% of the ask with a hours-linked bonus
+  cost: M
+  depends_on: catalog-2, catalog-3; per-viewer watermark
+  buyer: Head of content acquisition at a subscription service
+  input: cloud-gaming-server-render frames of panel sessions + controller input + comparable title history
+  why_existing_tools_cannot: Playtest vendors give recruited-tester insight with no link to catalogue hours (market.md section 1 'Does NOT do'); the operator's own data starts only after launch
+  willingness_to_pay: 4 - managed project against a large fee decision; scout and publisher buyers already pay per-audit (scout-1, market.md section 1 token prices)
+  variants_of: catalog-3
+  bucket: 7
+  perspective: catalog
+- id: catalog-16
+  title: 'REFUSED: per-title ''subscriber-churn caused by this title'' attribution from video, presented as the causal share of cancellations each catalogue title is responsible for'
+  level: L3
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: emotion-arousal-from-pixels
+    analysis-type: churn-prediction-features
+    lifecycle-moment: sunset-decision
+    delivery-form: dashboard
+    constraint-to-overcome: accuracy-and-trust
+    buyer-org-type: subscription-catalogue-operator
+  object: 'market.md Signals: ''Trust in AI is low: only 16% fully trust AI QA outcomes''; methods-churn-funnel.md Signals: Firebase churn-prediction recall complaint ''275 of 145k'''
+  situation: A vendor offers a dashboard ranking titles by how many cancellations they 'cause', partly from frustration scored on gameplay pixels
+  consequence: 'Refused: cancellations have many causes (price, release calendar, a rival''s exclusive); a causal share per title cannot be validated and would be used against publishers in renewals, which
+    they would dispute. The curator buys catalog-1 and catalog-9 descriptive numbers instead'
+  p_typical: 0.1
+  grounded: quote
+  evidence: '''a customer complaint shows recall can be very low (275 of 145k)'' (methods-churn-funnel.md Signals); ''Biometrics are often oversold'' (market.md Signals)'
+  already_offered: false
+  proposed: 'none: refuse; keep descriptive per-title metrics'
+  shallow: false
+  mechanism: Would model cancellation on per-title video features (bounce, frustration score) and assign Shapley-style shares per title
+  example: Dashboard says Title X causes 4.2% of cancellations; publisher asks for the method and holdout; none exists
+  cost: M
+  depends_on: catalog-1; cancellation table
+  buyer: Catalogue lead at a subscription service (declines)
+  input: cloud-gaming-server-render + cancellation events
+  why_existing_tools_cannot: Churn prediction from logs already struggles on recall (methods-churn-funnel.md Signals); adding pixel emotion adds noise and EU disclosure duties (methods-churn-funnel.md section
+    7)
+  willingness_to_pay: 1 - refused; no buyer signal for causal title attribution
+  variants_of: catalog-1
+  refusal: true
+  bucket: 7
+  perspective: catalog
+- id: catalog-17
+  title: 'REFUSED: sharing raw subscriber session clips with publishers during renewal negotiations as proof of weak engagement'
+  level: L3
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: evidence-pack-for-enforcement
+    lifecycle-moment: sunset-decision
+    delivery-form: clip-reel
+    constraint-to-overcome: privacy-and-consent
+    buyer-org-type: subscription-catalogue-operator
+  object: 'methods-churn-funnel.md section 7 INFERRED: ''player names and chat in HUD/social panels, notifications overlaying the screen, payment sheets''; platform-12 edge redaction'
+  situation: The partner team wants to send 40 raw subscriber clips to a publisher to win a price cut
+  consequence: 'Refused: clips carry gamertags, chat and party names, and subscribers did not consent to their footage going to third parties; the operator sends aggregates and redacted, synthetic-reconstructed
+    or panel clips only'
+  p_typical: 0.05
+  grounded: quote
+  evidence: 'methods-churn-funnel.md section 7 (VERIFIED): App Store guidelines require ''explicit user consent and ... a clear visual indication when recording, logging, or otherwise making a record of
+    user activity''; section 7 INFERRED: ''Privacy hazards specific to game video: player names and chat in HUD/social panels, notifications overlaying the screen, payment sheets'''
+  already_offered: false
+  proposed: 'none: refuse; use catalog-6 pack format with redacted panel clips'
+  shallow: false
+  mechanism: Would export unredacted server-frame clips per title to the partner
+  example: 40 clips with visible gamertags are attached to a renewal email; a publisher forwards them internally
+  cost: S
+  depends_on: nothing
+  buyer: Partner management at a subscription service (declined by privacy counsel and catalogue lead)
+  input: cloud-gaming-server-render clips
+  why_existing_tools_cannot: 'Not a tool gap: Apple''s 2019 action shows consent and disclosure are the floor for recording users (methods-churn-funnel.md section 7)'
+  willingness_to_pay: 1 - refused
+  verify_note: evidence extended with the VERIFIED Apple consent rule; the privacy-hazard line alone is an INFERRED bullet
+  variants_of: catalog-6
+  contests:
+  - platform-16
+  refusal: true
+  bucket: 7
+  perspective: catalog
+- id: catalog-18
+  title: 'REFUSED: automatic removal of titles from the catalogue when a video score (bounce share, engaged hours) falls below a threshold for 2 quarters'
+  level: L3
+  cell:
+    buyer-role: platform-owner
+    video-source: cloud-gaming-server-render
+    signal-extracted: ui-state-and-screen-flow
+    analysis-type: anomaly-alert
+    lifecycle-moment: sunset-decision
+    automation-level: closed-loop-in-game-action
+    delivery-form: api-or-sdk
+    buyer-org-type: subscription-catalogue-operator
+  object: 'cfo-19 refusal of closed-loop intervention; market.md Signals: ''16% fully trust AI QA outcomes'''
+  situation: A vendor offers to wire catalog-1 and catalog-2 scores to the catalogue API so low scorers are scheduled out automatically
+  consequence: 'Refused: removal is a contract and portfolio decision (genre coverage, prestige titles, first-party relationships, licence penalties), and a classifier error on one title''s exit screens
+    would remove it wrongly. The scores stay inputs to a human renewal review'
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '''only 16% fully trust AI QA outcomes'' (market.md Signals); closed-loop actions were refused by other personas (cfo-19, platform-30)'
+  already_offered: false
+  proposed: 'none: refuse; keep insight-for-human with a quarterly review'
+  shallow: false
+  mechanism: Would call the catalogue scheduling API when two quarterly scores fall under the threshold
+  example: A prestige indie with low hours but award coverage is auto-scheduled out; press notices before the curator does
+  cost: S
+  depends_on: catalog-1, catalog-2
+  buyer: Catalogue lead at a subscription service (declines)
+  input: catalog-1 and catalog-2 scores
+  why_existing_tools_cannot: 'Not a tool gap: the decision needs contract and portfolio context that frames do not contain'
+  willingness_to_pay: 1 - refused
+  variants_of: catalog-1
+  refusal: true
+  bucket: 7
+  perspective: catalog
+
+# Stage I counts (bucket 7, 70 options): grounded quote=5 / inferred=47 / speculative=18; already_offered=0
+# quote: takedown-4, takedown-7, ugc-17, catalog-16, catalog-17
+# speculative: netcode-10, takedown-5, takedown-12, takedown-15, takedown-16, takedown-20, ugc-1, ugc-2, ugc-3, ugc-4, ugc-8, ugc-9, ugc-10, ugc-13, ugc-14, catalog-2, catalog-10, catalog-12
