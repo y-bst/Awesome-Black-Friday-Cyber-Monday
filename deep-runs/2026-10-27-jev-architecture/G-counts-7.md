@@ -13,6 +13,8 @@
 | leaves with cell values added by normalisation | 108 (values added: 214) |
 | uncategorised | 0 |
 
+Normalisation note: of the 214 added values, 20 are cell axes carried over from absorbed duplicates (survivor lacked the axis); the rest come from title/situation keyword rules against C-axes.yaml, `effort` from `cost` (S/M/L), and `mechanism-type: change-data-at-source` on collection-protocol leaves with no mechanism-type. Per-leaf log: /tmp/claude-0/-home-user-Awesome-Black-Friday-Cyber-Monday/8c4d0f6f-5baa-5821-9e40-eb597d4120fe/scratchpad/jev/ig7/norm-log.yaml.
+
 ## Rejected
 
 none. Every item is L3/L4, names a spec.md, memo.md, A-frame.yaml or B-perspectives.yaml object, and carries mechanism, example, cost and depends_on. Banned-word hits are all followed by an instance on the same line (`such as sighs per step per player`, `such as 'looking for the quest guy'`) or are quoted studio questions (`did step-3 completion improve`, `did the stealth step stall rate improve`) or the noun `handles` (extract-35, tar-7 `[HANDLE_3]`). Notes: sec-32 cites sibling leaves (sec-1, sec-11, sec-16) beside spec.md; kept because the spec quote is the anchor.

@@ -18,6 +18,10 @@
 
 None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carries mechanism, example, cost, depends_on and the frame's extra fields (part, ingest_cost, query_cost, better_than_fixed_table). Banned-vocabulary hits checked: `such as` in vidsearch-2 (title, followed by `InternVideo2 or Marengo`) and vidsearch-7 (situation, followed by a quoted question); `improved` in obs-6 (example, followed by `from 6% to 14%`); `proper` in extract-30 (mechanism, `queue a proper field compile` after a stated 60% coverage threshold, read as naming the compile step). All cell values were already valid C-axes values. qgen-17's mechanism is `none (refused)`, accepted because it is a refusal row whose proposed/consequence carry the content.
 
+## Cell normalisation
+
+Unset axes were filled when the title, situation or mechanism (survivor plus absorbed rows, perspective ids stripped) plainly named the value; `effort` was filled from `cost` (XS/S/M/L). Absorbed rows contributed their own agent-labelled cell values to unset axes of the survivor. Regex hits were reviewed by hand and values not plainly satisfied (for example `clip` matched by `clip cache`, `designer` matched by an id) were dropped. Existing agent values were never changed.
+
 ## Duplicate clusters (survivor <- absorbed)
 
 - latency-15 <- designer-1, store-5, analyst-2
