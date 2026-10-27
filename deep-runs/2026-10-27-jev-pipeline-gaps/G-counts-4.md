@@ -10,7 +10,9 @@
 | contested | 0 (gaps run; refusal rows do not apply) |
 | surviving | 121 |
 | uncategorised | 0 |
-| leaves with cell values added by normalisation | 121 of 121 (1526 values added) |
+| leaves with cell values added by normalisation | 96 of 121 (272 values added) |
+
+Normalisation method: a survivor's `cell` is the agent's own labels, plus the labels of the duplicates it absorbed (same situation), plus any C-axes value its title/object/situation/consequence text plainly states (word-bounded patterns on numbers and status words, e.g. "of 500" -> `500-players`, "queued" -> `queued`, "crash" -> `session-split-by-crash-into-two`; `proposed` text is never used). `stage` and `data-element` are NOT inferred from text, because every noun a situation mentions is not a value it plainly satisfies; those two axes carry agent labels only. Each automatic addition was reviewed by hand and 41 false positives removed before counting. Where an axis has several values on one leaf, the leaf is counted once under each value.
 
 ## Rejected
 
@@ -152,148 +154,148 @@ None. Every item is labelled L3/L4, names a concrete spec object or pipeline ele
 
 | value | leaves |
 |---|---|
-| video-capture | 11 |
-| 15-minute-split | 5 |
-| session-stitching | 28 |
-| transcription | 7 |
-| fixed-question-set | 45 |
+| video-capture | 0 |
+| 15-minute-split | 0 |
+| session-stitching | 18 |
+| transcription | 0 |
+| fixed-question-set | 26 |
 | answer-options | 0 |
-| per-video-answers | 24 |
-| session-level-aggregation | 16 |
-| answers-table | 56 |
-| chatbot-query-planning | 7 |
-| chatbot-answer | 42 |
-| evidence-display | 6 |
-| studio-ui | 50 |
-| recruitment-and-consent | 15 |
-| build-and-metadata-tagging | 28 |
-| upload-and-ingest | 11 |
+| per-video-answers | 0 |
+| session-level-aggregation | 0 |
+| answers-table | 22 |
+| chatbot-query-planning | 0 |
+| chatbot-answer | 0 |
+| evidence-display | 0 |
+| studio-ui | 0 |
+| recruitment-and-consent | 0 |
+| build-and-metadata-tagging | 20 |
+| upload-and-ingest | 0 |
 | audio-extraction | 0 |
-| language-detection | 3 |
-| question-set-registry | 48 |
-| extraction-prompt | 1 |
-| job-orchestration-and-status | 6 |
-| rerun-and-backfill | 15 |
-| aggregate-cache | 8 |
-| access-control | 13 |
-| retention-and-deletion | 24 |
-| export-and-share | 12 |
-| studio-feedback-loop | 32 |
+| language-detection | 0 |
+| question-set-registry | 23 |
+| extraction-prompt | 0 |
+| job-orchestration-and-status | 0 |
+| rerun-and-backfill | 0 |
+| aggregate-cache | 0 |
+| access-control | 0 |
+| retention-and-deletion | 19 |
+| export-and-share | 0 |
+| studio-feedback-loop | 0 |
 
-### data-element (leaves with no value on this axis: 0)
+### data-element (leaves with no value on this axis: 18)
 
 | value | leaves |
 |---|---|
-| session | 33 |
-| video | 47 |
-| transcript | 42 |
-| utterance | 35 |
-| timestamp | 19 |
-| question | 57 |
-| option | 30 |
-| answer | 105 |
-| player | 29 |
-| cohort | 32 |
-| game-version | 16 |
-| game-target | 38 |
-| tutorial-step | 57 |
-| screen-state | 6 |
-| build-id | 13 |
-| device-platform | 15 |
-| moderator | 13 |
-| consent-record | 6 |
-| question-set-version | 15 |
-| prompt-version | 2 |
+| session | 8 |
+| video | 2 |
+| transcript | 4 |
+| utterance | 4 |
+| timestamp | 9 |
+| question | 7 |
+| option | 4 |
+| answer | 1 |
+| player | 7 |
+| cohort | 2 |
+| game-version | 5 |
+| game-target | 10 |
+| tutorial-step | 7 |
+| screen-state | 0 |
+| build-id | 3 |
+| device-platform | 5 |
+| moderator | 2 |
+| consent-record | 2 |
+| question-set-version | 7 |
+| prompt-version | 1 |
 | extraction-model-version | 1 |
 | transcription-model-version | 0 |
 | extraction-run-id | 1 |
-| answer-confidence | 3 |
-| evidence-span | 13 |
-| null-vs-no | 9 |
-| studio-tenant | 11 |
-| chatbot-conversation-log | 6 |
-| cached-aggregate | 7 |
+| answer-confidence | 2 |
+| evidence-span | 4 |
+| null-vs-no | 5 |
+| studio-tenant | 3 |
+| chatbot-conversation-log | 3 |
+| cached-aggregate | 4 |
 
-### session-shape (leaves with no value on this axis: 70)
+### session-shape (leaves with no value on this axis: 88)
 
 | value | leaves |
 |---|---|
 | one-video | 1 |
-| 2-4-videos | 4 |
-| 5-20-videos | 10 |
+| 2-4-videos | 3 |
+| 5-20-videos | 8 |
 | missing-middle-video | 0 |
-| videos-out-of-order | 4 |
-| overlapping-videos | 4 |
+| videos-out-of-order | 3 |
+| overlapping-videos | 2 |
 | session-ends-mid-sentence | 2 |
-| zero-videos-session-failed | 14 |
-| last-video-under-1-minute | 1 |
+| zero-videos-session-failed | 1 |
+| last-video-under-1-minute | 0 |
 | duplicate-upload | 2 |
 | video-with-no-audio-track | 0 |
-| session-split-by-crash-into-two | 10 |
-| same-player-multiple-sessions | 15 |
+| session-split-by-crash-into-two | 7 |
+| same-player-multiple-sessions | 7 |
 | tutorial-started-before-recording | 1 |
-| 10-plus-hour-session | 4 |
+| 10-plus-hour-session | 2 |
 
-### speech-shape (leaves with no value on this axis: 107)
+### speech-shape (leaves with no value on this axis: 108)
 
 | value | leaves |
 |---|---|
-| silent-player | 6 |
-| continuous-think-aloud | 5 |
+| silent-player | 4 |
+| continuous-think-aloud | 3 |
 | game-audio-dominates | 0 |
 | two-speakers | 2 |
 | non-english | 3 |
 | mixed-language | 0 |
 | profanity-or-slang | 1 |
 | inaudible-segments | 0 |
-| moderator-speaking-or-leading | 1 |
+| moderator-speaking-or-leading | 2 |
 | player-reading-chat-or-overlay-aloud | 0 |
 | background-tv-or-other-people | 1 |
 | whispering | 0 |
 | mic-muted-for-a-period | 0 |
 | emotional-nonverbal-only (sighs, laughs, swearing-masked) | 0 |
 
-### question-shape (leaves with no value on this axis: 53)
+### question-shape (leaves with no value on this axis: 79)
 
 | value | leaves |
 |---|---|
 | fits-an-option | 1 |
-| fits-no-option | 3 |
+| fits-no-option | 1 |
 | fits-two-options | 3 |
-| answer-spans-videos | 9 |
+| answer-spans-videos | 1 |
 | answer-is-a-count | 1 |
-| answer-is-a-time | 12 |
+| answer-is-a-time | 5 |
 | answer-is-a-why | 7 |
-| answer-needs-visuals | 11 |
-| question-not-in-set | 14 |
-| event-did-not-happen-in-this-video | 11 |
+| answer-needs-visuals | 5 |
+| question-not-in-set | 11 |
+| event-did-not-happen-in-this-video | 10 |
 | answer-changes-within-video | 0 |
 | answer-depends-on-prior-video | 2 |
-| negation-player-never-did-x | 34 |
-| unknowable-from-audio | 8 |
+| negation-player-never-did-x | 4 |
+| unknowable-from-audio | 5 |
 | two-options-both-partly-true | 1 |
 | perceptual-cause-not-verbalised | 0 |
 
-### studio-question-type (leaves with no value on this axis: 34)
+### studio-question-type (leaves with no value on this axis: 49)
 
 | value | leaves |
 |---|---|
-| one-player-what-happened | 2 |
-| cohort-count | 40 |
-| cohort-why | 12 |
-| compare-two-versions | 12 |
+| one-player-what-happened | 1 |
+| cohort-count | 19 |
+| cohort-why | 7 |
+| compare-two-versions | 11 |
 | compare-two-steps | 4 |
-| find-players-who | 7 |
-| timeline-of-one-player | 7 |
+| find-players-who | 3 |
+| timeline-of-one-player | 5 |
 | quote-me-evidence | 3 |
 | follow-up-question | 0 |
-| question-outside-game-target | 7 |
-| trend-over-time | 7 |
+| question-outside-game-target | 3 |
+| trend-over-time | 5 |
 | distribution-not-count | 2 |
-| segment-by-metadata (device, country, build) | 5 |
-| what-can-you-answer | 3 |
+| segment-by-metadata (device, country, build) | 6 |
+| what-can-you-answer | 2 |
 | recommendation-what-should-we-change | 1 |
-| cross-game-or-cross-studio-benchmark | 4 |
+| cross-game-or-cross-studio-benchmark | 2 |
 | show-me-raw-transcript-or-clip | 3 |
 | correction-that-is-wrong | 0 |
 | question-about-a-step-the-set-never-asked | 7 |
@@ -304,53 +306,53 @@ None. Every item is labelled L3/L4, names a concrete spec object or pipeline ele
 |---|---|
 | 1-player | 1 |
 | 50-players | 6 |
-| 500-players | 42 |
+| 500-players | 43 |
 | 5000-players | 2 |
 | 10-games-at-once | 3 |
-| 0-players-new-game | 8 |
+| 0-players-new-game | 5 |
 | 1-player-10-hour-session | 3 |
 | 50000-videos | 2 |
 | many-concurrent-studio-users | 1 |
 | question-set-of-50-questions | 0 |
 | 500-players-x-3-question-set-versions | 3 |
 
-### correctness-failure (leaves with no value on this axis: 40)
+### correctness-failure (leaves with no value on this axis: 52)
 
 | value | leaves |
 |---|---|
-| hallucinated-answer | 15 |
+| hallucinated-answer | 10 |
 | forced-choice-bias | 5 |
-| inconsistent-across-videos | 8 |
+| inconsistent-across-videos | 3 |
 | stale-after-prompt-change | 3 |
-| wrong-denominator | 15 |
-| right-answer-wrong-player | 12 |
+| wrong-denominator | 11 |
+| right-answer-wrong-player | 10 |
 | confident-no-evidence | 9 |
 | instruction-injected-via-transcript | 1 |
-| answer-attached-to-wrong-video-index | 5 |
-| duplicate-counted | 10 |
-| null-treated-as-no | 6 |
+| answer-attached-to-wrong-video-index | 3 |
+| duplicate-counted | 6 |
+| null-treated-as-no | 4 |
 | other-option-overused | 3 |
-| mixed-version-aggregation | 12 |
-| perceptual-cause-attributed-to-verbal-option | 8 |
+| mixed-version-aggregation | 11 |
+| perceptual-cause-attributed-to-verbal-option | 2 |
 | moderator-words-attributed-to-player | 2 |
 | transcription-hallucination-propagated | 0 |
 
-### time-and-change (leaves with no value on this axis: 53)
+### time-and-change (leaves with no value on this axis: 61)
 
 | value | leaves |
 |---|---|
-| first-game-onboarded | 13 |
-| game-update-changes-tutorial | 12 |
-| question-set-revised | 12 |
+| first-game-onboarded | 8 |
+| game-update-changes-tutorial | 9 |
+| question-set-revised | 11 |
 | model-upgraded | 1 |
 | a-year-of-data | 9 |
 | studio-asks-at-3am | 0 |
-| player-deletion-request | 18 |
+| player-deletion-request | 15 |
 | transcription-model-upgraded | 0 |
 | rerun-in-progress-while-queried | 3 |
 | studio-offboarded | 3 |
-| retention-expiry | 6 |
-| game-target-changes-beyond-tutorial | 11 |
+| retention-expiry | 4 |
+| game-target-changes-beyond-tutorial | 7 |
 | extraction-vendor-deprecates-model | 0 |
 
 ### latency (leaves with no value on this axis: 111)
@@ -366,11 +368,11 @@ None. Every item is labelled L3/L4, names a concrete spec object or pipeline ele
 | ingest-to-queryable (hours or days after session) | 3 |
 | fast-but-stale | 1 |
 
-### processing-status (leaves with no value on this axis: 90)
+### processing-status (leaves with no value on this axis: 96)
 
 | value | leaves |
 |---|---|
-| not-yet-uploaded | 2 |
+| not-yet-uploaded | 1 |
 | uploaded-partial | 0 |
 | queued | 1 |
 | transcribing | 0 |
@@ -379,38 +381,38 @@ None. Every item is labelled L3/L4, names a concrete spec object or pipeline ele
 | transcript-empty | 0 |
 | extracting | 2 |
 | extraction-partial-some-questions | 1 |
-| extraction-failed | 2 |
+| extraction-failed | 1 |
 | complete | 3 |
 | superseded-by-rerun | 1 |
-| rerun-in-progress | 6 |
-| deleted-by-request | 18 |
+| rerun-in-progress | 3 |
+| deleted-by-request | 13 |
 
-### batch-failure-mix (leaves with no value on this axis: 112)
+### batch-failure-mix (leaves with no value on this axis: 113)
 
 | value | leaves |
 |---|---|
-| all-succeed | 2 |
+| all-succeed | 1 |
 | one-video-of-session-failed | 1 |
 | some-questions-failed-in-one-video | 1 |
-| some-sessions-failed-in-cohort | 3 |
+| some-sessions-failed-in-cohort | 2 |
 | all-failed | 0 |
-| retry-produced-duplicate | 3 |
+| retry-produced-duplicate | 2 |
 | late-arriving-video-after-aggregation | 1 |
 
-### recovery-action (leaves with no value on this axis: 86)
+### recovery-action (leaves with no value on this axis: 94)
 
 | value | leaves |
 |---|---|
-| retry-one-video | 2 |
+| retry-one-video | 1 |
 | retry-one-question | 0 |
 | rerun-whole-session | 1 |
-| backfill-after-question-set-change | 14 |
+| backfill-after-question-set-change | 10 |
 | backfill-after-model-upgrade | 2 |
 | skip-and-mark-unknown | 0 |
 | manual-override-answer | 0 |
-| delete-and-propagate | 19 |
+| delete-and-propagate | 13 |
 
-### question-set-version-state (leaves with no value on this axis: 82)
+### question-set-version-state (leaves with no value on this axis: 97)
 
 | value | leaves |
 |---|---|
@@ -418,13 +420,13 @@ None. Every item is labelled L3/L4, names a concrete spec object or pipeline ele
 | mixed-versions-in-table | 5 |
 | option-added | 4 |
 | option-renamed-same-id | 2 |
-| question-reworded-same-id | 6 |
+| question-reworded-same-id | 4 |
 | question-retired | 3 |
-| per-game-fork | 29 |
-| per-game-version-fork | 7 |
+| per-game-fork | 7 |
+| per-game-version-fork | 2 |
 | rollback-to-old-version | 1 |
 
-### transcription-subsystem (leaves with no value on this axis: 115)
+### transcription-subsystem (leaves with no value on this axis: 117)
 
 | value | leaves |
 |---|---|
@@ -433,78 +435,78 @@ None. Every item is labelled L3/L4, names a concrete spec object or pipeline ele
 | language-flips-between-videos | 0 |
 | truncated-at-length-limit | 1 |
 | timestamps-reset-per-video | 2 |
-| sentence-cut-at-15min-boundary | 1 |
+| sentence-cut-at-15min-boundary | 0 |
 | transcription-model-version-differs-across-videos | 0 |
 | profanity-masked-by-vendor | 0 |
-| game-lyrics-or-npc-voice-transcribed-as-player | 1 |
+| game-lyrics-or-npc-voice-transcribed-as-player | 0 |
 | low-confidence-segments-dropped-silently | 1 |
 | empty-transcript-for-non-empty-video | 0 |
 
-### chatbot-response-behaviour (leaves with no value on this axis: 84)
+### chatbot-response-behaviour (leaves with no value on this axis: 100)
 
 | value | leaves |
 |---|---|
-| answers-correctly | 16 |
+| answers-correctly | 0 |
 | says-no-data-correctly | 1 |
 | substitutes-nearest-fixed-question | 4 |
-| answers-from-general-game-knowledge | 4 |
-| invents-number | 5 |
+| answers-from-general-game-knowledge | 3 |
+| invents-number | 4 |
 | silently-truncates-rows | 0 |
-| differs-on-re-ask | 6 |
+| differs-on-re-ask | 2 |
 | answers-in-wrong-tenant-scope | 4 |
-| times-out | 2 |
-| refuses-answerable-question | 12 |
-| mixes-null-with-no | 5 |
+| times-out | 1 |
+| refuses-answerable-question | 6 |
+| mixes-null-with-no | 4 |
 
-### fast-path-dependency (leaves with no value on this axis: 85)
+### fast-path-dependency (leaves with no value on this axis: 99)
 
 | value | leaves |
 |---|---|
-| precomputed-aggregate-exists | 7 |
-| table-fits-in-llm-context | 5 |
-| text-to-sql-generated-correctly | 6 |
-| index-on-game-target-and-version | 9 |
+| precomputed-aggregate-exists | 5 |
+| table-fits-in-llm-context | 1 |
+| text-to-sql-generated-correctly | 4 |
+| index-on-game-target-and-version | 3 |
 | cache-hit | 0 |
-| cache-stale-after-rerun | 4 |
+| cache-stale-after-rerun | 3 |
 | question-requires-raw-transcript-fallback | 6 |
 | concurrent-studio-load | 1 |
-| table-growth-over-a-year | 6 |
-| cold-start | 9 |
+| table-growth-over-a-year | 2 |
+| cold-start | 0 |
 
-### capture-integrity (leaves with no value on this axis: 113)
+### capture-integrity (leaves with no value on this axis: 116)
 
 | value | leaves |
 |---|---|
 | audio-and-video-ok | 0 |
-| video-black-or-frozen | 1 |
+| video-black-or-frozen | 0 |
 | wrong-window-captured | 1 |
 | no-audio-track | 0 |
 | mic-muted-for-a-period | 0 |
 | stereo-channel-only-game-audio | 0 |
 | codec-unreadable | 0 |
-| clock-drift-between-videos | 5 |
-| upload-truncated | 1 |
+| clock-drift-between-videos | 4 |
+| upload-truncated | 0 |
 
-### answer-afterlife (leaves with no value on this axis: 93)
+### answer-afterlife (leaves with no value on this axis: 95)
 
 | value | leaves |
 |---|---|
-| read-once-in-chat | 1 |
+| read-once-in-chat | 0 |
 | copied-into-deck | 11 |
-| exported-csv | 3 |
+| exported-csv | 2 |
 | shared-link | 1 |
-| re-asked-after-rerun | 6 |
-| acted-on-tutorial-changed | 9 |
+| re-asked-after-rerun | 3 |
+| acted-on-tutorial-changed | 8 |
 | disputed-by-studio | 2 |
-| cited-after-player-deletion | 8 |
+| cited-after-player-deletion | 6 |
 
-### tenancy (leaves with no value on this axis: 103)
+### tenancy (leaves with no value on this axis: 108)
 
 | value | leaves |
 |---|---|
-| one-studio-one-game | 2 |
-| one-studio-many-games | 6 |
-| many-studios-shared-infra | 11 |
-| cross-studio-benchmark-request | 3 |
+| one-studio-one-game | 0 |
+| one-studio-many-games | 5 |
+| many-studios-shared-infra | 7 |
+| cross-studio-benchmark-request | 2 |
 | studio-offboarded | 3 |
 
