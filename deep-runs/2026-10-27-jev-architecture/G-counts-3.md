@@ -11,7 +11,7 @@
 | refusal rows kept (`refusal: true`) | 12 |
 | contested positives (carrying `contested_by`) | 13 |
 | surviving | 87 |
-| leaves with cell values added by normalisation | 87 (501 values, of which 28 inherited from absorbed duplicates' cells) |
+| leaves with cell values added by normalisation | 87 (286 values, of which 28 inherited from absorbed duplicates' cells) |
 | uncategorised | 0 |
 
 ## Rejected
@@ -142,12 +142,12 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | cost-governance | 0 |
 | schema-evolution | 0 |
 
-### representation (unset: 5)
+### representation (unset: 7)
 
 | value | count |
 |---|---|
 | fixed-mcq-answers | 3 |
-| timestamped-observation-log | 11 |
+| timestamped-observation-log | 10 |
 | entity-relation-graph | 7 |
 | per-step-summary | 3 |
 | per-session-summary | 3 |
@@ -158,7 +158,7 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | wide-event-schema-on-read | 2 |
 | inverted-full-text-index | 1 |
 | olap-cube-materialized-views | 6 |
-| step-funnel-state-machine-per-player | 11 |
+| step-funnel-state-machine-per-player | 10 |
 | hierarchical-temporal-summary-tree | 3 |
 | clip-or-frame-embeddings | 5 |
 | time-series-signals-affect-pace-silence | 6 |
@@ -168,15 +168,15 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | issue-list-with-severity-frequency | 2 |
 | question-answer-bank-precomputed | 3 |
 
-### granularity (unset: 5)
+### granularity (unset: 8)
 
 | value | count |
 |---|---|
 | frame | 1 |
 | utterance | 11 |
-| tutorial-step | 16 |
-| video | 6 |
-| session | 18 |
+| tutorial-step | 15 |
+| video | 5 |
+| session | 17 |
 | player | 11 |
 | cohort | 1 |
 | game | 2 |
@@ -187,14 +187,14 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | player-segment-cluster | 0 |
 | studio-portfolio | 2 |
 
-### query-path (unset: 14)
+### query-path (unset: 23)
 
 | value | count |
 |---|---|
-| precomputed-aggregate | 15 |
-| sql-over-closed-fields | 28 |
-| retrieval-then-llm | 12 |
-| lazy-backfill-extraction | 2 |
+| precomputed-aggregate | 14 |
+| sql-over-closed-fields | 23 |
+| retrieval-then-llm | 11 |
+| lazy-backfill-extraction | 0 |
 | map-reduce-over-raw | 2 |
 | cached-prior-answer | 3 |
 | clip-lookup | 2 |
@@ -209,20 +209,20 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | human-analyst-escalation | 0 |
 | push-alert-no-query | 0 |
 
-### question-type (unset: 6)
+### question-type (unset: 29)
 
 | value | count |
 |---|---|
 | what-happened | 2 |
-| when | 4 |
+| when | 1 |
 | how-long | 11 |
-| how-many | 14 |
-| why | 6 |
-| how-felt | 6 |
-| what-said | 7 |
+| how-many | 12 |
+| why | 4 |
+| how-felt | 2 |
+| what-said | 4 |
 | compare-versions | 1 |
 | compare-steps | 5 |
-| find-players-who | 15 |
+| find-players-who | 6 |
 | timeline | 2 |
 | outside-game-target | 0 |
 | what-surprised-unknown-unknowns | 2 |
@@ -233,13 +233,13 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | prevalence-of-quoted-sentiment | 1 |
 | did-the-fix-work-pre-post | 2 |
 
-### extraction-trigger (unset: 35)
+### extraction-trigger (unset: 43)
 
 | value | count |
 |---|---|
-| at-ingestion | 38 |
+| at-ingestion | 34 |
 | on-first-question | 0 |
-| scheduled-batch | 8 |
+| scheduled-batch | 4 |
 | on-game-update | 0 |
 | on-model-upgrade | 3 |
 | on-new-game-onboarding | 3 |
@@ -249,56 +249,56 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | continuous-during-live-session | 0 |
 | on-studio-tracker-defined | 0 |
 
-### modality (unset: 18)
+### modality (unset: 37)
 
 | value | count |
 |---|---|
 | speech-transcript | 21 |
-| on-screen-text-ocr | 7 |
-| screen-state-classifier | 11 |
+| on-screen-text-ocr | 5 |
+| screen-state-classifier | 7 |
 | input-events | 0 |
-| game-telemetry | 1 |
+| game-telemetry | 0 |
 | audio-non-speech | 1 |
 | webcam-face-and-posture | 0 |
 | survey-or-in-game-prompt-response | 0 |
-| player-profile-metadata | 5 |
-| build-version-metadata | 13 |
+| player-profile-metadata | 4 |
+| build-version-metadata | 2 |
 | frame-embeddings | 4 |
 | silence-or-absence-of-speech | 6 |
 | controller-or-touch-heatmap | 0 |
 
-### scope (unset: 28)
+### scope (unset: 48)
 
 | value | count |
 |---|---|
-| one-player | 3 |
+| one-player | 0 |
 | cohort | 3 |
-| all-players | 32 |
-| cross-game | 7 |
-| cross-studio-benchmark | 5 |
+| all-players | 19 |
+| cross-game | 6 |
+| cross-studio-benchmark | 2 |
 | query-time-defined-cohort | 5 |
 | build-version-pair | 4 |
 
-### latency-tier (unset: 44)
+### latency-tier (unset: 51)
 
 | value | count |
 |---|---|
-| under-2s | 21 |
-| under-30s | 7 |
+| under-2s | 19 |
+| under-30s | 6 |
 | minutes | 1 |
-| overnight | 5 |
+| overnight | 3 |
 | progressive-streaming | 1 |
 | push-no-query | 1 |
-| sub-200ms-cached | 7 |
+| sub-200ms-cached | 5 |
 
-### question-origin (unset: 74)
+### question-origin (unset: 78)
 
 | value | count |
 |---|---|
 | hand-written-per-game | 0 |
 | ontology-generated | 0 |
 | induced-from-data | 3 |
-| learned-from-studio-usage | 4 |
+| learned-from-studio-usage | 0 |
 | studio-written-at-runtime | 0 |
 | genre-template-library | 2 |
 | design-doc-patch-notes-store-page-derived | 0 |
@@ -312,20 +312,20 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | public-reviews-and-community-mining | 0 |
 | pilot-sessions-then-freeze | 0 |
 
-### evidence-form (unset: 19)
+### evidence-form (unset: 48)
 
 | value | count |
 |---|---|
 | none | 2 |
-| quote-with-timestamp | 8 |
-| clip | 10 |
-| count-with-denominator | 16 |
-| confidence-score | 4 |
+| quote-with-timestamp | 6 |
+| clip | 2 |
+| count-with-denominator | 5 |
+| confidence-score | 2 |
 | per-player-list | 1 |
-| clip-montage-n-examples | 2 |
-| contrast-vs-baseline | 8 |
-| coverage-statement-n-of-m-players | 2 |
-| extraction-provenance-model-and-schema-version | 8 |
+| clip-montage-n-examples | 1 |
+| contrast-vs-baseline | 6 |
+| coverage-statement-n-of-m-players | 1 |
+| extraction-provenance-model-and-schema-version | 6 |
 | recall-estimate | 0 |
 | chart | 6 |
 | severity-frequency-matrix | 1 |
@@ -340,37 +340,37 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | XS-days | 7 |
 | buy-or-integrate | 1 |
 
-### mechanism-type (unset: 20)
+### mechanism-type (unset: 33)
 
 | value | count |
 |---|---|
-| precompute-more | 40 |
-| defer-to-query-time | 7 |
-| reuse-or-cache-prior-work | 7 |
+| precompute-more | 33 |
+| defer-to-query-time | 6 |
+| reuse-or-cache-prior-work | 5 |
 | approximate-then-refine | 1 |
 | narrow-or-clarify-the-question | 0 |
-| push-instead-of-pull | 2 |
-| transfer-across-games | 7 |
+| push-instead-of-pull | 1 |
+| transfer-across-games | 5 |
 | change-data-at-source | 0 |
 | human-in-the-loop | 1 |
 | auto-discover-without-question | 2 |
 
-### user-segment (unset: 56)
+### user-segment (unset: 65)
 
 | value | count |
 |---|---|
-| studio-analyst | 4 |
-| game-designer | 11 |
+| studio-analyst | 2 |
+| game-designer | 7 |
 | ux-researcher | 0 |
 | producer-exec | 3 |
-| studio-data-engineer | 9 |
+| studio-data-engineer | 7 |
 | live-ops-community | 0 |
 | publisher-portfolio | 3 |
 | platform-devrel | 0 |
 | indie-solo-dev | 0 |
-| jev-internal-ops | 1 |
+| jev-internal-ops | 0 |
 
-### moment-in-journey (unset: 73)
+### moment-in-journey (unset: 78)
 
 | value | count |
 |---|---|
@@ -378,89 +378,89 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 | first-cohort-ingested | 0 |
 | first-studio-question | 0 |
 | steady-state-weekly | 1 |
-| new-build-version | 8 |
+| new-build-version | 3 |
 | pre-launch-greenlight | 0 |
 | live-ops-update | 0 |
 | renewal-review | 1 |
 
-### delivery-surface (unset: 44)
+### delivery-surface (unset: 59)
 
 | value | count |
 |---|---|
-| chatbot | 25 |
-| dashboard-standard-report | 3 |
-| warehouse-share-or-export | 11 |
+| chatbot | 17 |
+| dashboard-standard-report | 5 |
+| warehouse-share-or-export | 3 |
 | api-sdk | 0 |
 | notebook | 1 |
 | slack-jira-integration | 0 |
-| scheduled-digest | 3 |
+| scheduled-digest | 2 |
 | clip-reel | 0 |
 | alert | 0 |
 
-### subject-domain (unset: 20)
+### subject-domain (unset: 48)
 
 | value | count |
 |---|---|
-| onboarding-tutorial | 40 |
+| onboarding-tutorial | 28 |
 | core-loop | 2 |
 | progression-difficulty | 1 |
 | economy-monetization | 0 |
 | social-multiplayer | 0 |
 | narrative | 0 |
-| ui-navigation | 6 |
-| technical-bugs-performance | 2 |
+| ui-navigation | 2 |
+| technical-bugs-performance | 0 |
 | accessibility | 1 |
-| player-affect | 15 |
+| player-affect | 5 |
 
-### tenancy-and-deployment (unset: 73)
+### tenancy-and-deployment (unset: 77)
 
 | value | count |
 |---|---|
-| shared-multi-tenant | 5 |
-| logically-isolated-per-studio | 8 |
+| shared-multi-tenant | 2 |
+| logically-isolated-per-studio | 7 |
 | single-tenant | 0 |
 | studio-vpc-or-on-prem | 0 |
 | export-only-no-hosting | 0 |
 | federated-query-into-studio-warehouse | 1 |
 
-### reuse-scope-of-extraction (unset: 73)
+### reuse-scope-of-extraction (unset: 76)
 
 | value | count |
 |---|---|
 | game-specific | 2 |
-| genre-shared | 4 |
+| genre-shared | 2 |
 | universal-primitives | 5 |
-| customer-defined-on-top-of-universal | 3 |
+| customer-defined-on-top-of-universal | 2 |
 
-### schema-evolution (unset: 60)
+### schema-evolution (unset: 71)
 
 | value | count |
 |---|---|
 | frozen-schema | 1 |
-| append-only-versioned-fields | 10 |
-| schema-on-read | 5 |
+| append-only-versioned-fields | 8 |
+| schema-on-read | 3 |
 | eager-backfill-all-history | 0 |
-| lazy-backfill-on-demand | 3 |
+| lazy-backfill-on-demand | 0 |
 | deprecate-and-migrate | 2 |
-| model-upgrade-reextract | 6 |
+| model-upgrade-reextract | 2 |
 
-### uncertainty-policy (unset: 74)
+### uncertainty-policy (unset: 76)
 
 | value | count |
 |---|---|
 | always-answer | 2 |
-| answer-with-ci-and-n | 8 |
+| answer-with-ci-and-n | 6 |
 | abstain-below-coverage | 3 |
 | ask-clarifying-question | 0 |
 | give-range-then-refine | 0 |
 | escalate-to-human-analyst | 0 |
 
-### build-or-buy (unset: 67)
+### build-or-buy (unset: 68)
 
 | value | count |
 |---|---|
 | build-in-house | 1 |
-| open-source-component | 14 |
+| open-source-component | 13 |
 | managed-cloud-service | 3 |
 | third-party-video-understanding-api | 2 |
 | studio-owned-stack | 0 |

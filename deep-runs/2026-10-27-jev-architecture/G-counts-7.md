@@ -10,7 +10,7 @@
 | refusal rows kept (`refusal: true`) | 15 |
 | positives contested by a refusal | 15 |
 | surviving | 126 |
-| leaves with cell values added by normalisation | 115 (values added: 272) |
+| leaves with cell values added by normalisation | 108 (values added: 214) |
 | uncategorised | 0 |
 
 ## Rejected
@@ -184,15 +184,15 @@ Refusal-vs-refusal collisions (no contested_by written, both are refusal rows): 
 | issue-list-with-severity-frequency | 2 |
 | question-answer-bank-precomputed | 2 |
 
-### granularity (unset: 26)
+### granularity (unset: 44)
 
 | value | count |
 |---|---|
 | frame | 20 |
 | utterance | 7 |
-| tutorial-step | 21 |
-| video | 2 |
-| session | 28 |
+| tutorial-step | 16 |
+| video | 3 |
+| session | 13 |
 | player | 3 |
 | cohort | 1 |
 | game | 2 |
@@ -201,7 +201,7 @@ Refusal-vs-refusal collisions (no contested_by written, both are refusal rows): 
 | game-system | 0 |
 | build-version | 6 |
 | player-segment-cluster | 0 |
-| studio-portfolio | 5 |
+| studio-portfolio | 6 |
 
 ### query-path (unset: 105)
 
@@ -225,7 +225,7 @@ Refusal-vs-refusal collisions (no contested_by written, both are refusal rows): 
 | human-analyst-escalation | 0 |
 | push-alert-no-query | 0 |
 
-### question-type (unset: 84)
+### question-type (unset: 87)
 
 | value | count |
 |---|---|
@@ -235,8 +235,8 @@ Refusal-vs-refusal collisions (no contested_by written, both are refusal rows): 
 | how-many | 6 |
 | why | 5 |
 | how-felt | 5 |
-| what-said | 2 |
-| compare-versions | 9 |
+| what-said | 0 |
+| compare-versions | 8 |
 | compare-steps | 0 |
 | find-players-who | 3 |
 | timeline | 0 |
@@ -283,15 +283,15 @@ Refusal-vs-refusal collisions (no contested_by written, both are refusal rows): 
 | silence-or-absence-of-speech | 3 |
 | controller-or-touch-heatmap | 1 |
 
-### scope (unset: 71)
+### scope (unset: 72)
 
 | value | count |
 |---|---|
 | one-player | 2 |
-| cohort | 14 |
+| cohort | 13 |
 | all-players | 11 |
-| cross-game | 6 |
-| cross-studio-benchmark | 14 |
+| cross-game | 7 |
+| cross-studio-benchmark | 13 |
 | query-time-defined-cohort | 2 |
 | build-version-pair | 6 |
 
@@ -328,14 +328,14 @@ Refusal-vs-refusal collisions (no contested_by written, both are refusal rows): 
 | public-reviews-and-community-mining | 0 |
 | pilot-sessions-then-freeze | 1 |
 
-### evidence-form (unset: 75)
+### evidence-form (unset: 88)
 
 | value | count |
 |---|---|
 | none | 0 |
-| quote-with-timestamp | 3 |
-| clip | 12 |
-| count-with-denominator | 10 |
+| quote-with-timestamp | 1 |
+| clip | 4 |
+| count-with-denominator | 7 |
 | confidence-score | 0 |
 | per-player-list | 0 |
 | clip-montage-n-examples | 1 |
@@ -356,13 +356,13 @@ Refusal-vs-refusal collisions (no contested_by written, both are refusal rows): 
 | XS-days | 26 |
 | buy-or-integrate | 0 |
 
-### mechanism-type (unset: 38)
+### mechanism-type (unset: 41)
 
 | value | count |
 |---|---|
 | precompute-more | 7 |
 | defer-to-query-time | 10 |
-| reuse-or-cache-prior-work | 10 |
+| reuse-or-cache-prior-work | 7 |
 | approximate-then-refine | 7 |
 | narrow-or-clarify-the-question | 7 |
 | push-instead-of-pull | 2 |
@@ -428,23 +428,23 @@ Refusal-vs-refusal collisions (no contested_by written, both are refusal rows): 
 | accessibility | 1 |
 | player-affect | 3 |
 
-### tenancy-and-deployment (unset: 81)
+### tenancy-and-deployment (unset: 91)
 
 | value | count |
 |---|---|
 | shared-multi-tenant | 8 |
-| logically-isolated-per-studio | 32 |
+| logically-isolated-per-studio | 23 |
 | single-tenant | 0 |
-| studio-vpc-or-on-prem | 4 |
+| studio-vpc-or-on-prem | 3 |
 | export-only-no-hosting | 0 |
 | federated-query-into-studio-warehouse | 1 |
 
-### reuse-scope-of-extraction (unset: 97)
+### reuse-scope-of-extraction (unset: 105)
 
 | value | count |
 |---|---|
 | game-specific | 2 |
-| genre-shared | 18 |
+| genre-shared | 10 |
 | universal-primitives | 7 |
 | customer-defined-on-top-of-universal | 2 |
 
@@ -460,13 +460,13 @@ Refusal-vs-refusal collisions (no contested_by written, both are refusal rows): 
 | deprecate-and-migrate | 0 |
 | model-upgrade-reextract | 1 |
 
-### uncertainty-policy (unset: 101)
+### uncertainty-policy (unset: 103)
 
 | value | count |
 |---|---|
 | always-answer | 1 |
 | answer-with-ci-and-n | 5 |
-| abstain-below-coverage | 13 |
+| abstain-below-coverage | 11 |
 | ask-clarifying-question | 1 |
 | give-range-then-refine | 5 |
 | escalate-to-human-analyst | 0 |
