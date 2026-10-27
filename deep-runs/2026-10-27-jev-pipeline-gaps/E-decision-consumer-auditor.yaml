@@ -1,0 +1,680 @@
+- id: auditor-1
+  title: Chatbot answer text carries no as-of timestamp, extraction-run-id, question-set-version or prompt-version, so a number pasted into a deck cannot be tied to a table state
+  level: L4
+  cell:
+    stage: chatbot-answer
+    data-element: extraction-run-id
+    answer-afterlife: copied-into-deck
+    correctness-failure: stale-after-prompt-change
+    time-and-change: question-set-revised
+  object: "spec sentence 'A chatbot for the gaming studio answers the studio's questions from that table'; the answer string returned to the studio"
+  situation: PM copies '38% of players hesitated at the crafting step (n=500)' into a review deck on day 1; on day 19 the extraction prompt is revised and the whole table re-extracted; the review is on day 25
+  consequence: Reviewer re-asks and gets 44%; the PM cannot name which run, prompt or question-set produced 38% and the deck number is treated as a typo
+  p_typical: 0.30
+  grounded: inferred
+  evidence: "The answers form a structured table per video. (no version, run id or as-of field is named anywhere in the spec)"
+  proposed: Append a fixed provenance footer to every answer (extraction_run_id, question_set_version, prompt_version, extraction_model_version, as_of UTC, cohort filter) and keep each run's table as an immutable snapshot for 12 months
+  shallow: false
+- id: auditor-2
+  title: Identical question asked twice on the same table state returns two different cohort numbers because query planning is not pinned or memoised
+  level: L4
+  cell:
+    stage: chatbot-query-planning
+    chatbot-response-behaviour: differs-on-re-ask
+    studio-question-type: cohort-count
+    fast-path-dependency: text-to-sql-generated-correctly
+    answer-afterlife: re-asked-after-rerun
+  object: chatbot query planning step between the studio question and the answers table
+  situation: PM asks 'how many of the 500 players quit during the tutorial' at 10:00 (41%) and the same wording at 14:00 (36%) with no ingest or rerun between; the LLM produced two different filters (session-level OR across videos vs last-video-only)
+  consequence: Two numbers for one fact exist in the same day; the PM picks one for the deck with no basis and the reviewer who re-asks gets a third
+  p_typical: 0.25
+  grounded: inferred
+  evidence: "Their questions are not known in advance."
+  proposed: Cache (normalised question text, table snapshot id) -> (generated query, result); a re-ask within the same snapshot returns the cached result and shows the query it ran
+  shallow: false
+- id: auditor-3
+  title: No dispute or correction path exists from the studio back into the answers table or the question set
+  level: L3
+  cell:
+    stage: studio-feedback-loop
+    answer-afterlife: disputed-by-studio
+    studio-question-type: correction-that-is-wrong
+    data-element: answer
+    recovery-action: manual-override-answer
+  object: "spec section 'What exists today' step 4 (chatbot) and the absence of any feedback stage after it"
+  situation: PM watches the clip for player 212 and sees the player quit at the boss, not the inventory step as the table says; there is no action that records the correction, flags the row, or re-runs the question for that video
+  consequence: The wrong row stays in every future cohort count; the PM keeps a private spreadsheet of corrections that nobody at the vendor sees
+  p_typical: 0.20
+  grounded: inferred
+  evidence: "The owner wants to improve (a) how the chatbot answers from the question-answer store (no correction or feedback mechanism is described)"
+  proposed: Add a per-row override with (overridden_by, reason, timestamp, original_answer) that survives reruns, plus a weekly report of overrides per question to the question author
+  shallow: false
+- id: auditor-4
+  title: Tutorial change ships and no one re-asks the same question against the new build because game-version is not a filter the chatbot exposes
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    time-and-change: game-update-changes-tutorial
+    studio-question-type: compare-two-versions
+    data-element: game-version
+    answer-afterlife: acted-on-tutorial-changed
+  object: "spec sentence 'The targets are mostly detecting churn in the tutorial and just after it'; the answers table per video"
+  situation: PM shipped a shorter crafting tutorial in build 1.4 based on the bot's answer on build 1.3 data; 120 new sessions on 1.4 arrive over 3 weeks; PM asks 'did it help' and the bot pools 1.3 and 1.4 rows into one percentage
+  consequence: The before/after comparison that justified the change can never be made; the PM reports 'churn moved from 38% to 35%' from a pooled number that still contains 380 pre-change players
+  p_typical: 0.18
+  grounded: inferred
+  evidence: "Unspecified: ... how videos of one session are linked (and no build or game-version key is listed on the table)"
+  proposed: Require build_id on every session at ingest; the chatbot's compare-two-versions path returns two rows (build, n, k, share) and refuses to pool builds unless asked
+  shallow: false
+- id: auditor-5
+  title: Answer says '500 players' with no cohort definition, so the PM cannot state in a review which players were counted and which were excluded
+  level: L4
+  cell:
+    stage: session-level-aggregation
+    data-element: cohort
+    studio-question-type: cohort-count
+    correctness-failure: wrong-denominator
+    processing-status: extraction-partial-some-questions
+  object: "spec sentence 'a question over, say, 500 players is fast'; the denominator of any cohort answer"
+  situation: 500 players recruited; 41 sessions have a failed video; 22 are internal QA sessions; 7 are the same player twice; the bot answers 'k of 500' with no statement of which were included
+  consequence: In the review a reader asks 'is that 500 recruited or 500 complete' and the PM has no answer; the number is withdrawn from the deck
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "a question over, say, 500 players is fast"
+  proposed: Every cohort answer carries 'n = <count> players with status complete on question-set v<x>, excluded: <count> failed, <count> partial, <count> flagged internal'
+  shallow: false
+- id: auditor-6
+  title: Re-ask after a rerun returns a changed number with no statement that the underlying rows changed, so the PM attributes the delta to the game
+  level: L4
+  cell:
+    stage: rerun-and-backfill
+    answer-afterlife: re-asked-after-rerun
+    processing-status: superseded-by-rerun
+    time-and-change: model-upgraded
+    chatbot-response-behaviour: answers-correctly
+  object: chatbot answer after a backfill that replaced every per-video answer row
+  situation: Extraction model is upgraded and all 4,200 videos re-extracted overnight; the PM re-asks the churn question the next morning and gets 44% instead of 38% with no mention of the rerun
+  consequence: PM writes 'churn rose 6 points this week' in the weekly update; the rise is entirely a model change
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: When the snapshot id differs from the one that served the last answer to this question in this conversation, prefix the answer with 'table re-extracted on <date> (model <old> -> <new>); previous answer on old table was 38%'
+  shallow: false
+- id: auditor-7
+  title: Question asked while a backfill has reached 470 of 500 players returns a mixed-version number with no partial flag
+  level: L4
+  cell:
+    stage: rerun-and-backfill
+    time-and-change: rerun-in-progress-while-queried
+    question-set-version-state: mixed-versions-in-table
+    correctness-failure: mixed-version-aggregation
+    scale: 500-players-x-3-question-set-versions
+  object: answers table during a rerun that replaces rows player by player
+  situation: Backfill for question-set v3 is at 470 of 500 players when the PM asks; 30 players still hold v2 rows where option 'paused' did not exist
+  consequence: The deck number is reproducible by nobody because the table state it came from existed for 11 minutes
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: Serve from the last completed snapshot while a rerun is in progress and label the answer 'snapshot <id>, rerun 94% complete'; never serve from a table mid-write
+  shallow: false
+- id: auditor-8
+  title: A manual override on one row is overwritten by the next backfill after model upgrade, so a correction the studio made disappears
+  level: L4
+  cell:
+    stage: rerun-and-backfill
+    recovery-action: manual-override-answer
+    recovery-action: backfill-after-model-upgrade
+    answer-afterlife: disputed-by-studio
+    data-element: extraction-run-id
+  object: per-video answer row for player 212 video 3, question 'where did the player stop'
+  situation: PM overrode the row to 'boss' after watching the clip; 2 weeks later a model upgrade re-extracts every row and writes 'inventory' again
+  consequence: The dispute the studio already won is re-opened; the PM's deck cites the corrected row and the live table contradicts it
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Overrides live in a separate table joined at query time; reruns never touch them; a rerun that disagrees with an override emits a 'override now conflicts with model' line to the PM
+  shallow: false
+- id: auditor-9
+  title: A shared link to a chatbot conversation re-renders against the live table, so the recipient sees a different number than the sender
+  level: L4
+  cell:
+    stage: export-and-share
+    answer-afterlife: shared-link
+    fast-path-dependency: cache-stale-after-rerun
+    data-element: chatbot-conversation-log
+    latency: fast-but-stale
+  object: shared link to a chatbot conversation (export-and-share stage, unspecified in the spec)
+  situation: PM shares a link on Monday showing 38%; a rerun happens Tuesday; the exec opens the link Thursday and the conversation shows 44% because the answer is recomputed, or shows 38% with no indication it is stale
+  consequence: Two people in the same thread argue over which number is real; neither can tell whether the link is a snapshot or a live view
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: Shared links are immutable snapshots with the snapshot id in the URL and a banner 'table has been re-extracted since; re-run this question' when the live snapshot differs
+  shallow: false
+- id: auditor-10
+  title: CSV export has no version or run columns, so two exports taken 3 weeks apart get merged into one analysis with mixed prompt versions
+  level: L4
+  cell:
+    stage: export-and-share
+    answer-afterlife: exported-csv
+    data-element: prompt-version
+    correctness-failure: mixed-version-aggregation
+    time-and-change: question-set-revised
+  object: exported CSV of the answers table (columns unspecified in the spec)
+  situation: PM exports rows for 250 players in week 1 and the remaining 250 in week 4; question-set v2 replaced v1 in week 2; the two files have identical headers and are concatenated in a spreadsheet
+  consequence: The spreadsheet pivot shows option 'paused' at 0% for the first 250 players because the option did not exist for them; PM reports 'paused' doubled after the change
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: Every export row includes question_set_version, prompt_version, extraction_run_id, extraction_model_version, snapshot_id and exported_at; the file name carries the snapshot id
+  shallow: false
+- id: auditor-11
+  title: A deck number cited before a player deletion cannot be reconciled with the re-asked number after it because no deletion log explains the decrement
+  level: L4
+  cell:
+    stage: retention-and-deletion
+    answer-afterlife: cited-after-player-deletion
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+    data-element: cohort
+  object: cohort count in a deck versus the answers table after rows for 3 players were removed
+  situation: Deck says 41 of 500 quit; 3 of those 41 players request deletion; the re-ask gives 38 of 497; the auditor sees 41 -> 38 and 500 -> 497 with no record of why
+  consequence: The PM cannot distinguish deletions from re-extraction changes and the numbers are treated as unstable
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: Keep a deletion ledger (date, count of players removed, which cohorts affected) readable by the chatbot so a re-ask can state 'n changed from 500 to 497: 3 deletions on <date>'
+  shallow: false
+- id: auditor-12
+  title: A player quote pasted by the chatbot into a deck survives the player's deletion request with no way to find or retract it
+  level: L3
+  cell:
+    stage: retention-and-deletion
+    studio-question-type: quote-me-evidence
+    answer-afterlife: cited-after-player-deletion
+    data-element: evidence-span
+    time-and-change: player-deletion-request
+  object: transcript quote returned by the chatbot for a quote-me-evidence question
+  situation: Bot returns 'player 212 said: this inventory thing makes no sense, I'm done' and the PM pastes it into a deck circulated to 40 people; player 212 is deleted 6 weeks later
+  consequence: The deck is an uncontrolled copy of deleted speech; deletion is complete in the pipeline and incomplete in the studio
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Quotes carry a quote id and the conversation log records which quotes were served to which studio user; a deletion emits a notice to those users listing quote ids to remove
+  shallow: false
+- id: auditor-13
+  title: Option text reworded under the same option id changes the meaning of a trend the PM has been tracking for 6 months
+  level: L4
+  cell:
+    stage: question-set-registry
+    question-set-version-state: option-renamed-same-id
+    studio-question-type: trend-over-time
+    data-element: option
+    answer-afterlife: copied-into-deck
+  object: "option record in the fixed question set ('written per game target')"
+  situation: Option 3 of the churn question reads 'gave up' for 6 months, then is renamed 'paused or gave up' with the same id; the monthly trend the PM charts jumps from 12% to 29% at the rename month
+  consequence: PM reports a churn spike; the spike is a definition change invisible in the table because only the id is stored
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "a fixed set of questions with options, written per game target"
+  proposed: Any text change to a question or option mints a new id and a new question-set-version; the trend answer breaks the series at the version boundary and says so
+  shallow: false
+- id: auditor-14
+  title: An option added in v2 makes the v1 share of 'lost interest' look like it fell, and the PM credits the tutorial change
+  level: L4
+  cell:
+    stage: question-set-registry
+    question-set-version-state: option-added
+    correctness-failure: forced-choice-bias
+    studio-question-type: trend-over-time
+    time-and-change: game-update-changes-tutorial
+  object: question 'why did the player stop' with options {lost interest, instructions unclear, too hard, other}
+  situation: Option 'did not reach this step' is added in the same week the tutorial change ships; 'lost interest' drops from 40% to 24% because players who never reached the step were previously forced into it
+  consequence: The deck attributes a 16-point improvement to the change; the true effect is unknown
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: Chatbot refuses to compare across question-set versions where the option list differs and offers the comparison on the option intersection only, labelled as such
+  shallow: false
+- id: auditor-15
+  title: A retired question that a deck cites returns 'no data' or a silently substituted neighbour question on re-ask
+  level: L4
+  cell:
+    stage: question-set-registry
+    question-set-version-state: question-retired
+    chatbot-response-behaviour: substitutes-nearest-fixed-question
+    studio-question-type: question-about-a-step-the-set-never-asked
+    answer-afterlife: re-asked-after-rerun
+  object: question Q7 'did the player open the map in the first 5 minutes' removed in question-set v3
+  situation: Deck from v2 says 61% opened the map; auditor re-asks on v3 and the bot answers from Q4 'did the player use the map' (74%) without naming the substitution
+  consequence: The auditor records a 13-point discrepancy against the PM; both numbers are correct answers to different questions
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "a fixed set of questions with options"
+  proposed: Retired questions keep their rows and remain queryable with a 'retired in v3, last asked on <date>' label; substitution is always named in the answer
+  shallow: false
+- id: auditor-16
+  title: Tutorial step renamed in a game update leaves pre-update rows pointing at a step that no longer exists, and the bot pools both
+  level: L3
+  cell:
+    stage: fixed-question-set
+    time-and-change: game-update-changes-tutorial
+    data-element: tutorial-step
+    question-set-version-state: per-game-version-fork
+    studio-question-type: compare-two-steps
+  object: "question option naming a tutorial step (for example 'the crafting bench step')"
+  situation: Build 1.4 merges the crafting bench and the forge into one 'workshop' step; options still say 'crafting bench'; the extractor keeps choosing it for 1.4 transcripts that say 'workshop'
+  consequence: PM's compare-two-steps answer counts a step that 1.4 players never saw
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "written per game target"
+  proposed: Question-set version is keyed to build range; a session on a build with no matching question-set version is held in 'awaiting question set' status, not extracted with the old one
+  shallow: false
+- id: auditor-17
+  title: A recommendation from the chatbot is acted on with no record linking the shipped change to the rows and question-set version it came from
+  level: L3
+  cell:
+    stage: chatbot-answer
+    studio-question-type: recommendation-what-should-we-change
+    answer-afterlife: acted-on-tutorial-changed
+    chatbot-response-behaviour: answers-from-general-game-knowledge
+    data-element: chatbot-conversation-log
+  object: chatbot answer to 'what should we change in the tutorial'
+  situation: Bot says 'shorten the crafting tutorial; 38% hesitate there' and the PM ships it; 3 months later the review asks what evidence drove the change and the conversation log is not retrievable by the PM
+  consequence: The change is defended from memory; the vendor cannot say whether 38% came from the table or from the model's general knowledge of similar games
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Recommendation answers list the exact fixed questions and row counts used and refuse to recommend from anything not in the table; conversation logs are exportable by the studio for 12 months
+  shallow: false
+- id: auditor-18
+  title: Chatbot accepts a studio 'correction' that is itself wrong and carries it into later answers in the same conversation
+  level: L4
+  cell:
+    stage: chatbot-answer
+    studio-question-type: correction-that-is-wrong
+    chatbot-response-behaviour: differs-on-re-ask
+    data-element: chatbot-conversation-log
+    answer-afterlife: read-once-in-chat
+  object: multi-turn chatbot conversation state
+  situation: PM types 'no, player 212 quit at the boss' (wrong; the clip shows the inventory step); the bot replies 'you're right' and the follow-up cohort count in the same conversation is now 42 instead of 41
+  consequence: A number that exists only in that conversation reaches the deck; the table never changed and no one can reproduce 42
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: Corrections in chat never alter numbers; the bot replies 'recorded as a disputed row, pending review; counts still use the table value'
+  shallow: false
+- id: auditor-19
+  title: Answers carry no confidence, so a PM cannot tell a cohort count built from 51%-confidence picks from one built from 95%-confidence picks
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element: answer-confidence
+    correctness-failure: confident-no-evidence
+    studio-question-type: cohort-count
+    answer-afterlife: copied-into-deck
+  object: per-video answer row (option id only, as described in 'a structured table per video')
+  situation: 500 players; the churn question has 3 options; the extractor's choice is near-uniform for 180 videos with silent players, yet each row stores one option exactly like a confident row
+  consequence: The deck's 38% is built on 180 coin-flip rows and reads with the same authority as the rest
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: Store confidence 0-1 per row; cohort answers report share with confidence >= 0.7 separately from the rest ('38% (26% at high confidence, 12% low)')
+  shallow: false
+- id: auditor-20
+  title: Not-yet-extracted rows are counted as 'No' in a cohort share pasted into a deck
+  level: L4
+  cell:
+    stage: answers-table
+    data-element: null-vs-no
+    correctness-failure: null-treated-as-no
+    processing-status: queued
+    chatbot-response-behaviour: mixes-null-with-no
+  object: answers table cell for a (video, question) pair that has not been processed
+  situation: 300 of 500 players are still queued; the PM asks 'what share asked for help' and gets 12% where the true share among processed players is 30%
+  consequence: The deck understates a problem by 18 points; when the queue drains the number 'rises' and the PM reports a regression
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: Null and 'No' are distinct stored values; cohort answers always state 'of <n> processed, <m> pending'
+  shallow: false
+- id: auditor-21
+  title: Transcription model upgrade mid-year bends a 12-month frustration trend, and the PM reads the bend as a product effect
+  level: L4
+  cell:
+    stage: transcription
+    time-and-change: transcription-model-upgraded
+    data-element: transcription-model-version
+    studio-question-type: trend-over-time
+    transcription-subsystem: profanity-masked-by-vendor
+  object: monthly trend of the option 'expressed frustration' across a year of sessions
+  situation: In month 7 the speech-to-text vendor model changes and starts masking profanity; 'expressed frustration' falls from 31% to 19% at that month with no table column recording the transcription model
+  consequence: The PM presents month 7 as the month the new tutorial fixed frustration
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: Store transcription_model_version per video; trend answers mark any month where it changed and split the series there
+  shallow: false
+- id: auditor-22
+  title: 'Has churn improved since January' cannot be answered because the table has no stated session date or ingest date column'
+  level: L3
+  cell:
+    stage: answers-table
+    time-and-change: a-year-of-data
+    data-element: timestamp
+    studio-question-type: trend-over-time
+    fast-path-dependency: table-growth-over-a-year
+  object: answers table per video (spec names no date field)
+  situation: PM asks for churn by month over 14 months; the only time the pipeline has is upload time, which lags session time by 1 to 40 days for sessions recorded offline at events
+  consequence: A January event cohort appears in February's number; the PM's monthly chart is shifted by a month for 20% of players
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Unspecified: ... how videos of one session are linked"
+  proposed: Store session_recorded_at and ingested_at on every session; trend answers default to recorded_at and say which they used
+  shallow: false
+- id: auditor-23
+  title: Studio offboarded and later re-onboarded cannot reproduce any number its decks cite because the answers table was deleted with the tenant
+  level: L3
+  cell:
+    stage: retention-and-deletion
+    tenancy: studio-offboarded
+    time-and-change: studio-offboarded
+    answer-afterlife: copied-into-deck
+    data-element: studio-tenant
+  object: studio tenant's answers table and conversation logs at offboarding
+  situation: Studio churns in month 9, returns in month 14 with a deck of 11 numbers from the bot; the table, snapshots and logs were deleted at offboarding with no export handed over
+  consequence: Every cited number is unverifiable; the studio asks for a free re-extraction of 500 sessions it no longer has videos for
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  proposed: At offboarding, hand the studio a signed export (answers table with all version columns, conversation log, snapshot ids) before deletion; keep a hash of each snapshot for 2 years to verify later claims
+  shallow: false
+- id: auditor-24
+  title: A disputed answer cannot be settled because the video and transcript expired at 90 days while the answer row did not
+  level: L4
+  cell:
+    stage: retention-and-deletion
+    time-and-change: retention-expiry
+    answer-afterlife: disputed-by-studio
+    data-element: evidence-span
+    studio-question-type: show-me-raw-transcript-or-clip
+  object: answer row for player 88 video 4 and its source video and transcript
+  situation: PM disputes the row on day 120; retention for video and transcript is 90 days; the row survives indefinitely; the bot can neither show the clip nor re-extract
+  consequence: The row stays, the dispute stays open, and the PM removes the whole question from the deck rather than defend it
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Rows whose source media has expired carry status 'unverifiable' and are excluded from counts by default or shown as a separate bucket; retention for the evidence span (a 30-second clip plus 200 characters of transcript) matches the row's retention
+  shallow: false
+- id: auditor-25
+  title: No evidence span on the answer row, so 'players found the map confusing' cannot be defended with a clip in a review
+  level: L3
+  cell:
+    stage: evidence-display
+    data-element: evidence-span
+    studio-question-type: quote-me-evidence
+    answer-afterlife: disputed-by-studio
+    session-shape: 5-20-videos
+  object: per-video answer row (option id only) and the 15-minute video it was derived from
+  situation: PM is asked in a review to show one player who was confused by the map; the row points to video 6 of 9 but to no timestamp; the PM scrubs 15 minutes of video live
+  consequence: The number is accepted or rejected on the PM's credibility, not on evidence
+  p_typical: 0.15
+  grounded: quote
+  evidence: "The owner's view: the transcript alone is not enough; what is on screen is largely lost."
+  proposed: Each answer row stores (video index, start_ms, end_ms, transcript excerpt <= 300 chars) chosen by the extractor; the chatbot's quote-me-evidence path returns up to 3 such spans
+  shallow: false
+- id: auditor-26
+  title: Evidence timestamp is video-relative, so '03:12' sends the PM to the wrong one of 9 videos
+  level: L4
+  cell:
+    stage: session-stitching
+    transcription-subsystem: timestamps-reset-per-video
+    data-element: timestamp
+    session-shape: 5-20-videos
+    studio-question-type: show-me-raw-transcript-or-clip
+  object: timestamp in an evidence span and the session's ordered list of 15-minute videos
+  situation: Bot answers 'at 03:12 the player said this is pointless'; the session has 9 videos; the PM opens video 1 and finds nothing at 03:12
+  consequence: The PM reports the evidence as fabricated; the clip exists in video 6 at 03:12 (session time 1:18:12)
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes, so one session is many videos"
+  proposed: Evidence spans carry both (video_index, offset) and session-relative time; the chatbot prints 'video 6 of 9, 03:12 (session 1:18:12)'
+  shallow: false
+- id: auditor-27
+  title: Segment-by-device claim in a deck came from a bot answer with no device column in the table
+  level: L4
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: "segment-by-metadata (device, country, build)"
+    data-element: device-platform
+    chatbot-response-behaviour: answers-from-general-game-knowledge
+    answer-afterlife: copied-into-deck
+  object: answers table columns (spec lists no device, country or build column)
+  situation: PM asks 'do iOS players churn more than Android'; the bot answers 'iOS players tend to churn 20% more in the tutorial' from the model's prior, with no row filtered by device
+  consequence: A device-specific tutorial change is scoped on a number that no row in the table supports
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Buyers are gaming studios. Their questions are not known in advance."
+  proposed: Bot answers 'no device column exists in this table; 0 rows can be segmented' and lists the columns that do exist
+  shallow: false
+- id: auditor-28
+  title: Question asked at 03:00 during the overnight rerun gives a different number than the same question at 09:00 in the review
+  level: L4
+  cell:
+    stage: job-orchestration-and-status
+    time-and-change: studio-asks-at-3am
+    latency: batch-overnight
+    processing-status: rerun-in-progress
+    answer-afterlife: copied-into-deck
+  object: nightly batch rerun window and the answers table it rewrites
+  situation: Nightly backfill runs 01:00 to 06:00; PM in another timezone asks at 03:00 and pastes 35%; the review at 09:00 re-asks and gets 38%
+  consequence: The PM is contradicted in the meeting by the same tool 6 hours later
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: Queries during a rerun window are served from the previous completed snapshot and labelled 'snapshot <id> of <date>; rerun completes ~06:00 UTC'
+  shallow: false
+- id: auditor-29
+  title: Precomputed cohort aggregate is served after a rerun changed the rows, so the fast chatbot number and the analyst's fresh query disagree in one meeting
+  level: L4
+  cell:
+    stage: aggregate-cache
+    fast-path-dependency: cache-stale-after-rerun
+    data-element: cached-aggregate
+    latency: fast-but-stale
+    answer-afterlife: disputed-by-studio
+  object: cached aggregate for (game, question, option) and the per-video rows beneath it
+  situation: Rows re-extracted at 02:00; cache not invalidated; the bot answers 38% in 1.2 s; the analyst runs the same count over rows and gets 44%
+  consequence: Meeting ends with both numbers on the slide and a note 'to be confirmed'; nobody knows which system to trust
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Answering a studio's question must be fast."
+  proposed: Cache keys include snapshot id; a rerun that completes bumps the snapshot id and the cache misses once per (question, option)
+  shallow: false
+- id: auditor-30
+  title: 'Find players who' returns 20 rows of 83 without saying so, and the 20-name list becomes the outreach list
+  level: L4
+  cell:
+    stage: chatbot-answer
+    studio-question-type: find-players-who
+    chatbot-response-behaviour: silently-truncates-rows
+    scale: 500-players
+    answer-afterlife: exported-csv
+  object: chatbot answer listing players matching a condition over the answers table
+  situation: 83 players quit at the boss; the bot's row limit or context window shows 20 ids with no 'and 63 more'; the PM exports the 20 for a follow-up survey
+  consequence: 63 affected players are never contacted; the survey result (n=20) is presented as the affected cohort
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Reading 500 transcripts per question was too slow and too much data"
+  proposed: List answers always state 'showing 20 of 83' and offer a CSV of all 83; truncation without a total count is a failed answer
+  shallow: false
+- id: auditor-31
+  title: 'How long before players quit' is not a fixed question, and the bot invents 'around 8 minutes' instead of saying the table has no durations
+  level: L4
+  cell:
+    stage: chatbot-answer
+    question-shape: answer-is-a-time
+    studio-question-type: distribution-not-count
+    chatbot-response-behaviour: invents-number
+    answer-afterlife: copied-into-deck
+  object: fixed question set (multiple choice per video) and a studio question requiring a duration
+  situation: No question records time-to-quit; the bot replies 'most players quit around 8 minutes in'; the PM sets a '7-minute tutorial' target from it
+  consequence: A product target is set on a number with no row behind it; when challenged the vendor cannot produce the distribution
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: Bot answers 'no fixed question records a time; nearest available: which 15-minute video the quit was detected in (histogram over video index)'
+  shallow: false
+- id: auditor-32
+  title: Session-level rule for a per-video answer (any video says quit vs last video says quit) is undocumented, so a deck count cannot be re-derived
+  level: L4
+  cell:
+    stage: session-level-aggregation
+    question-shape: answer-spans-videos
+    session-shape: 5-20-videos
+    correctness-failure: inconsistent-across-videos
+    answer-afterlife: copied-into-deck
+  object: per-video answer rows for one session and the undefined roll-up to a per-player value
+  situation: Player 140 has 9 videos; video 3 says 'quit tutorial', videos 4-9 say 'continued'; the deck says 41 players quit (any-video rule); the auditor re-derives 29 (last-video rule)
+  consequence: Two defensible counts differ by 12 players and no document states which the bot used
+  p_typical: 0.08
+  grounded: quote
+  evidence: "The answers form a structured table per video."
+  proposed: Define the roll-up per question in the question-set registry (any, last, majority, first-occurrence) and print the rule in every per-player answer
+  shallow: false
+- id: auditor-33
+  title: A duplicate upload counts one player twice in the deck's cohort number, and a later dedup makes the re-ask number drop by one with no explanation
+  level: L4
+  cell:
+    stage: upload-and-ingest
+    session-shape: duplicate-upload
+    correctness-failure: duplicate-counted
+    batch-failure-mix: retry-produced-duplicate
+    answer-afterlife: re-asked-after-rerun
+  object: two session records for player 117 with identical videos
+  situation: Player 117's 4 videos were uploaded twice after a client retry; the cohort count is 41 of 501; a dedup job runs 2 weeks later; the re-ask gives 40 of 500
+  consequence: The auditor flags the deck as inflated; the PM cannot show the duplicate because the dedup erased it
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Content-hash videos at ingest and reject duplicates; keep a dedup ledger readable by the chatbot ('1 duplicate session removed on <date>')
+  shallow: false
+- id: auditor-34
+  title: Extraction model deprecated by the vendor, so the deck's numbers cannot be reproduced even from preserved transcripts
+  level: L3
+  cell:
+    stage: extraction-prompt
+    time-and-change: extraction-vendor-deprecates-model
+    data-element: extraction-model-version
+    recovery-action: backfill-after-model-upgrade
+    answer-afterlife: copied-into-deck
+  object: extraction_model_version behind an answers table snapshot
+  situation: 8 months after the deck, an audit asks for reproduction; transcripts are preserved but the model that produced the rows is gone; the replacement gives 44% for the deck's 38%
+  consequence: The original number is now unreproducible by construction; the auditor cannot tell drift from error
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  proposed: Keep immutable snapshots of the answers table per (model, prompt, question-set) rather than relying on re-extraction; record the deprecation date against every snapshot it affects
+  shallow: false
+- id: auditor-35
+  title: The exact question wording that produced a deck number is not retrievable, so the auditor re-asks a paraphrase and gets a different number
+  level: L4
+  cell:
+    stage: chatbot-query-planning
+    data-element: chatbot-conversation-log
+    studio-question-type: follow-up-question
+    chatbot-response-behaviour: differs-on-re-ask
+    answer-afterlife: read-once-in-chat
+  object: chatbot conversation log and the natural-language question text
+  situation: PM asked 'how many dropped during the tutorial' (38%); the deck says 'tutorial churn 38%'; the auditor asks 'what is tutorial churn' and gets 31% because the bot maps the paraphrase to a different fixed question
+  consequence: The discrepancy is logged as an error against the PM when it is a question-mapping difference
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Their questions are not known in advance."
+  proposed: Every answer prints the fixed question id(s) it used; the conversation log is searchable by the studio for 12 months by answer text
+  shallow: false
+- id: auditor-36
+  title: 'What can you answer' lists the current question-set version while 60% of sessions were extracted on the previous version
+  level: L4
+  cell:
+    stage: chatbot-answer
+    studio-question-type: what-can-you-answer
+    question-set-version-state: mixed-versions-in-table
+    data-element: question-set-version
+    scale: 500-players-x-3-question-set-versions
+  object: chatbot answer listing the questions available over the table
+  situation: v3 has 14 questions; 300 of 500 players were extracted on v2 (11 questions) and never backfilled; the bot lists 14 and the PM plans a deck around Q12 to Q14
+  consequence: Q12 to Q14 answers are over 200 players presented as 500
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: The capability list shows per question 'available for n of 500 players (version v3 since <date>)' and offers a backfill estimate for the rest
+  shallow: false
+- id: auditor-37
+  title: A cross-game benchmark in a deck came from joining two games' tables whose question sets differ
+  level: L4
+  cell:
+    stage: chatbot-query-planning
+    tenancy: one-studio-many-games
+    studio-question-type: cross-game-or-cross-studio-benchmark
+    question-set-version-state: per-game-fork
+    answer-afterlife: copied-into-deck
+  object: two per-game answers tables of one studio, each with a question set 'written per game target'
+  situation: PM asks 'is game A's tutorial churn worse than game B's'; the bot compares option 3 of Q2 in both tables; in game A Q2 is 'why did the player stop' and in game B it is 'did the player find the shop'
+  consequence: The deck says game A churns 2.1x more than game B; the comparison has no shared definition
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "written per game target"
+  proposed: Cross-game answers require a shared question id namespace; where ids are game-local the bot refuses and lists the 0 shared questions
+  shallow: false
+- id: auditor-38
+  title: Rollback of a bad prompt version leaves three numbers for one question in circulation (pre-bad, bad, post-rollback)
+  level: L4
+  cell:
+    stage: rerun-and-backfill
+    question-set-version-state: rollback-to-old-version
+    data-element: prompt-version
+    correctness-failure: stale-after-prompt-change
+    answer-afterlife: copied-into-deck
+  object: prompt-version history for the churn question and the decks produced in each window
+  situation: Prompt v4 over-selects 'instructions unclear' for 9 days before rollback to v3; the PM's deck from day 5 says 52%; pre-v4 it was 38%; post-rollback re-extraction gives 39%
+  consequence: The auditor sees 38, 52 and 39 for one quarter and the 52 is already in a board deck with no retraction mechanism
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  proposed: Keep a prompt-version timeline the chatbot can print; after a rollback, every conversation that received an answer from the rolled-back version gets a 'retracted: re-ask' notice
+  shallow: false
+- id: auditor-39
+  title: Player ids swapped at recruitment put the right answer on the wrong player, and the outreach list built from 'find players who' contacts the wrong people
+  level: L4
+  cell:
+    stage: recruitment-and-consent
+    correctness-failure: right-answer-wrong-player
+    data-element: player
+    studio-question-type: find-players-who
+    session-shape: same-player-multiple-sessions
+  object: player id on a session record and the per-player roll-up in the answers table
+  situation: Moderator assigned id 301 to two different people on one day; the bot's list of 'players who quit at the boss' includes 301 once; the studio emails the person who did not quit
+  consequence: The deck's named-player evidence is wrong for at least 1 of 83 and the error is undetectable from the table alone
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Player id uniqueness enforced per (studio, day) at ingest with a conflict queue; the chatbot's player lists carry session ids so a swap can be traced
+  shallow: false
+- id: auditor-40
+  title: Answer served from general game knowledge when the fixed set has no row on the asked step, and the PM cannot tell it from a table answer
+  level: L4
+  cell:
+    stage: chatbot-answer
+    studio-question-type: question-about-a-step-the-set-never-asked
+    chatbot-response-behaviour: answers-from-general-game-knowledge
+    question-shape: question-not-in-set
+    answer-afterlife: copied-into-deck
+  object: chatbot answer to a question about a tutorial step no fixed question covers
+  situation: No question mentions the skill tree; the PM asks 'how many players struggled with the skill tree' and the bot answers 'roughly a third of players typically struggle with skill trees in games like this'
+  consequence: 'A third' enters the deck formatted like every table-backed number; the vendor later states 0 rows cover the skill tree
+  p_typical: 0.09
+  grounded: quote
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: Every answer is tagged 'table-backed (rows: k)' or 'not in table'; the 'not in table' path never returns a quantity
+  shallow: false

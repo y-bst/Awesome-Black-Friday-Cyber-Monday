@@ -1,0 +1,384 @@
+- id: l10n-1
+  title: "Options written in English are matched against a Japanese transcript with no translation step, so the extraction LLM translates on the fly and the mapping is undefined"
+  level: L4
+  cell: {"stage": "extraction-prompt", "speech-shape": "non-english", "data-element": "option", "correctness-failure": "other-option-overused", "question-shape": "fits-an-option"}
+  object: "Step 3 'a fixed set of questions with options, written per game target' and the Unspecified line 'languages'"
+  situation: "A 15-minute video whose transcript is Japanese ('むずすぎ、どこ押せばいいの') is run against the English option list [confused by controls / lost interest / instructions unclear / other]"
+  consequence: "The same utterance lands on 'confused by controls' in one run and 'instructions unclear' in the next because the model translates before matching; across 500 players the 'other' share for Japanese sessions runs 2-3x the English share with no field recording that the transcript language differed from the option language"
+  p_typical: 0.30
+  grounded: quote
+  evidence: "languages"
+  proposed: "Store transcript_language per video; ship question/option text in the transcript language (per-language fork keyed on the same option id) and reject extraction when transcript_language has no matching option-set language"
+  shallow: false
+- id: l10n-2
+  title: "Language is auto-detected per 15-minute video, so one bilingual session is transcribed in two languages and answered against two option sets"
+  level: L4
+  cell: {"stage": "language-detection", "transcription-subsystem": "language-flips-between-videos", "session-shape": "5-20-videos", "speech-shape": "mixed-language", "correctness-failure": "inconsistent-across-videos"}
+  object: "Step 2 'Each video is converted to a transcript' applied per video, with no session-level language field"
+  situation: "A Montreal player speaks French for videos 1-4, switches to English for video 5 (a friend joins), back to French for 6-8; the ASR detects language on the first 30 seconds of each video"
+  consequence: "Video 5's transcript is English and its answers use the English option labels; session-level aggregation sees a row whose option ids match but whose source language flipped; a 'did the player ever say X' count for that player depends on which video the query reads"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Detect language once per session (majority over all videos, stored on session) and pass it as a forced language hint to every video's ASR; record per-video detected language as a secondary field and flag sessions where it disagrees"
+  shallow: false
+- id: l10n-3
+  title: "Speech-to-text vendor masks profanity, so the strongest frustration signal is removed before the 'expressed frustration' question is asked"
+  level: L4
+  cell: {"stage": "transcription", "transcription-subsystem": "profanity-masked-by-vendor", "speech-shape": "profanity-or-slang", "question-shape": "fits-an-option", "correctness-failure": "null-treated-as-no"}
+  object: "Step 2 transcript feeding Step 3 question 'Did the player express frustration during the tutorial?'"
+  situation: "The player says 'what the f*** am I supposed to do here' at 07:12; the vendor's default profanity filter emits 'what the **** am I supposed to do here' or drops the word"
+  consequence: "The extractor reads a neutral question and answers 'No frustration'; on a 500-player cohort the frustration count for the tutorial step is understated by every swearing player, and nobody can tell because the masking is invisible in the stored transcript"
+  p_typical: 0.20
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Disable vendor profanity masking at the ASR call (profanity_filter=false) and store a per-video flag profanity_masked so old transcripts can be identified and re-transcribed"
+  shallow: false
+- id: l10n-4
+  title: "Gaming slang ('this is cooked', 'gg', 'mid', 'skill issue') is mapped to the wrong option by the extractor"
+  level: L4
+  cell: {"stage": "per-video-answers", "speech-shape": "profanity-or-slang", "question-shape": "fits-two-options", "correctness-failure": "perceptual-cause-attributed-to-verbal-option", "data-element": "utterance"}
+  object: "Step 3 options for the churn question, e.g. [too hard / boring / confusing / other]"
+  situation: "Player says 'nah this tutorial is cooked, gg' at 11:40 and quits; 'cooked' here means broken/hopeless and 'gg' means giving up, not a win"
+  consequence: "The extractor picks 'boring' or 'other' for a player who quit because the step felt broken; a studio count of 'players who found the tutorial broken' misses the players who used the most current slang, which skews younger"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "Maintain a per-game slang glossary (term, meaning, example, date added) injected into the extraction prompt, and add a regression set of 30 slang utterances with expected options re-run on every prompt or model change"
+  shallow: false
+- id: l10n-5
+  title: "A studio analyst asks in Korean about English-language sessions and the chatbot has no rule for which language the answer, the option labels and the quoted evidence come back in"
+  level: L3
+  cell: {"stage": "chatbot-answer", "studio-question-type": "one-player-what-happened", "speech-shape": "non-english", "chatbot-response-behaviour": "differs-on-re-ask", "data-element": "studio-tenant"}
+  object: "Step 4 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "A Seoul analyst types '튜토리얼 2단계에서 혼란스러워한 플레이어는 몇 명?' against a cohort whose transcripts and option labels are English"
+  consequence: "The reply is Korean in one conversation and English in the next; option label 'instructions unclear' is rendered as three different Korean phrases across answers, so the analyst cannot tell whether two answers refer to the same option"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "Define reply_language = analyst's question language; always print option id and the canonical option label in the option-set language in brackets after any translated label"
+  shallow: false
+- id: l10n-6
+  title: "Code-switched speech (Hinglish, Taglish, Spanglish) inside one utterance is transcribed with a single-language ASR so one half of every sentence is garbled"
+  level: L4
+  cell: {"stage": "transcription", "speech-shape": "mixed-language", "transcription-subsystem": "wrong-language-detected", "question-shape": "unknowable-from-audio", "correctness-failure": "transcription-hallucination-propagated"}
+  object: "Step 2 'Each video is converted to a transcript' with language unspecified"
+  situation: "A Manila player says 'ang hirap nito, where is the attack button ba?'; the ASR locked to en-PH renders 'ang hirap nito' as 'and here up neato'"
+  consequence: "The frustration phrase (ang hirap = this is hard) is lost and the English fragment is kept, so 'too hard' is never selected; the garbled text can also be read as nonsense and pushed to 'other'"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Use an ASR mode that supports code-switching for the session's locale pair (configured from the player's country and game locale) and store per-segment language tags in the transcript"
+  shallow: false
+- id: l10n-7
+  title: "A last video under 1 minute has too few words for language detection, is detected as the wrong language and stored as gibberish with status complete"
+  level: L4
+  cell: {"stage": "language-detection", "session-shape": "last-video-under-1-minute", "transcription-subsystem": "wrong-language-detected", "processing-status": "complete", "data-element": "video"}
+  object: "Step 1 'each video is capped at 15 minutes' leaving a final short remainder video"
+  situation: "The final 40-second video of an English session contains only 'ok, done, danke' as the player signs off to a German-speaking moderator; the detector picks de-DE and transcribes the 40 seconds as German"
+  consequence: "The session's last video, which carries the quit moment, is a German-language nonsense transcript answered against English options; the 'why did the player stop' question for that session is answered from noise, and the row shows complete"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes, so one session is many videos."
+  proposed: "Below 20 seconds of speech or 30 words, inherit the session language instead of detecting; store detection_confidence and refuse to extract below 0.6"
+  shallow: false
+- id: l10n-8
+  title: "Per-language translation of the question set merges or splits options, so the Japanese fork has 4 options where the English has 5 under the same question-set-version id"
+  level: L3
+  cell: {"stage": "question-set-registry", "question-set-version-state": "per-game-fork", "data-element": "question-set-version", "correctness-failure": "mixed-version-aggregation", "studio-question-type": "cohort-count"}
+  object: "Step 3 'written per game target' with no mention of a per-language variant"
+  situation: "A translator renders 'instructions unclear' and 'confusing UI' as one Japanese option because the distinction does not translate; the registry stores the Japanese set under the same version id as the English set"
+  consequence: "A cohort count of 'instructions unclear' over 500 players sums English option 3 with a Japanese option that also contains English option 4; the number is not reproducible and no field records that the option cardinality differs by language"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "written per game target"
+  proposed: "Make language a dimension of question-set-version (set_id, version, language); require option id sets to be identical across languages and fail registry validation when counts differ"
+  shallow: false
+- id: l10n-9
+  title: "Option labels localised with stable ids drift in meaning ('confused' / 'perdido' / '困惑') so cross-language cohort counts compare different concepts"
+  level: L3
+  cell: {"stage": "answer-options", "data-element": "option", "speech-shape": "non-english", "studio-question-type": "segment-by-metadata (device, country, build)", "correctness-failure": "mixed-version-aggregation"}
+  object: "Step 3 option text and Step 4 cohort counting over the answers table"
+  situation: "Spanish option 'perdido' (lost, spatially) was chosen as the translation of English 'confused' (cognitively); Spanish players who say 'no entiendo' are not matched to 'perdido' while English players who say 'I don't get it' are matched to 'confused'"
+  consequence: "A studio comparison of confusion rate Spain vs UK shows 11% vs 29% and the studio concludes the Spanish tutorial is better; the difference is the translation"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "Back-translate every localised option and store a definition line per option id that the extractor sees in all languages; run a 50-utterance bilingual parity test per option before a language fork ships"
+  shallow: false
+- id: l10n-10
+  title: "Chatbot reply language is undefined, so an analyst who asks in Portuguese gets an English answer and an English column name they must translate themselves"
+  level: L4
+  cell: {"stage": "chatbot-answer", "studio-question-type": "cohort-why", "chatbot-response-behaviour": "answers-correctly", "data-element": "studio-tenant", "latency": "under-2s"}
+  object: "Step 4 chatbot, Constraint 'Answering a studio's question must be fast'"
+  situation: "A Sao Paulo analyst asks 'por que os jogadores abandonam o tutorial?'; the table's option labels and the prompt are English"
+  consequence: "The answer comes back in English with option labels 'instructions unclear (41%)'; the analyst pastes it into a Portuguese deck with their own translation, which differs from a colleague's translation of the same label"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "Answering a studio's question must be fast."
+  proposed: "Reply in the question's language; localise option labels from the registry's per-language fork rather than ad hoc, and show the option id"
+  shallow: false
+- id: l10n-11
+  title: "Evidence quote shown to a Korean analyst is a machine translation of a Japanese utterance presented as verbatim"
+  level: L4
+  cell: {"stage": "evidence-display", "studio-question-type": "quote-me-evidence", "data-element": "evidence-span", "speech-shape": "non-english", "answer-afterlife": "copied-into-deck"}
+  object: "Step 4 chatbot answer plus the evidence it quotes from the transcript"
+  situation: "The analyst asks 'show me what the player said when they quit' and the chatbot translates 'もういいや' (I'm done / whatever) into Korean inline, in quotation marks, with no marker that it is translated"
+  consequence: "The quote is pasted into a deck as the player's words; a dispute later cannot be settled because the original Japanese is not shown and the translation ('포기할게' vs '됐어') changes meaning"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "Always show the original-language span first with video id and timestamp, then a translation labelled 'machine translation'; never put a translation inside quotation marks"
+  shallow: false
+- id: l10n-12
+  title: "Right-to-left transcripts (Arabic, Hebrew) mixed with Latin option labels and timestamps render in the wrong order in the studio UI"
+  level: L4
+  cell: {"stage": "studio-ui", "speech-shape": "non-english", "data-element": "timestamp", "studio-question-type": "show-me-raw-transcript-or-clip", "answer-afterlife": "shared-link"}
+  object: "Step 4 chatbot answer with evidence spans in the studio UI"
+  situation: "An Arabic utterance at 03:15 is displayed with '[03:15]' and the option label 'instructions unclear' inline; bidi rules render the timestamp and label on the wrong side of the sentence"
+  consequence: "The analyst reads the timestamp as belonging to the previous line and the clip link opens 40 seconds early; a shared link to the answer shows different ordering in different browsers"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "none"
+  proposed: "Wrap each utterance in a bidi isolate (dir=auto) and keep timestamp and option label in their own LTR cells, not inline"
+  shallow: false
+- id: l10n-13
+  title: "A transcription model upgrade adds Thai support, so Thai sessions transcribed before the upgrade are empty and after it are full, with no field to separate them"
+  level: L3
+  cell: {"stage": "transcription", "time-and-change": "transcription-model-upgraded", "data-element": "transcription-model-version", "transcription-subsystem": "empty-transcript-for-non-empty-video", "recovery-action": "backfill-after-model-upgrade"}
+  object: "Step 2 transcript store and the Unspecified 'languages'"
+  situation: "Vendor model v3 (no Thai) produced 0-20 word transcripts for 60 Bangkok players in March; v4 (Thai supported) transcribes 600-word videos from April; the answers table holds both"
+  consequence: "A trend-over-time query for the Thai cohort shows confusion jumping from 3% to 35% in April; the studio attributes it to a game update that shipped the same week"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "languages"
+  proposed: "Store transcription_model_version and supported_languages per video; when a model adds a language, queue every prior video of that language for re-transcription and mark the old rows superseded"
+  shallow: false
+- id: l10n-14
+  title: "English accent variants (en-IN, en-NG, en-SG) are transcribed with an en-US model and churn keywords are mis-heard"
+  level: L4
+  cell: {"stage": "transcription", "speech-shape": "continuous-think-aloud", "transcription-subsystem": "low-confidence-segments-dropped-silently", "studio-question-type": "segment-by-metadata (device, country, build)", "correctness-failure": "wrong-denominator"}
+  object: "Step 2 transcript with no locale field on the session"
+  situation: "A Lagos player says 'I'll quit this now' at 09:02; the en-US model emits 'I'll quiet this now' with confidence 0.4, and segments under 0.5 are dropped"
+  consequence: "The quit intent is dropped from the transcript; segmented by country, Nigerian players show 40% fewer quit statements than UK players for the same tutorial step and the gap is a transcription artefact"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Pass the session's country as the ASR locale hint; store per-segment confidence and never drop segments, only flag them; report per-country mean confidence next to any country segmentation"
+  shallow: false
+- id: l10n-15
+  title: "Localised number and time expressions ('half two', '14h30', Japanese counters) are misparsed when an answer is a count or a time"
+  level: L4
+  cell: {"stage": "per-video-answers", "question-shape": "answer-is-a-count", "speech-shape": "non-english", "data-element": "answer", "correctness-failure": "hallucinated-answer"}
+  object: "Step 3 questions whose answer is a number, e.g. 'How many attempts at the boss before quitting?'"
+  situation: "A Japanese player says '三回目だ' (third time) and a British player says 'that's the half-dozenth time'; the extractor returns 3 and 6 respectively but a French player's 'une bonne dizaine' (a good ten or so) returns 10 as an exact count"
+  consequence: "Attempt counts across the cohort mix exact and approximate values with no marker; a mean of 4.2 attempts is reported with no indication that 30% of values were idioms"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "For count and time answers, store the source phrase and an exact/approximate flag; let the chatbot report the share of approximate values"
+  shallow: false
+- id: l10n-16
+  title: "The game's localised item and step names differ from the English names used in the question text, so a player on the Japanese build never 'mentions' the step"
+  level: L4
+  cell: {"stage": "build-and-metadata-tagging", "data-element": "tutorial-step", "speech-shape": "non-english", "question-shape": "negation-player-never-did-x", "correctness-failure": "confident-no-evidence"}
+  object: "Step 3 question written per game target, e.g. 'Did the player find the Elixir in the Forge tutorial step?'"
+  situation: "The Japanese build names the item 回復薬 and the step 鍛冶場; the session has no game-locale tag, and the transcript says 'あ、回復薬あった' at 04:50"
+  consequence: "The extractor, matching on 'Elixir', answers 'player never found the Elixir'; a 'players who never found X' list for the Japanese cohort is 100% and the studio ships a hint nobody needed"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "written per game target"
+  proposed: "Tag each session with game_locale from the build; attach the game's string table (string id, English, localised) to the extraction prompt so question text references string ids, not English names"
+  shallow: false
+- id: l10n-17
+  title: "A player reading localised on-screen text aloud is credited with understanding it, with no way to separate reading from thinking aloud"
+  level: L3
+  cell: {"stage": "per-video-answers", "speech-shape": "player-reading-chat-or-overlay-aloud", "question-shape": "answer-needs-visuals", "data-element": "screen-state", "correctness-failure": "perceptual-cause-attributed-to-verbal-option"}
+  object: "Step 3 question 'Did the player notice the tutorial hint?' and Known problem 'Transcript loses visual information'"
+  situation: "A German player reads the hint 'Halte gedrückt, um zu zielen' aloud word for word at 02:10, then says 'hä?' and taps instead of holding"
+  consequence: "The extractor marks 'noticed hint: yes, understood: yes' from the verbatim reading; the actual failure (read but not understood) is the one the studio is trying to find"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "Transcript loses visual information."
+  proposed: "Match transcript lines against the game's localised string table and tag them as read-aloud; give the extractor a distinct 'read aloud only' signal"
+  shallow: false
+- id: l10n-18
+  title: "The vendor profanity list covers English only, so English cohorts have frustration masked and Spanish cohorts do not"
+  level: L4
+  cell: {"stage": "transcription", "transcription-subsystem": "profanity-masked-by-vendor", "speech-shape": "profanity-or-slang", "studio-question-type": "segment-by-metadata (device, country, build)", "correctness-failure": "wrong-denominator"}
+  object: "Step 2 transcript and Step 4 country segmentation"
+  situation: "'what the f***' is masked for UK players; 'joder, que mierda' is left intact for Spanish players; the same frustration question is run on both"
+  consequence: "Frustration at tutorial step 3 reads 14% UK vs 38% Spain; the studio localises the Spanish tutorial again; the UK number is the masked one"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Turn masking off for all languages and store a per-video masking flag; add a parity check that the share of masked tokens is 0 for every language before cohort comparison"
+  shallow: false
+- id: l10n-19
+  title: "No language field exists on session or player, so 'segment by language' is answered by guessing from country and is wrong for Switzerland, Canada, Belgium, India"
+  level: L3
+  cell: {"stage": "chatbot-query-planning", "studio-question-type": "segment-by-metadata (device, country, build)", "data-element": "player", "fast-path-dependency": "text-to-sql-generated-correctly", "chatbot-response-behaviour": "answers-from-general-game-knowledge"}
+  object: "Step 4 chatbot query over the answers table; Unspecified 'languages'"
+  situation: "An analyst asks 'is confusion higher for French-speaking players?'; the table has country but no language; text-to-SQL maps French to country IN ('FR')"
+  consequence: "Quebec, Belgian and Swiss French speakers are excluded and the answer is presented as a language segmentation; asked again with 'francophone' the generated SQL differs and the number changes"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "languages"
+  proposed: "Store transcript_language per video and session_language per session; expose both as columns so text-to-SQL can filter on language, and have the chatbot state which column it used"
+  shallow: false
+- id: l10n-20
+  title: "Non-verbal events are emitted differently per ASR language ('[laughs]' in English, '(笑)' in Japanese, nothing in Portuguese), so a 'did the player laugh or sigh' question is inconsistent across cohorts"
+  level: L4
+  cell: {"stage": "transcription", "speech-shape": "emotional-nonverbal-only (sighs, laughs, swearing-masked)", "transcription-subsystem": "low-confidence-segments-dropped-silently", "data-element": "utterance", "correctness-failure": "null-treated-as-no"}
+  object: "Step 2 transcript format, unspecified beyond 'converted to a transcript'"
+  situation: "The same vendor emits audio-event tags for en-US, a different token set for ja-JP and no tags for pt-BR; a question 'Did the player sigh or groan at step 2?' is run on all three"
+  consequence: "Brazilian players show 0% sighing, Japanese 8%, US 22%; the question appears to measure the tutorial but measures the ASR configuration"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Normalise audio-event tags to one vocabulary (laugh, sigh, groan, silence) across languages at ingest and store supports_audio_events per video so the chatbot can exclude videos without it"
+  shallow: false
+- id: l10n-21
+  title: "With an English prompt and a Portuguese transcript the extractor returns a translated option label ('Confuso') instead of the option id, and the parser falls to 'other' or fails"
+  level: L4
+  cell: {"stage": "extraction-prompt", "speech-shape": "non-english", "processing-status": "extraction-partial-some-questions", "correctness-failure": "other-option-overused", "batch-failure-mix": "some-questions-failed-in-one-video"}
+  object: "Step 3 'The answers form a structured table per video'"
+  situation: "The model, reading 180 lines of Portuguese, answers in Portuguese for 2 of 8 questions; the parser expects one of the English labels"
+  consequence: "2 questions per video fail or are stored as 'other' for Portuguese sessions only; the per-question failure rate is 25% for one language and 0% for another and the failure is logged as a parse error, not a language error"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "The answers form a structured table per video."
+  proposed: "Require the model to answer with an option id (A-F) via constrained output, not a label; log parse failures with transcript_language"
+  shallow: false
+- id: l10n-22
+  title: "A keyword in the studio's English question ('players who said boring') becomes a LIKE on English text and returns zero rows for a Japanese cohort, so the bot says 'no data'"
+  level: L4
+  cell: {"stage": "chatbot-query-planning", "studio-question-type": "find-players-who", "fast-path-dependency": "question-requires-raw-transcript-fallback", "chatbot-response-behaviour": "says-no-data-correctly", "speech-shape": "non-english"}
+  object: "Step 4 chatbot and the fallback from the answers table to transcripts"
+  situation: "The question is not in the fixed set, so the planner searches transcripts for 'boring'; the cohort's transcripts contain 'つまらない' and 'たるい'"
+  consequence: "The chatbot reports 'no players said this', which the analyst takes as a finding; the correct answer in the fixed-question table ('lost interest', 19 players) was available but the planner chose the keyword path"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists."
+  proposed: "When the planner falls back to transcript search, translate the keyword into each transcript_language present in the cohort or use multilingual embeddings, and state the languages searched in the answer"
+  shallow: false
+- id: l10n-23
+  title: "One studio with Japanese and English releases of the same game gets per-language question forks, and 'compare two versions' silently compares languages"
+  level: L3
+  cell: {"stage": "session-level-aggregation", "tenancy": "one-studio-many-games", "question-set-version-state": "per-game-version-fork", "studio-question-type": "compare-two-versions", "correctness-failure": "mixed-version-aggregation"}
+  object: "Step 3 'written per game target' and Step 4 cohort comparison"
+  situation: "Build 2.3 JP and build 2.3 EN are stored as two game targets with separate question sets; the analyst asks 'did confusion drop from 2.2 to 2.3?'"
+  consequence: "The planner picks the JP table for 2.2 (the only one with data that month) and the EN table for 2.3; the drop reported is the language gap, not the version change"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "written per game target"
+  proposed: "Model game_version and language as separate columns on every row; refuse a version comparison whose language mix differs by more than 10 points unless the analyst confirms"
+  shallow: false
+- id: l10n-24
+  title: "PII detection for spoken names and addresses runs on English patterns only, so a Japanese player's name or school said aloud survives deletion and redaction"
+  level: L4
+  cell: {"stage": "retention-and-deletion", "time-and-change": "player-deletion-request", "speech-shape": "non-english", "data-element": "transcript", "recovery-action": "delete-and-propagate"}
+  object: "Step 2 transcript store and any redaction applied before the table or chatbot sees it"
+  situation: "The player says '僕、田中です、○○中学の' at 00:20; the redactor is configured for English name and address entities and matches nothing"
+  consequence: "The name and school reach the extraction prompt, the evidence spans and the chatbot conversation log; a later deletion request removes rows by player id but the chatbot log still holds the quoted name"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "none"
+  proposed: "Run entity redaction with the model for the video's transcript_language; fail ingest when no redactor exists for that language rather than passing text through"
+  shallow: false
+- id: l10n-25
+  title: "The same question asked in Korean and in English yields two different cohort numbers because text-to-SQL translates option labels differently each time"
+  level: L4
+  cell: {"stage": "chatbot-query-planning", "chatbot-response-behaviour": "differs-on-re-ask", "fast-path-dependency": "text-to-sql-generated-correctly", "studio-question-type": "cohort-count", "answer-afterlife": "disputed-by-studio"}
+  object: "Step 4 chatbot query planning over the answers table with English option labels"
+  situation: "'설명이 불명확해서 그만둔 플레이어 수' generates WHERE option = 'unclear instructions' (no match, 0 rows); the English question generates WHERE option = 'instructions unclear' (41 rows)"
+  consequence: "Two analysts in the same studio report 0 and 41 for the same question; the dispute cannot be resolved because neither answer shows the SQL or the option id it filtered on"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "Resolve options to ids with a dictionary lookup across all registry languages before SQL generation; print the option id and the filter used in every answer"
+  shallow: false
+- id: l10n-26
+  title: "Languages are unspecified, so with no detection stage the ASR defaults to English and every non-English session is stored as a garbage transcript with status complete"
+  level: L4
+  cell: {"stage": "language-detection", "speech-shape": "non-english", "processing-status": "complete", "transcription-subsystem": "wrong-language-detected", "scale": "500-players"}
+  object: "Unspecified: 'languages'; Step 2 'Each video is converted to a transcript'"
+  situation: "A 500-player cohort recruited across EU markets is transcribed with a fixed en-US setting; 180 players spoke German, French or Italian"
+  consequence: "180 players' videos produce English-looking nonsense ('I'm the cheese of the garden'), are answered with high 'other' rates and counted in every denominator; no row distinguishes them from English speakers"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "languages"
+  proposed: "Add a language-detection stage that writes transcript_language and detection_confidence per video and routes to a per-language ASR configuration; block extraction when confidence is below 0.6"
+  shallow: false
+- id: l10n-27
+  title: "A word-count threshold for 'silent player' counts a 300-character Japanese transcript as 1 word because the script has no spaces"
+  level: L4
+  cell: {"stage": "transcription", "transcription-subsystem": "empty-transcript-for-non-empty-video", "processing-status": "transcript-empty", "speech-shape": "non-english", "recovery-action": "skip-and-mark-unknown", "data-element": "null-vs-no"}
+  object: "Any rule of the form 'skip extraction when word count < N' applied to Step 2 output"
+  situation: "A talkative Osaka player produces 300 characters of unspaced Japanese per video; the word counter splits on whitespace and returns 1"
+  consequence: "Every video of the player is marked silent and skipped (or answered unknown); the Japanese cohort's effective sample size collapses to the few players whose ASR inserted spaces"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "none"
+  proposed: "Measure speech by seconds of voiced audio or by tokenizer token count, never whitespace words; set the threshold per language"
+  shallow: false
+- id: l10n-28
+  title: "Token-heavy scripts (Thai, Japanese, Burmese) push a 15-minute transcript past the extraction context limit, so the last minutes are silently truncated for those languages only"
+  level: L4
+  cell: {"stage": "extraction-prompt", "transcription-subsystem": "truncated-at-length-limit", "speech-shape": "non-english", "question-shape": "answer-changes-within-video", "correctness-failure": "confident-no-evidence"}
+  object: "Step 3 extraction prompt that includes the full per-video transcript plus questions"
+  situation: "A continuous Thai think-aloud video tokenizes to 2.5-3x the tokens of the same speech in English; with a 50-question set the prompt exceeds the context and the tail of the transcript is cut"
+  consequence: "The quit moment at 13:50 is never seen by the extractor for Thai players; 'did the player quit in this video' is answered No with confidence, and the pattern never appears in English cohorts"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options"
+  proposed: "Count tokens per transcript before extraction and chunk or summarise above 80% of the limit; store tokens_in and truncated=true/false on every extraction-run-id"
+  shallow: false
+- id: l10n-29
+  title: "Moderator speaks English while the player speaks Spanish; a single detected language drops the moderator's leading instructions, so leading is invisible"
+  level: L4
+  cell: {"stage": "transcription", "speech-shape": "moderator-speaking-or-leading", "transcription-subsystem": "wrong-language-detected", "data-element": "moderator", "correctness-failure": "moderator-words-attributed-to-player"}
+  object: "Step 2 transcript with one language per video and no speaker labels"
+  situation: "The moderator says 'try the button on the left' in English at 05:30; the video is detected as es-MX; the English line is transcribed as Spanish-looking noise and the player's next line is 'ah, el de la izquierda'"
+  consequence: "The player is credited with discovering the control unaided; the leading that invalidates the answer is in the audio but not the transcript"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Transcribe with multi-language diarisation and store speaker role (player/moderator) and language per segment; exclude moderator segments from player questions"
+  shallow: false
+- id: l10n-30
+  title: "CSV export of option labels and evidence in UTF-8 without BOM opens as mojibake in Excel on Windows for Japanese and Korean studios"
+  level: L4
+  cell: {"stage": "export-and-share", "answer-afterlife": "exported-csv", "speech-shape": "non-english", "data-element": "evidence-span", "studio-question-type": "quote-me-evidence"}
+  object: "Any export of Step 3's 'structured table per video' or Step 4's answer to CSV"
+  situation: "A Tokyo analyst exports 500 rows with evidence quotes; Excel 2019 on Windows reads the file as Shift-JIS"
+  consequence: "Every quote and localised label shows as '繧ｳ繝ｳ' sequences; the analyst re-types labels by hand or uses the English fork, and the deck carries the wrong option names"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "none"
+  proposed: "Export UTF-8 with BOM, or XLSX; include option id next to every label column"
+  shallow: false
+- id: l10n-31
+  title: "Low-confidence segment dropping removes 2-3x more speech from non-English transcripts, so non-English cohorts are systematically shorter and under-answer every 'did the player say' question"
+  level: L4
+  cell: {"stage": "transcription", "transcription-subsystem": "low-confidence-segments-dropped-silently", "speech-shape": "non-english", "scale": "500-players", "correctness-failure": "wrong-denominator"}
+  object: "Step 2 transcript and the per-video answers it feeds"
+  situation: "The ASR vendor's mean confidence is 0.91 for en-US and 0.74 for vi-VN on the same mic setup; a 0.7 drop threshold removes 4% of English segments and 31% of Vietnamese segments"
+  consequence: "Vietnamese players appear to say less, express less and quit less; any cohort comparison that includes them is biased in the direction of 'fine' and the stored transcript carries no count of dropped segments"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Store segments_dropped and mean_confidence per video; have the chatbot attach a per-language confidence note when a cohort mixes languages whose mean confidence differs by more than 0.1"
+  shallow: false
+- id: l10n-32
+  title: "The chatbot answers a question about a feature by its English wiki name when the studio's localised build calls it something else, inventing a step that never existed in that cohort's game"
+  level: L4
+  cell: {"stage": "chatbot-answer", "chatbot-response-behaviour": "answers-from-general-game-knowledge", "studio-question-type": "question-about-a-step-the-set-never-asked", "data-element": "game-target", "speech-shape": "non-english"}
+  object: "Step 4 chatbot with no game string table; Step 3 question set per game target"
+  situation: "A Korean analyst asks about '대장간 단계' (the Forge step); the table has no row for it because the question set was written for 'Smithy'; the chatbot answers from its own knowledge of the English game"
+  consequence: "The answer describes a step by a name the Korean build never used and cites no row; the analyst cannot tell it is not from the table"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Their questions are not known in advance."
+  proposed: "Give the chatbot the game's string table for alias resolution and require every answer to cite table rows or say 'not in the question set'"
+  shallow: false
