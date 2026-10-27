@@ -1,0 +1,713 @@
+- id: latency-1
+  title: "Materialised step-funnel cube (game x build x tutorial-step x cohort-filter) refreshed on each ingestion commit, so count/how-long questions are one row lookup"
+  level: L4
+  cell: {part: store, representation: olap-cube-materialized-views, granularity: tutorial-step, query-path: precomputed-aggregate, latency-tier: sub-200ms-cached, mechanism-type: precompute-more, question-type: how-many}
+  object: "spec.md stage 3: 'The answers form a structured table per video'; memo point 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "A studio analyst asks 'what share of 500 players quit during tutorial step 3 on build 1.4' and the planner must answer in under 2 s"
+  consequence: "Aggregate rows exist before the question: planner matches (step=3, build=1.4, metric=exit_rate) and reads 1 row; no scan of ~600k observation rows (500 players x ~1.2k observations) per question"
+  p_typical: 0.45
+  grounded: quote
+  evidence: "memo.md: 'closed-field questions become aggregate queries over all players (instant)'"
+  proposed: "Table funnel_cube(game_id, build_id, step_id, segment_key, players_entered, players_exited, players_completed, median_seconds, p90_seconds, retries_sum, ingested_through_ts); incremental upsert per ingested session; segment_key covers the 8 most-used closed filters (platform, device, prior-genre-experience, language, age-band, input-type, session-length-bucket, recruit-source)"
+  shallow: false
+  mechanism: "Store-side: after each session's observation log commits, a trigger rolls the per-player step rows into the cube partition for that game/build; the planner's first branch is cube lookup; cube misses fall through to column scan"
+  example: "Studio asks 'how many players never reached step 4'. Planner reads funnel_cube rows for steps 3 and 4 on build 1.4: players_entered(step4)=312 of 500 -> '188 of 500 (37.6%) did not reach step 4; median time in step 3 for leavers 4m10s'. Response time 120 ms"
+  cost: M
+  depends_on: "per-player step state rows (latency-15) or the memo's observation log with a step_on_screen field"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Same latency as the fixed table but keyed on steps and segments rather than on a hand-written question id, so any count/how-long question over closed fields is answerable without a new question being written"
+
+- id: latency-2
+  title: "Semantic answer cache keyed on (question embedding, normalised cohort filter, data watermark); cosine >= 0.92 hit returns the stored answer plus 'as of N players' note"
+  level: L4
+  cell: {part: query-path, query-path: semantic-cache-similar-question, latency-tier: sub-200ms-cached, mechanism-type: reuse-or-cache-prior-work, representation: question-answer-bank-precomputed, moment-in-journey: steady-state-weekly, evidence-form: coverage-statement-n-of-m-players}
+  object: "spec.md stage 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "Three analysts at the same studio ask paraphrases of 'where in the tutorial do players drop' within one week"
+  consequence: "Second and later askers get the first answer in under 200 ms without a planner LLM call or a store query; the cache entry records n_players=500 and ingested_through_ts so the note 'as of 500 players ingested 2026-10-25' is shown"
+  p_typical: 0.25
+  grounded: inferred
+  evidence: "spec.md: 'a question over, say, 500 players is fast'"
+  proposed: "Cache row: (studio_id, game_id, q_embedding, filter_hash, schema_version, watermark_ts, answer_json, evidence_refs); lookup = ANN over q_embedding filtered by studio_id+game_id+filter_hash; threshold 0.92 tuned on a 200-pair paraphrase set; miss -> planner"
+  shallow: false
+  mechanism: "Query path: a pre-planner stage embeds the question (small embedding model, ~30 ms), normalises the cohort filter into a canonical hash, and looks up prior answers; hits short-circuit the planner"
+  example: "Day 1: 'which tutorial step loses the most players' -> planner, 1.8 s, cached. Day 3: 'biggest drop-off point in the tutorial?' cosine 0.94 to the day-1 entry, same filter hash, same watermark -> served in 90 ms with the day-1 evidence clip list"
+  cost: S
+  depends_on: "nothing (works over the existing fixed table too)"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table caches extraction, not answers; this caches the planner+aggregation work, which is the only part of the fixed-table path that still costs an LLM call per question"
+
+- id: latency-3
+  title: "Watermark-scoped cache invalidation: each cached answer carries max(session_ingested_at) and schema_version; new ingestion invalidates only entries whose cohort filter intersects the new sessions"
+  level: L4
+  cell: {part: store, query-path: cached-prior-answer, mechanism-type: reuse-or-cache-prior-work, schema-evolution: append-only-versioned-fields, extraction-trigger: at-ingestion, latency-tier: sub-200ms-cached}
+  object: "memo.md point 2: 'its result is cached as a new field'"
+  situation: "A new batch of 60 sessions on build 1.5 lands while 40 cached answers exist, 30 of them filtered to build 1.4"
+  consequence: "Only the 10 entries whose filter includes build 1.5 (or no build filter) are marked stale; the 30 build-1.4 entries keep serving at 90 ms; stale entries are recomputed by a background worker before the next ask, so the studio never sees a cold cache after ingestion"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern. Answering a studio's question must be fast.'"
+  proposed: "Invalidation predicate = filter_hash intersects set(new_session attributes) OR schema_version < current; stale entries recomputed in order of hit-count-last-30-days, budget 200 recomputes per ingestion batch"
+  shallow: false
+  mechanism: "Store: cache rows gain (watermark_ts, filter_predicate_json); the ingestion commit hook evaluates the predicate against the new sessions' attribute set and flags matches stale; a worker recomputes flagged rows, most-hit first"
+  example: "Cached 'step-3 exit rate on build 1.4' = 37.6% stays valid when build 1.5 sessions arrive; cached 'step-3 exit rate, all builds' is recomputed in the background to 35.9% (560 players) and the next asker sees the new number with 'as of 560 players'"
+  cost: S
+  depends_on: "latency-2 (answer cache) and ingestion commit hook"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no answer cache at all; without scoped invalidation a cache either serves wrong numbers after ingestion or is flushed entirely, which is the trust-collapse case"
+
+- id: latency-4
+  title: "Two-tier progressive answer: closed-field aggregate streamed within 2 s, then LLM-read refinement over retrieved observation rows streamed within 30 s, with the first tier labelled 'from counts' and the second 'from quotes'"
+  level: L4
+  cell: {part: query-path, query-path: progressive-answer-then-refine, latency-tier: progressive-streaming, mechanism-type: approximate-then-refine, question-type: why, uncertainty-policy: give-range-then-refine, delivery-surface: chatbot}
+  object: "memo.md point 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "Designer asks 'why do players quit at step 3' which has both a closed component (friction_signal counts at step 3) and an open one (what they said)"
+  consequence: "At 1.5 s the chat shows 'step 3: 188 exits; friction signals: 61% repeated-failed-input, 22% menu-confusion, 9% silence > 60 s'; at 18 s a second block appends 3 themes with 2 quotes each; the analyst can stop reading at tier 1"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "memo.md: 'the model reads only those'"
+  proposed: "Planner emits a plan with two stages; stage 1 is SQL over closed fields, stage 2 is retrieval (k <= 150 rows) + one LLM call; the UI renders stage 1 immediately and streams stage 2 tokens"
+  shallow: false
+  mechanism: "Query path and UI: planner always produces a cheap stage and an expensive stage for why/how-felt/what-said questions; both run concurrently; stage 1 result is final-formatted, stage 2 is appended"
+  example: "'why do players quit at step 3' -> tier 1 (1.4 s): counts above; tier 2 (17 s): 'Theme A: the jump prompt disappears before players read it (41 quotes, e.g. 02:13 \"wait what did it say\"); Theme B: ...'"
+  cost: M
+  depends_on: "observation log with closed friction_signal enum and retrievable utterance rows"
+  part: query
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Fixed table can only ever give tier 1 and only for pre-written questions; this gives a numeric tier at fixed-table speed and an open tier the fixed table cannot produce at all"
+
+- id: latency-5
+  title: "Sampled map-reduce with confidence interval for new-field questions: run the extractor on a random 50 of 500 sessions, return estimate +/- CI in under 30 s, continue to all 500 in the background and promote the result to a cached field"
+  level: L4
+  cell: {part: query-path, query-path: sampled-map-reduce-with-ci, latency-tier: under-30s, mechanism-type: approximate-then-refine, uncertainty-policy: answer-with-ci-and-n, extraction-trigger: on-first-question, evidence-form: count-with-denominator, scope: all-players}
+  object: "memo.md point 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Studio asks 'how many players tried to skip the tutorial cutscene' and no field exists; a full 500-session pass is ~500 x 1.5k-token session summaries = 750k tokens plus 500 calls"
+  consequence: "At ~20 s the chat shows '14 of 50 sampled players (28%, 95% CI 17-42%) tried to skip; full pass of 500 running, expected in 6 min'; the field skip_cutscene_attempt is then available for every later question at cube speed"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'triggers a one-time batch extraction over all sessions'"
+  proposed: "Sample size 50 uniform random with stratification by build; Wilson interval; background job writes the field with extraction_provenance (model, prompt_hash, schema_version); the answer message is updated in place when the full pass completes"
+  shallow: false
+  mechanism: "Query path: the lazy-backfill branch is split into sample-first (parallel 50 calls, p95 under 20 s) and full (queued); the planner returns the sample answer with n and CI and a job id"
+  example: "'how many players tried to skip the cutscene' -> 28% (n=50, CI 17-42) at 19 s; at 6 min 31 s the message updates to '131 of 500 (26.2%)'"
+  cost: M
+  depends_on: "per-session summary or observation log small enough to read per session (latency-10 keeps it under 2k tokens)"
+  part: query
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Fixed table answers nothing outside its question list; this answers an unknown question in under 30 s with an honest range instead of a 6-minute wait or a refusal"
+
+- id: latency-6
+  title: "Per-studio backfill budget governor: estimate cost = n_sessions x mean_session_tokens x price before any lazy backfill; if the estimate exceeds the studio's remaining monthly budget, run the 50-session sample now and queue the remainder for the overnight window"
+  level: L4
+  cell: {part: cost-governance, query-path: lazy-backfill-extraction, mechanism-type: narrow-or-clarify-the-question, extraction-trigger: on-first-question, latency-tier: overnight, user-segment: jev-internal-ops, uncertainty-policy: give-range-then-refine}
+  object: "memo.md point 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "One analyst asks 12 novel questions in an afternoon against 2,000 sessions; each full backfill is ~3M input tokens"
+  consequence: "Without a governor the 12 questions spend ~36M tokens in one afternoon; with it, each gets a sampled answer in under 30 s and the 12 full passes are batched into one overnight run (latency-8) that reads each session once"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (ingestion, not query-triggered re-extraction, which the memo introduces)"
+  proposed: "Budget table per studio (monthly_token_budget, spent, reserved); estimator uses stored mean tokens per session summary; thresholds: under 5% of remaining budget -> run now; 5-25% -> sample now + queue; over 25% -> sample now + ask the studio owner to approve"
+  shallow: false
+  mechanism: "Cost governance in the planner: a pre-execution estimator and a per-studio ledger decide run-now / sample-and-queue / sample-and-ask"
+  example: "'how many players read the control hints aloud' over 2,000 sessions -> estimate 3.1M tokens = 12% of remaining budget -> sampled answer now (n=50), full pass queued for the 02:00 batch, answer message updated next morning"
+  cost: S
+  depends_on: "latency-5 (sampled map-reduce) and latency-8 (batching queue)"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has a fixed bill; the memo's lazy backfill has an unbounded one; the governor keeps the unbounded path while capping the bill per studio per month"
+
+- id: latency-7
+  title: "Prompt-prefix caching of each session's observation log so that every extraction call in the same batch window reuses the cached session context and pays only for the question suffix"
+  level: L4
+  cell: {part: ingestion-extraction, extraction-trigger: scheduled-batch, mechanism-type: reuse-or-cache-prior-work, representation: timestamped-observation-log, granularity: session, latency-tier: overnight, build-or-buy: managed-cloud-service}
+  object: "memo.md point 1: 'a session-level observation log ... timestamped atomic observations across all videos of a session'"
+  situation: "Nightly batch has 9 new-field questions to run over 2,000 sessions; naive execution reads each ~60k-token session log 9 times = 1.08B input tokens"
+  consequence: "With the session log as a cached prefix and the 9 questions as suffixes (or one multi-question suffix, latency-8), input cost drops to ~1 full read + 8 cached reads per session; at a 90% cached-token discount the bill is ~0.2x of naive"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session'"
+  proposed: "Batch runner orders calls session-major (all questions for session A, then session B), sets the session log as the cacheable prefix, keeps the prefix under the vendor's cache TTL (5 min) by running a session's questions back-to-back"
+  shallow: false
+  mechanism: "Ingestion/batch extraction: the call layout is reordered so the long static part (session log) is a cache-eligible prefix and the variable part (question + answer schema) is a short suffix"
+  example: "Nightly questions 'tried to skip cutscene', 'read hints aloud', 'mentioned a competitor' run over session S-1042 as three calls within 40 s; the 58k-token log is billed once in full and twice at the cached rate"
+  cost: S
+  depends_on: "vendor prompt caching available on the ingestion model; session log materialised as text"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table reads each transcript once for a fixed question set and can never add a question cheaply; this makes adding the 10th question nearly free per session"
+
+- id: latency-8
+  title: "New-field question batching queue: lazy-backfill requests accumulate until 10 questions or 02:00, then one multi-question pass per session answers all of them in a single call"
+  level: L4
+  cell: {part: ingestion-extraction, extraction-trigger: scheduled-batch, query-path: lazy-backfill-extraction, mechanism-type: reuse-or-cache-prior-work, latency-tier: overnight, schema-evolution: eager-backfill-all-history, moment-in-journey: steady-state-weekly}
+  object: "memo.md point 2: 'a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Across one week a studio's analysts generate 23 novel questions; each is a separate full pass under the memo's design"
+  consequence: "23 passes x 2,000 sessions = 46,000 model calls become 3 nightly passes x 2,000 = 6,000 calls, each answering up to 10 questions as one JSON object; per-question marginal cost is ~1/8 of a dedicated pass"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'the question set grows from real use'"
+  proposed: "Queue table pending_fields(question_id, answer_schema, requested_by, requested_at); nightly job groups by game, emits one prompt with up to 10 answer slots per session; results written as 10 new versioned fields; sample answers (latency-5) serve the asker meanwhile"
+  shallow: false
+  mechanism: "Ingestion-side batch: the backfill trigger writes to a queue instead of starting a pass; a scheduler drains the queue once per night per game with multi-slot prompts"
+  example: "Monday 10:00 'skipped cutscene?', 14:00 'used the gamepad?', 16:30 'said the word boring?' all get sampled answers; Tuesday 02:00 one pass over 2,000 sessions fills three fields; Tuesday 08:00 all three answers show full-n numbers"
+  cost: M
+  depends_on: "latency-5 (sampled answers) so the asker is not blocked overnight"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Keeps the fixed table's 'one read per session' economics while letting the question list grow by 10 per night from real usage"
+
+- id: latency-9
+  title: "Three-tier store with a planner rule that the under-2s tier may touch only hot (cube rows in Postgres) and warm (observation Parquet with zone maps on game, build, step, player) and never cold (transcripts, frames in object storage)"
+  level: L4
+  cell: {part: store, representation: olap-cube-materialized-views, latency-tier: under-2s, query-path: sql-over-closed-fields, mechanism-type: precompute-more, build-or-buy: open-source-component, granularity: session}
+  object: "spec.md stage 4: 'Reading 500 transcripts per question was too slow and too much data'"
+  situation: "A planner plan for 'median time to finish the tutorial by platform' would read 500 session logs if observation rows were in object storage"
+  consequence: "Hot tier answers in ~50 ms; warm tier column scan over ~2.4M observation rows (2,000 sessions x 1.2k) partition-pruned to one game/build finishes in ~400 ms on one node; cold tier is reachable only from the minutes/overnight tiers"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists'"
+  proposed: "Hot: funnel_cube + answer cache in Postgres; warm: observations as Parquet/ClickHouse partitioned by (game_id, build_id) with min/max zone maps on step_id and ts; cold: S3 transcripts/frames; planner plan validator rejects cold-tier reads for the under-2s tier"
+  shallow: false
+  mechanism: "Store layout plus a static planner constraint; the plan validator checks which tier each step touches before execution"
+  example: "'median tutorial completion time on mobile' -> warm scan over per-player step rows filtered platform=mobile, build=1.4 -> 11m42s (n=212) in 380 ms; no transcript is opened"
+  cost: M
+  depends_on: "observation log written as columnar files; per-player step rows"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table is one hot tier with a fixed width; this keeps hot-tier latency for closed questions while making the full observation log scannable in under 2 s rather than unreachable"
+
+- id: latency-10
+  title: "Hierarchical temporal summary tree (utterance -> 5-min window -> video -> session) precomputed at ingestion so map-reduce and backfill read the 1.5k-token session node first and descend only on low confidence"
+  level: L4
+  cell: {part: ingestion-extraction, representation: hierarchical-temporal-summary-tree, granularity: session, query-path: map-reduce-over-raw, mechanism-type: precompute-more, extraction-trigger: at-ingestion, latency-tier: minutes}
+  object: "spec.md stage 1: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos'"
+  situation: "A backfill question over 500 two-hour sessions must choose between reading 8 x ~3.5k-token video transcripts (28k) per session or one session summary"
+  consequence: "Reading the session node costs ~1.5k tokens per session (750k total, ~2 min with 50-way parallelism) versus 14M tokens (~25 min); the extractor flags confidence < 0.7 and re-reads only those sessions' video nodes (typically 10-15%)"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'one session is many videos'"
+  proposed: "Node schema (level, parent_id, t_start, t_end, summary_text <= 300 tokens for window, <= 1500 for session, step_ids_covered, friction_count, quote_refs); built bottom-up at ingestion; query reads top-down with a per-question confidence threshold"
+  shallow: false
+  mechanism: "Ingestion builds the tree once; query-time readers address a node level instead of raw transcript ranges"
+  example: "'did players mention the tutorial being too long' -> session nodes answer for 436 of 500 with confidence >= 0.7; 64 descend to video nodes (8 x 300 tokens); total 1.0M tokens, 2m40s, instead of 14M tokens"
+  cost: M
+  depends_on: "session stitching that orders videos within a session"
+  part: ingestion
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "Fixed table has no path to a new question; this gives a minutes-tier path whose cost scales with session count, not with session hours"
+
+- id: latency-11
+  title: "Small-model-first extraction cascade for backfill: a cheap model answers every session, and only answers with confidence < 0.7 or that disagree with a second cheap sample go to the large model"
+  level: L4
+  cell: {part: ingestion-extraction, extraction-trigger: on-low-confidence-or-disagreement, mechanism-type: approximate-then-refine, query-path: lazy-backfill-extraction, evidence-form: confidence-score, latency-tier: minutes, build-or-buy: managed-cloud-service}
+  object: "memo.md point 2: 'a one-time batch extraction over all sessions'"
+  situation: "Backfill of 'did the player fail the jump at step 3 three or more times' over 2,000 sessions"
+  consequence: "At a 15x price gap between small and large models, routing 20% of sessions to the large model costs 0.2 x 15 + 0.8 x 1 = 3.8 units versus 15 units for large-only; wall time drops because the small model is faster and the large-model tail runs in parallel"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (true for first ingestion; backfill multiplies it by the number of new questions)"
+  proposed: "Cascade rule: small model with logprob-derived confidence; escalate if confidence < 0.7 OR two small samples at temperature 0.7 disagree; record escalation rate per field as an evaluation metric; target escalation 10-25%"
+  shallow: false
+  mechanism: "Extraction step gets a two-model router with a stored confidence per answer; evaluation compares small-only vs cascade accuracy on the hand-labelled set the memo names"
+  example: "'failed the step-3 jump 3+ times' -> small model answers 2,000 sessions in 4 min, 310 escalate, large model finishes them in 3 min; field accuracy on the 100 golden sessions 94% vs 95% large-only"
+  cost: M
+  depends_on: "golden set from memo point 3 ('accuracy against hand-labelled sessions') to tune the threshold"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Makes each added question ~4x cheaper than running the table's extraction model on everything, so the question list can grow 4x for the same bill"
+
+- id: latency-12
+  title: "Precomputed question-answer bank: the top 200 ontology-generated questions per game are answered at ingestion for the all-players cohort and the 8 standard segments, and the planner's first branch is bank lookup"
+  level: L4
+  cell: {part: question-generation, representation: question-answer-bank-precomputed, question-origin: ontology-generated, query-path: precomputed-aggregate, latency-tier: sub-200ms-cached, mechanism-type: precompute-more, extraction-trigger: at-ingestion, scope: cohort}
+  object: "memo.md point 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "The ontology prunes to ~900 candidate questions; 200 of them (ranked by coverage of real studio questions, memo point 3) are worth precomputing"
+  consequence: "Any studio question that paraphrases one of the 200 returns in under 200 ms with the stored evidence refs; the remaining 700 are answered by cube or column scan in under 2 s; bank size x 9 cohorts = 1,800 rows per game per build, trivial storage"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "memo.md: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  proposed: "bank(game_id, build_id, question_id, segment_key, answer_json, evidence_refs, n, computed_at); recomputed incrementally on ingestion; the bank's hit rate per week is the metric that decides which questions stay in the 200"
+  shallow: false
+  mechanism: "Question generation output feeds an ingestion-time answer job; the chatbot's semantic cache (latency-2) is seeded with the bank"
+  example: "Ontology question 'exit rate per tutorial step' x segment 'mobile' is precomputed; studio asks 'where do mobile players drop in the tutorial' -> bank hit, 110 ms: 'step 3: 44% of 212 mobile players; step 1: 9%; ...'"
+  cost: M
+  depends_on: "ontology generator and a ranking signal (initially the owner's churn targets, later the query log)"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "It is the fixed table done 10x wider and per segment, generated instead of hand-written, and demoted/promoted by usage rather than frozen"
+
+- id: latency-13
+  title: "REFUSED: long-context model over all raw transcripts of 500 players at query time as the default path for open questions"
+  level: L3
+  cell: {part: query-path, query-path: map-reduce-over-raw, representation: raw-transcript-only, latency-tier: minutes, mechanism-type: defer-to-query-time, scope: all-players, cost-governance: true}
+  object: "spec.md stage 4: 'Reading 500 transcripts per question was too slow and too much data'"
+  situation: "The long-context-skeptic proposes skipping the store and reading raw transcripts per question"
+  consequence: "Low willingness. 500 two-hour sessions x ~28k tokens = 14M input tokens per question; at a $3/M input price that is ~$42 per question and, at 50 parallel calls of ~30 s each, a p50 of ~5 min and p95 over 10 min. A studio asking 30 questions a day would spend ~$1,260/day. Acceptable only as the minutes-tier fallback behind latency-10 and latency-5, never as the default"
+  p_typical: 0.3
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists'"
+  proposed: "Keep raw map-reduce as a planner branch reachable only when the summary-tree and sampled paths return confidence < 0.5, with the cost estimate shown before running"
+  shallow: false
+  mechanism: "Query path: raw transcripts are read per question with no intermediate store"
+  example: "'why do players quit at step 3' over 500 players -> 14M tokens, ~5 min, ~$42, result not cached as a field unless someone writes the schema afterwards"
+  cost: L
+  depends_on: "nothing"
+  part: query
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "Answers any question, but 100-300x slower and at a per-question cost the fixed table never has; it is the baseline the fixed table was built to escape"
+
+- id: latency-14
+  title: "REFUSED unless capped: agentic multi-tool planner with open-ended tool loops; accepted only with a hard cap of 3 tool calls and an 8 s wall budget before the plan degrades to the progressive path"
+  level: L4
+  cell: {part: query-path, query-path: agentic-multi-tool-plan, latency-tier: under-30s, mechanism-type: defer-to-query-time, uncertainty-policy: give-range-then-refine, delivery-surface: chatbot, question-type: compare-steps}
+  object: "memo.md point 2: 'The chatbot runs a query planner'"
+  situation: "A planner that iterates (query, inspect, re-query) on 'compare step 2 and step 3 friction for players who later churned'"
+  consequence: "Uncapped loops produce a p95 of 40-90 s and 5-12 LLM calls per question; with the cap, p95 stays under 10 s and the fourth call is replaced by returning what has been computed plus 'refine with: ...' suggestions"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'The chatbot runs a query planner: closed-field questions become aggregate queries ... open-field questions retrieve ...'"
+  proposed: "Planner contract: at most 3 tool invocations, each with a 2.5 s timeout; on cap hit, emit partial answer and 2 follow-up buttons; log cap hits as failed-query-log entries for latency-18"
+  shallow: false
+  mechanism: "Query path: a loop budget enforced outside the model, with degraded-answer formatting"
+  example: "'compare step 2 vs step 3 friction for churners' -> call 1 cube (churner set, 188), call 2 cube (friction by step for that set), call 3 retrieval of 40 quotes; answer at 6.1 s; a fourth call for per-platform split is offered as a follow-up button instead"
+  cost: S
+  depends_on: "latency-1 cube and latency-18 failed-query log"
+  part: query
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Handles compound questions the table cannot, while keeping a bounded latency the table's users already expect"
+
+- id: latency-15
+  title: "Per-player step state-machine rows written at ingestion (one row per player per tutorial step: entered_ts, exited_ts, outcome enum, retries, seconds_silent) so how-long/how-many/find-players-who are column scans over ~5k rows, not over ~600k observations"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: player, query-path: sql-over-closed-fields, latency-tier: under-2s, question-type: find-players-who, mechanism-type: precompute-more, subject-domain: onboarding-tutorial}
+  object: "memo.md point 1: 'timestamped atomic observations ... (step on screen, action, utterance, friction signal, ...)'"
+  situation: "'list players who spent over 5 minutes on step 3 and then quit' must be answered from the observation log"
+  consequence: "Against observations this is a windowed self-join over 600k rows (~1-3 s cold); against step rows it is 'WHERE step_id=3 AND seconds > 300 AND outcome=quit' over 500 x 10 = 5k rows (~5 ms) and returns a per-player list with timestamps"
+  p_typical: 0.3
+  grounded: quote
+  evidence: "memo.md: 'step on screen'"
+  proposed: "player_step(player_id, session_id, game_id, build_id, step_id, entered_ts, exited_ts, outcome in {completed, quit, skipped, stuck_timeout, unknown}, retries, seconds_silent, friction_counts_json, first_quote_ref); derived from the observation log by a deterministic fold at ingestion"
+  shallow: false
+  mechanism: "Store: a derived table folded from the observation log once per session; the cube (latency-1) rolls up from it"
+  example: "'players who spent over 5 min on step 3 then quit' -> 27 of 500, listed with entered_ts and a clip ref each, in 12 ms"
+  cost: S
+  depends_on: "observation log with step_on_screen transitions (frame pipeline or OCR)"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has one row per video and a hand-written question per metric; this has one row per player per step and any metric is a column expression"
+
+- id: latency-16
+  title: "Observation log stored columnar (ClickHouse or Parquet) partitioned by (game_id, build_id) with LowCardinality enums for step, action, friction_signal, sentiment, so count/group-by over 500 players x ~1.2k observations finishes under 200 ms"
+  level: L4
+  cell: {part: store, representation: timestamped-observation-log, granularity: utterance, query-path: sql-over-closed-fields, latency-tier: under-2s, build-or-buy: open-source-component, mechanism-type: precompute-more}
+  object: "memo.md point 1: 'closed enum fields and short open fields'"
+  situation: "The memo's observation log lands in a row store and every closed-field group-by scans all columns"
+  consequence: "600k rows x ~12 columns in a row store takes 1-2 s per group-by; columnar with enum dictionaries reads only the 2-3 columns needed, ~50-150 ms; the memo's 'instant' claim holds only with this layout"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "memo.md: 'closed-field questions become aggregate queries over all players (instant)'"
+  proposed: "Columns: session_id, player_id, video_idx, ts_session_ms, step_id (enum), action (enum), friction_signal (enum), sentiment (enum), utterance_text (string), evidence_ref, extractor_version; ORDER BY (game_id, build_id, step_id, ts)"
+  shallow: false
+  mechanism: "Store: physical layout of the memo's observation log"
+  example: "'how many friction signals per step on build 1.4' -> GROUP BY step_id, friction_signal over 600k rows in 90 ms"
+  cost: S
+  depends_on: "nothing beyond the memo's log"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Same latency as the fixed table for counts, over every observation instead of only the pre-asked answers"
+
+- id: latency-17
+  title: "Pre-execution cost and time estimate in the planner: before any plan that touches the minutes tier, the chat shows 'about 4 min and ~1.2M tokens; run now / answer from a 50-player sample / schedule for tonight'"
+  level: L4
+  cell: {part: chatbot-ui, mechanism-type: narrow-or-clarify-the-question, uncertainty-policy: ask-clarifying-question, query-path: lazy-backfill-extraction, latency-tier: minutes, user-segment: studio-analyst, delivery-surface: chatbot}
+  object: "memo.md point 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "An analyst asks a novel question at 16:55 and does not know whether to wait"
+  consequence: "The analyst picks 'sample' 70% of the time in comparable products, so most novel questions never trigger a full pass during working hours; the planner's estimate error is itself tracked (estimate vs actual tokens, target within 30%)"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast'"
+  proposed: "Estimator inputs: sessions in scope, mean session-node tokens, model price, parallelism; three buttons; the choice is logged with the question for latency-18"
+  shallow: false
+  mechanism: "UI plus planner: a plan-cost preview step inserted between planning and execution for plans above the 2 s tier"
+  example: "'how many players tried to skip the cutscene' -> 'This needs a new extraction over 500 sessions: ~3 min, ~750k tokens. [Run now] [Sample 50 now] [Tonight]'"
+  cost: XS
+  depends_on: "latency-5 and latency-8 as the sample and schedule targets"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table silently answers 'not available'; this makes the cost of an unknown question explicit and lets the asker trade time for completeness"
+
+- id: latency-18
+  title: "Nightly promotion from the slow/failed query log: any question that hit lazy backfill, exceeded 30 s, or hit the tool cap yesterday is compiled into a materialised field or cube column tonight"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, question-origin: failed-query-log, extraction-trigger: scheduled-batch, latency-tier: overnight, mechanism-type: precompute-more, moment-in-journey: steady-state-weekly, query-path: precomputed-aggregate}
+  object: "memo.md point 2: 'so the question set grows from real use'"
+  situation: "The query log shows 'time between first death and quit' asked 4 times this week, each taking 25-40 s via retrieval"
+  consequence: "After the nightly promotion it is a cube column; the 5th ask returns in 60 ms; p95 for the studio drops week over week as the promoted set grows; the promotion log is also the input to memo point 3's coverage test"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'the question set grows from real use'"
+  proposed: "query_log(question, plan_type, latency_ms, tokens, cap_hit, backfill_triggered); nightly job selects plan_type in (retrieval, backfill) with count >= 2 or latency > 30 s and generates a field spec via the ontology's answer-type rules; human review optional for the first month"
+  shallow: false
+  mechanism: "Feedback loop: query log -> field spec -> batch extraction (latency-8) -> cube column"
+  example: "'time from first death to quit' asked 4x -> nightly spec first_death_to_quit_seconds -> cube column -> Friday ask answered in 60 ms with n=500"
+  cost: M
+  depends_on: "query log with plan types; latency-8 batch queue"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table's question list is edited by hand; this one is edited by last week's latency"
+
+- id: latency-19
+  title: "In-memory HNSW index per game over observation rows with payload filters (player, step, build) and a hard k=150, so retrieval-then-LLM reads at most ~20k tokens and completes in under 2 s"
+  level: L4
+  cell: {part: query-path, query-path: retrieval-then-llm, representation: transcript-chunks-with-embeddings, latency-tier: under-2s, granularity: utterance, build-or-buy: open-source-component, mechanism-type: defer-to-query-time}
+  object: "memo.md point 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "'what do players say when the jump prompt disappears' against 600k observation rows"
+  consequence: "Filtered ANN (step_id=3, build=1.4) returns 150 rows in ~40 ms; LLM reads 150 x ~120 tokens = 18k tokens in ~1.5 s; without the cap a broad query returns 3k rows and a 400k-token read"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "memo.md: 'the model reads only those'"
+  proposed: "Index per game kept warm; payload filters pushed into the index; k=150 with per-player cap 3 so one chatty player cannot fill the window; rows beyond k summarised as a count"
+  shallow: false
+  mechanism: "Query path: bounded retrieval with filter pushdown and per-player caps"
+  example: "'what do players say when the jump prompt disappears' -> 150 rows from 97 players -> 'Prompt timing confusion in 61 quotes, e.g. 02:13 ... (shown 150 of 412 matching rows; 97 of 500 players)'"
+  cost: M
+  depends_on: "observation log with embeddings per row"
+  part: query
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "Answers what-said questions the fixed table has no column for, inside the latency budget the fixed table set"
+
+- id: latency-20
+  title: "Context-token ceiling of 30k on every query-time LLM read; when a filter matches more rows, the planner switches to group-by over closed fields plus a 20-row stratified sample of quotes, and says so"
+  level: L4
+  cell: {part: query-path, query-path: retrieval-then-llm, mechanism-type: narrow-or-clarify-the-question, latency-tier: under-2s, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: answer-with-ci-and-n, question-type: what-said}
+  object: "memo.md point 2: 'the model reads only those'"
+  situation: "'what did players say during the tutorial' matches 180k observation rows"
+  consequence: "Without a ceiling the call either fails or costs ~20M tokens; with it the answer is 'sentiment by step (counts) + 20 sampled quotes stratified by step and sentiment; based on 20 of 180,412 rows' in 1.9 s"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md: 'too slow and too much data'"
+  proposed: "Planner rule: if estimated_tokens(rows) > 30k then plan = closed-field group-by + stratified sample(20) + coverage statement; the asker gets a 'narrow to a step' suggestion"
+  shallow: false
+  mechanism: "Query path guard that rewrites over-broad retrieval plans into aggregate-plus-sample plans"
+  example: "'what did players say during the tutorial' -> 'Negative sentiment peaks at step 3 (31% of 42k utterances); 20 sampled quotes follow; narrow to a step for full coverage'"
+  cost: S
+  depends_on: "latency-16 columnar log for the group-by"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Keeps broad open questions inside the fixed table's latency while being explicit about coverage instead of silently truncating"
+
+- id: latency-21
+  title: "Model-upgrade re-extraction limited to sessions touched by a query in the last 90 days plus the golden set; all other history keeps the old extractor_version and is re-extracted lazily on first touch"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: model-upgrade-reextract, extraction-trigger: on-model-upgrade, mechanism-type: reuse-or-cache-prior-work, evidence-form: extraction-provenance-model-and-schema-version, latency-tier: overnight, cost-governance: true}
+  object: "memo.md point 3: 'accuracy against hand-labelled sessions'"
+  situation: "A new ingestion model lands; the archive holds 40,000 sessions across 30 games; a full re-extraction is ~40,000 x 60k tokens = 2.4B tokens"
+  consequence: "Only ~6,000 sessions (queried in 90 days) plus 100 golden sessions per game are re-run (~0.4B tokens, one weekend); every answer shows extractor_version and a mixed-version answer shows 'n=500: 420 v3, 80 v2'"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'accuracy against hand-labelled sessions'"
+  proposed: "Re-extraction policy table (trigger, scope_rule, max_tokens); scope_rule = touched_in_days(90) UNION golden; the answer formatter aggregates extractor_version counts; studios can buy a full re-run per game"
+  shallow: false
+  mechanism: "Schema evolution: version-aware fields with a usage-scoped re-extraction job and provenance in every answer"
+  example: "After the upgrade, 'step-3 exit rate' on an old title shows '38.1% (n=500; 500 sessions extracted with v2; re-extraction with v3 available on request)'"
+  cost: M
+  depends_on: "extractor_version column on every field (memo's evidence requirement) and a query log"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table is silently overwritten or never upgraded; this makes upgrades affordable and visible per answer"
+
+- id: latency-22
+  title: "Weekly scheduled digest that precomputes and pushes the 20 most-asked question-bank answers per game with week-over-week deltas, so the most common questions cost zero query-time inference"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: scheduled-digest, mechanism-type: push-instead-of-pull, latency-tier: push-no-query, query-path: precomputed-aggregate, moment-in-journey: steady-state-weekly, user-segment: producer-exec}
+  object: "spec.md stage 4: 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "The query log shows the same 20 questions make up 55% of weekly asks"
+  consequence: "Those 20 are computed once per week per game from the cube (no LLM), delivered Monday 08:00; chatbot volume drops by roughly half; the digest links each number to its evidence clips"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md: 'so that a question over, say, 500 players is fast'"
+  proposed: "digest job: top-20 by 4-week hit count from query_log, computed from funnel_cube and bank, rendered with delta vs prior week and n; delivery by email and Slack"
+  shallow: false
+  mechanism: "Delivery surface: pull questions converted into a push report generated from precomputed aggregates"
+  example: "Monday digest: 'Step-3 exit rate 35.9% (-1.7 pts vs last week, n=560); median tutorial time 11m20s; top new friction: cutscene skip attempts 26%'"
+  cost: S
+  depends_on: "latency-1 cube and a query log"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table still needs a chatbot turn per question; the digest removes the turn for the half of questions that repeat weekly"
+
+- id: latency-23
+  title: "Per-studio cost and latency SLO dashboard: cost per answered question, cache hit rate, backfill tokens, and p95 per plan type against targets (closed-field <= 2 s, retrieval <= 30 s, backfill async)"
+  level: L4
+  cell: {part: cost-governance, part2: evaluation, user-segment: jev-internal-ops, delivery-surface: dashboard-standard-report, latency-tier: under-2s, mechanism-type: human-in-the-loop, moment-in-journey: renewal-review, evidence-form: chart}
+  object: "spec.md constraints: 'Ingestion time and cost are not a concern. Answering a studio's question must be fast.'"
+  situation: "No numbers exist for 'fast'; spec.md lists 'latency and cost limits per query' as unspecified"
+  consequence: "Each plan type gets a measured p50/p95 and token cost; a studio whose backfill spend exceeds 3x its subscription is flagged for the renewal review; the cache hit rate (target >= 40% in steady state) is a leading indicator of the question bank's fit"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md Unspecified: 'latency and cost limits per query'"
+  proposed: "Metrics from query_log: p50/p95 latency by plan_type, tokens by plan_type, cache_hit_rate, backfill_tokens_per_studio_month; targets as above; weekly review by JEV ops"
+  shallow: false
+  mechanism: "Evaluation and cost governance: instrument every answer with plan type, latency and tokens; report per studio"
+  example: "Studio X, week 42: 1,240 questions; cache hit 46%; p95 closed-field 0.9 s; p95 retrieval 21 s; backfill 18M tokens (within budget); 3 tool-cap hits"
+  cost: S
+  depends_on: "query log with plan types"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's economics are flat and unmeasured; the new paths have variable cost and need the measurement to stay fast"
+
+- id: latency-24
+  title: "REFUSED under per-studio isolation: cross-studio shared semantic answer cache; accepted instead is a shared plan-template cache (question -> SQL/retrieval template with no data) keyed by genre"
+  level: L4
+  cell: {part: tenancy-access-control, tenancy-and-deployment: logically-isolated-per-studio, mechanism-type: transfer-across-games, query-path: semantic-cache-similar-question, reuse-scope-of-extraction: genre-shared, latency-tier: under-2s, question-origin: genre-template-library}
+  object: "spec.md stage 4: 'A chatbot for the gaming studio'"
+  situation: "Two studios in the same genre ask 'where do players drop in the tutorial'; a naive shared cache would return studio A's numbers to studio B"
+  consequence: "Low willingness for shared answers: one cross-tenant hit is a contract-ending leak. Shared plan templates carry no data: studio B's question matches the template 'exit rate by step' and runs against B's cube, saving the ~1 s planner LLM call while keeping tenant data separate"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios'"
+  proposed: "plan_template(genre, q_embedding, plan_ast, params_schema); lookup across tenants; execution always bound to the asking studio's game_id; answer cache (latency-2) partitioned by studio_id with no cross-partition reads"
+  shallow: false
+  mechanism: "Tenancy: split caching into a shareable plan layer and a tenant-private answer layer"
+  example: "Studio B's 'tutorial drop-off by step' -> shared template hit (0.95) -> bound to B's cube -> 140 ms, no planner call, no A data touched"
+  cost: S
+  depends_on: "latency-2 answer cache and a plan AST that is data-free"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no cross-game reuse; this transfers the expensive planning step across tenants without transferring data"
+
+- id: latency-25
+  title: "Plan cache separate from answer cache: question -> compiled plan AST reused even after data changes, so a re-ask after ingestion skips the planner LLM call and only re-executes the SQL"
+  level: L4
+  cell: {part: query-path, query-path: cached-prior-answer, mechanism-type: reuse-or-cache-prior-work, latency-tier: under-2s, moment-in-journey: new-build-version, representation: olap-cube-materialized-views, user-segment: studio-analyst}
+  object: "memo.md point 2: 'The chatbot runs a query planner'"
+  situation: "After build 1.5 lands, the answer cache for 'step-3 exit rate' is stale (latency-3) but the plan is unchanged"
+  consequence: "Planner call (~1-2 s, ~3k tokens) is skipped; cube query runs in 50 ms; the re-ask after ingestion costs 0.1 s instead of 2 s, which is most of the questions on new-build mornings"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'closed-field questions become aggregate queries'"
+  proposed: "plan_cache(studio_id, game_id, q_embedding, plan_ast, params, schema_version); invalidated only on schema_version change; answer cache sits in front with the watermark rule"
+  shallow: false
+  mechanism: "Query path: two caches, answers keyed by data watermark and plans keyed by schema version"
+  example: "Tuesday after build 1.5: 'step-3 exit rate' -> answer cache stale -> plan cache hit -> cube -> 35.9% in 110 ms"
+  cost: S
+  depends_on: "latency-2 and a plan AST representation"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's chatbot still pays a planner call per question; this pays it once per distinct question per schema version"
+
+- id: latency-26
+  title: "Universal time-series signals per session computed at ingestion (speech rate, silence runs, pitch/affect score, on-screen step id) as fixed-width 1-second arrays, so pace/affect/silence questions are array operations with no model call"
+  level: L4
+  cell: {part: ingestion-extraction, representation: time-series-signals-affect-pace-silence, modality: silence-or-absence-of-speech, reuse-scope-of-extraction: universal-primitives, extraction-trigger: at-ingestion, query-path: sql-over-closed-fields, latency-tier: under-2s, question-type: how-felt}
+  object: "spec.md stage 2: 'Each video is converted to a transcript'"
+  situation: "'did players go quiet before quitting the tutorial' has no field and would otherwise be a backfill"
+  consequence: "Per session a 7,200-element array per signal (2 h at 1 Hz, ~30 KB each); the question becomes 'mean silence run length in the 120 s before exit vs session mean' over 500 arrays in ~200 ms; works for silent players where speech-based fields are empty"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'The transcript alone is not enough'"
+  proposed: "signals(session_id, signal_name, t0, hz, values float16[]) with signal_name in {speech_rate_wpm, silence, affect_valence, step_id_on_screen, input_rate}; computed by cheap models (VAD, small affect classifier, screen-state classifier) at ingestion"
+  shallow: false
+  mechanism: "Ingestion computes genre-independent numeric signals once; query path runs array math instead of extraction"
+  example: "'did players go quiet before quitting' -> leavers at step 3: 71 s mean silence in the last 2 min vs 18 s session mean (n=188); retained players: 22 s vs 19 s (n=312); answered in 240 ms"
+  cost: M
+  depends_on: "session stitching for a continuous time base across videos"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "A whole class of pace/affect/silence questions becomes answerable at table speed without any question having been written in advance"
+
+- id: latency-27
+  title: "Frame-cost budget: a cheap screen-state classifier at 1 frame per 2 s, and vision-LLM calls only at detected scene changes (~1 per 20 s), keeping frame ingestion under ~360 VLM calls per two-hour session"
+  level: L4
+  cell: {part: frame-pipeline, modality: screen-state-classifier, extraction-trigger: at-ingestion, mechanism-type: precompute-more, granularity: frame, build-or-buy: build-in-house, cost-governance: true}
+  object: "memo.md point 1: 'Video frames add screen state and on-screen text, because speech alone cannot answer \"where did they click\"'"
+  situation: "Sending every frame at 1 fps of a two-hour session to a vision LLM is 7,200 image calls per session"
+  consequence: "3,600 classifier inferences (~ms each, CPU) plus ~360 VLM calls per session instead of 7,200 VLM calls: a 20x cut with step_on_screen still at 2 s resolution; menu/UI reads happen only when the screen state changes"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'speech alone cannot answer where did they click'"
+  proposed: "Classifier classes per game (tutorial step screens, menu, loading, gameplay, death screen) trained from 200 labelled frames at onboarding; scene change = class change or pixel-diff > 0.3; VLM prompt extracts on-screen text and UI element under cursor"
+  shallow: false
+  mechanism: "Frame pipeline: two-stage sampling where the cheap stage decides when the expensive stage runs"
+  example: "Step-3 'where did they click before quitting' -> classifier marks step-3 screen 04:10-09:40; 17 scene changes -> 17 VLM reads -> 'cursor on the settings icon in 9 of 17 reads'; fields filled at ingestion"
+  cost: M
+  depends_on: "200 labelled frames per game at onboarding"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Adds the visual fields the fixed table lacks at a bounded ingestion cost rather than at vision-per-frame cost"
+
+- id: latency-28
+  title: "Pre-cut 15 s evidence clips at ingestion for every friction and sentiment observation, URL stored on the observation row, so 'show me 5 clips of players failing step 3' is a row lookup with no transcode at query time"
+  level: L4
+  cell: {part: ingestion-extraction, query-path: clip-lookup, evidence-form: clip-montage-n-examples, latency-tier: under-2s, mechanism-type: precompute-more, delivery-surface: clip-reel, user-segment: game-designer}
+  object: "memo.md point 1: 'quote with timestamp as evidence'"
+  situation: "A designer asks for 5 clips of the step-3 jump failure; seeking into 15-minute source videos and cutting on demand takes 3-8 s per clip"
+  consequence: "Clips are cut once at ingestion (~1,200 clips per session, ~2 MB each at 480p, ~2.4 GB per session; retention 90 days hot then cold) and the query returns 5 URLs in 30 ms; a montage of 5 plays immediately"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "observation.clip_url nullable; cut for friction_signal != none and sentiment in {negative, confused}; window = observation ts -10 s / +5 s; a montage endpoint concatenates up to 10 clips server-side with a 2 s cap"
+  shallow: false
+  mechanism: "Ingestion pre-materialises evidence media; query path looks up URLs"
+  example: "'show me 5 clips of players failing the step-3 jump' -> SELECT clip_url WHERE step_id=3 AND friction_signal='repeated_failed_input' LIMIT 5 -> montage in 1.1 s"
+  cost: M
+  depends_on: "observation log with timestamps aligned to the source video (session stitching)"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no clips at all; this gives clip evidence at table latency"
+
+- id: latency-29
+  title: "Nightly automatic contrast table: for each closed enum field, churned-vs-retained distribution with chi-square and effect size, top 20 differing attributes stored per game/build, so 'why do players churn' is answered from a table in under 2 s"
+  level: L4
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, mechanism-type: auto-discover-without-question, question-type: who-are-the-churners-segment-discovery, extraction-trigger: scheduled-batch, latency-tier: under-2s, evidence-form: contrast-vs-baseline, scope: cohort}
+  object: "spec.md stage 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "'what is different about players who quit in the tutorial' arrives with no field for the answer"
+  consequence: "Nightly job over ~40 enum fields x 500 players computes the diff once (~seconds of SQL); the chat reads 20 rows: 'leavers: 3.1x more repeated_failed_input at step 3; 2.4x more menu_confusion; 1.9x more silence > 60 s'; no LLM over players at query time"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it'"
+  proposed: "contrast(game_id, build_id, outcome_def, field, value, rate_churn, rate_retain, ratio, chi2_p, n_churn, n_retain, computed_at); outcome_def defaults to 'quit before tutorial end'; also computed for any saved cohort definition"
+  shallow: false
+  mechanism: "Scheduled batch computes contrasts; query path answers why/segment questions from the table and offers clips per attribute"
+  example: "'why do players churn in the tutorial' -> top 5 contrast rows with ratios and n, each with a 'show clips' button, in 150 ms"
+  cost: S
+  depends_on: "latency-15 player_step rows and closed enum fields"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table only answers questions someone wrote; the contrast table answers the question the studio did not know to ask, and does it at table speed"
+
+- id: latency-30
+  title: "REFUSED: continuous extraction during a live session (streaming inference per minute of play); no studio question needs sub-session freshness and it would cost streaming rates on every hour recorded"
+  level: L3
+  cell: {part: ingestion-extraction, extraction-trigger: continuous-during-live-session, latency-tier: push-no-query, mechanism-type: push-instead-of-pull, modality: speech-transcript, cost-governance: true}
+  object: "spec.md stage 1: 'A player's gameplay session is captured as video'"
+  situation: "A proposal to extract observations while the session is being recorded so the studio can watch a live friction feed"
+  consequence: "Low willingness. Batch ingestion after the session can use prompt caching (latency-7), batching (latency-8) and off-peak pricing; streaming forfeits all three and adds a live inference endpoint to run; none of the spec's named problems (small question set, lost visuals, long sessions) is helped by freshness"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (no freshness requirement is stated anywhere)"
+  proposed: "Keep ingestion post-session; if a live feed is ever sold, run only the cheap signals of latency-26 live and leave LLM extraction in batch"
+  shallow: false
+  mechanism: "Ingestion runs per minute of live play instead of per completed video"
+  example: "A live 'player stuck at step 3' alert during a playtest session would cost per-minute inference on all concurrent sessions; the same alert computed 20 minutes after the session ends costs batch rates"
+  cost: L
+  depends_on: "live capture infrastructure that does not exist in spec.md"
+  part: ingestion
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "Nothing for the stated problems; only freshness, which nobody asked for"
+
+- id: latency-31
+  title: "Cohort-size gate for backfill: a query-time-defined cohort under 30 players is answered by retrieval over just those players' rows, and only cohorts of 30 or more trigger a materialised field over all sessions"
+  level: L4
+  cell: {part: query-path, extraction-trigger: on-cohort-size-threshold, scope: query-time-defined-cohort, query-path: lazy-backfill-extraction, mechanism-type: narrow-or-clarify-the-question, latency-tier: under-30s, cost-governance: true}
+  object: "memo.md point 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "'did the 12 players who quit at step 5 ever open the map' asks a novel question about 12 players"
+  consequence: "Reading 12 session nodes (~18k tokens, 12 parallel calls, ~8 s) answers it; a full 500-session field (~750k tokens) would be 40x the cost for a question about 12 people; the gate also prevents the field table from filling with one-off columns"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'triggers a one-time batch extraction over all sessions'"
+  proposed: "Planner rule: cohort_size < 30 -> per-player read with coverage statement; >= 30 -> sampled answer (latency-5) + queued field (latency-8); threshold configurable per studio"
+  shallow: false
+  mechanism: "Query path chooses between scoped read and materialised field by cohort size"
+  example: "'did the 12 step-5 quitters open the map' -> 12 session nodes read -> '3 of 12 opened the map (confidence >= 0.8 for 11 of 12)' in 8 s; no new field"
+  cost: XS
+  depends_on: "latency-10 session nodes"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Answers small-cohort questions the table never could, without paying for a full-population field each time"
+
+- id: latency-32
+  title: "Stale-while-revalidate for cube and bank answers: serve the cached number with its ingested-as-of timestamp immediately, recompute in the background when new sessions since the watermark exceed 5% of the cohort"
+  level: L4
+  cell: {part: query-path, query-path: cached-prior-answer, mechanism-type: reuse-or-cache-prior-work, latency-tier: sub-200ms-cached, evidence-form: coverage-statement-n-of-m-players, moment-in-journey: first-cohort-ingested, uncertainty-policy: always-answer}
+  object: "memo.md point 2: 'aggregate queries over all players (instant)'"
+  situation: "Sessions arrive continuously during a playtest week; strict invalidation (latency-3) would make most cached answers miss during the day"
+  consequence: "Answers stay under 200 ms all day; the 'as of 480 of 500 players (ingested 14:05)' note tells the asker what is missing; background recompute runs when the delta crosses 5% (25 sessions) or at 30-minute intervals"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: '(instant)'"
+  proposed: "Cache entry gains (n_at_compute, sessions_since_watermark); serve rule: always serve if sessions_since < 5% of n, else serve and enqueue recompute; UI shows the as-of line on every cached answer"
+  shallow: false
+  mechanism: "Query path: cache serving policy with a freshness note in the answer"
+  example: "At 15:10, 'step-3 exit rate' -> '36.2% as of 480 of 500 players (14:05); updating' in 95 ms; at 15:11 the message updates to 35.9% (n=500)"
+  cost: XS
+  depends_on: "latency-3 watermarks"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no notion of 'as of'; this keeps cache speed during ingestion and states the denominator"
+
+- id: latency-33
+  title: "Nightly Parquet export of the cube, player_step rows and contrast table to the studio's warehouse, so heavy BI queries run on the studio's compute and never enter JEV's query budget"
+  level: L4
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, tenancy-and-deployment: federated-query-into-studio-warehouse, user-segment: studio-data-engineer, latency-tier: overnight, mechanism-type: push-instead-of-pull, schema-evolution: append-only-versioned-fields}
+  object: "spec.md stage 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "A studio data team runs 200 dashboard queries a day joining tutorial outcomes to their telemetry"
+  consequence: "Those 200 queries hit Snowflake, not the chatbot; JEV's query-time inference bill is unaffected; the export schema is append-only with versioned columns (new field = new column, never a rename) so the studio's dbt models do not break"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  proposed: "Nightly job writes partitioned Parquet (game_id, build_id, dt) for funnel_cube, player_step, contrast, observations (enum columns only) to a per-studio bucket or Snowflake share; a schema manifest with field versions is published alongside"
+  shallow: false
+  mechanism: "Export integration: precomputed tables leave JEV; the chatbot remains for open and clip questions"
+  example: "Studio joins player_step (step 3, outcome=quit) to its own purchase events in Snowflake to ask 'do step-3 quitters ever return'; JEV answers nothing at query time"
+  cost: S
+  depends_on: "latency-1, latency-15, latency-29 tables"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is only reachable via the chatbot; the export makes the precomputed layer joinable to telemetry at the studio's cost"
+
+- id: latency-34
+  title: "Per-step representative-quote index built at ingestion: top 10 quotes per (step, sentiment, friction_signal) chosen by centroid distance, stored as a small table so 'what do players say about step 3' needs no retrieval and no LLM"
+  level: L4
+  cell: {part: store, representation: per-step-summary, granularity: tutorial-step, query-path: precomputed-aggregate, question-type: what-said, latency-tier: sub-200ms-cached, mechanism-type: precompute-more, evidence-form: quote-with-timestamp}
+  object: "memo.md point 1: 'utterance, friction signal, sentiment, quote with timestamp as evidence'"
+  situation: "'what do players say about step 3' is the most common open question in the query log"
+  consequence: "Answer is 10 quotes per sentiment bucket with timestamps and clip refs from a 40-row read (~20 ms), with the count of all matching utterances as the denominator; retrieval-then-LLM (latency-19) is reserved for questions the index does not cover"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "step_quotes(game_id, build_id, step_id, sentiment, friction_signal, rank, utterance, ts, player_id, clip_url, n_total); refreshed incrementally; selection = 10 nearest to the embedding centroid of the bucket plus 2 farthest for diversity"
+  shallow: false
+  mechanism: "Store: an ingestion-time quote summary per step bucket; query path reads it before considering retrieval"
+  example: "'what do players say about step 3' -> 'Negative (412 utterances from 97 players), 10 representative: 02:13 \"wait what did it say\" ...; Confused (203): ...' in 25 ms"
+  cost: S
+  depends_on: "observation embeddings and latency-16 log"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Gives what-said answers with evidence at the table's latency; the table has only option-letter answers"
