@@ -1,0 +1,66 @@
+- "id": "cv-1"
+  "case": "The owner has already named the core defect: 'the transcript alone is not enough; what is on screen is largely\
+    \ lost' (spec.md), and the memo commits to frames adding 'screen state and on-screen text, because speech alone cannot\
+    \ answer where did they click'. This option is the cheapest concrete step that makes that commitment real: decode at 1\
+    \ fps, keep a frame only when its dHash distance to the last kept frame exceeds 10 or 10 s have passed, and write each\
+    \ kept frame as a row stamped with absolute session time t_ms = video_idx*900000 + offset. That turns 27,000 frames per\
+    \ 15-minute video into roughly 150-400 rows, which gives every later visual field (screen state, OCR, UI elements) a stable,\
+    \ sparse row set to attach to. With it, questions the studio cannot ask today become answerable as table scans: 'how long\
+    \ did players sit on the step-2 crafting screen' is dwell computed from consecutive keyframe timestamps over a ~200k-row\
+    \ table for 500 players, with no transcript involved and no model call at query time. It depends on nothing else, uses\
+    \ only ffmpeg and a hash, and spends cost at ingestion, where the spec says cost does not matter. Without it, every visual\
+    \ option on the list (screen-state classification, step state machines, OCR, the memo's 'where did they click') has no\
+    \ unit to hang on, and silent players, who are common in tutorials, stay invisible because the fixed table has zero visual\
+    \ columns. It should be built first in the quarter because nearly every visual and step-level option depends on it."
+- "id": "owner-16"
+  "case": "The spec says the targets 'are mostly detecting churn in the tutorial and just after it', but the studio's real\
+    \ question, 'why do they churn', is one it cannot phrase as a specific column query, because it does not know which attribute\
+    \ matters. This option answers that unknown question without anyone naming the attribute. A fixed job splits the first\
+    \ cohort by a churn flag taken from the game profile (for example, 'quit within 10 minutes after tutorial end'), computes\
+    \ the rate of every universal primitive and per-step column for churners and retainers, ranks the columns by difference,\
+    \ and returns a 10-row table with denominators, for example 'stalled >90s on Craft a torch: churners 58% (n=112) vs retainers\
+    \ 19% (n=388)'. It is pure aggregation over tables the store already holds, so it costs almost nothing to build and runs\
+    \ in well under a second. It turns the memo's query planner from reactive into proactive: the first report a studio receives\
+    \ names the discriminating attributes, so its follow-up questions hit closed fields that the planner answers instantly\
+    \ instead of falling to open-field retrieval or batch backfill. Without it, a large observation log is still read one\
+    \ guessed question at a time, and the studio's highest-value question is answered by trial and error. It should ship in\
+    \ the quarter as the default first deliverable for every new game."
+- "id": "designer-14"
+  "case": "A designer's most common opening question, 'what is different about players who quit in the tutorial?', comes with\
+    \ no hypothesis, and today the fixed table has churn as one column but no way to compare the other columns between quitters\
+    \ and completers (spec.md item 3: targets 'are mostly detecting churn in the tutorial and just after it'). This option\
+    \ adds a narrowly scoped, model-free query path: SQL over the per-step aggregate and observation counts ranks every per-step\
+    \ metric (duration, stalls, wrong actions, hints ignored, regressions) by the difference between quitters and completers\
+    \ and returns the top 5. The model only phrases those rows, so the answer arrives in milliseconds and cannot be hallucinated.\
+    \ For example: 'Quitters (n=140) vs completers (n=360): step 3 wrong_action opened_other_menu 61% vs 19%; step 5 fail_screen\
+    \ count 3.2 vs 1.1; step 2 duration no difference.' The null result for step 2 matters as much as the hits, because it\
+    \ stops the designer from redesigning the wrong step. It is the step-funnel counterpart to the cohort-level contrast (owner-16),\
+    \ and because it works per step, its output maps directly to a screen the designer can change. Without it, the designer\
+    \ guesses a step and asks one question at a time, which is exactly the slow, hypothesis-limited loop the memo's 'index\
+    \ once, query many' direction is meant to end."
+- "id": "clinical-16"
+  "case": "'Who churned and what were they doing?' is the question the whole product exists for (spec.md: targets 'are mostly\
+    \ detecting churn in the tutorial and just after it'), yet the per-video answers table forces the planner to reconstruct\
+    \ 'the last thing before leaving' across video boundaries for every player on every query. This option stores the terminal\
+    \ event once, the way clinical registries keep a death table: one churn_event row per player with churn_t_ms, a churn_type_concept\
+    \ from {quit_to_menu, idle_over_300s, rage_quit, uninstall_seen, recording_end_unexplained}, last_step_concept, last_ui_concept,\
+    \ an evidence_span, and a definition version. The most-asked question then becomes a single SELECT that returns, for example,\
+    \ 115 churners in under 100 ms, each with a playable span: 41 at tutorial step 2 (crew hiring), 38 who quit to menu within\
+    \ 20 s of a 'no crew available' dialog, and 12 rage quits preceded by 60 s of negative affect. The closed churn_type enum\
+    \ makes 'what kinds of churn' an instant aggregate under the memo's planner. The definition version lets a studio that\
+    \ redefines churn (300 s idle versus 600 s) recompute the table at ingestion without touching queries. Ingestion cost\
+    \ is trivial because the row is folded from the observation log the memo already plans. Without it, every churn question\
+    \ pays the cross-video reconstruction cost at query time, and two queries can disagree about who churned."
+- "id": "latency-15"
+  "case": "The memo's observation log ('step on screen, action, utterance, friction signal, sentiment, quote with timestamp')\
+    \ is the right raw layer, but the tutorial questions the spec says dominate become slow, error-prone windowed self-joins\
+    \ when asked against it. 'List players who spent over 5 minutes on step 3 and then quit' is a self-join over ~600k observation\
+    \ rows (about 1-3 s cold), and the model or planner has to get the window logic right every time. This option folds the\
+    \ log once per session at ingestion into one row per player per tutorial step: entered_ts, exited_ts, an outcome enum,\
+    \ retries and seconds_silent. The same question becomes 'WHERE step_id=3 AND seconds>300 AND outcome=quit' over about\
+    \ 5k rows, returning 27 of 500 players, each with an entered_ts and a clip reference, in about 12 ms. Every how-long,\
+    \ how-many and find-players-who question about the tutorial becomes a column expression rather than a hand-written question\
+    \ per metric, which is exactly what lets unknown studio questions be answered without new extraction. It is also the base\
+    \ table that the funnel contrast (designer-14), the churn contrast (owner-16) and the cube roll-up (latency-1) read from,\
+    \ so building it unlocks three other options. Without it, the planner's 'instant' tier holds only for single-row facts,\
+    \ and the step questions that matter most fall to slow joins or model reads."

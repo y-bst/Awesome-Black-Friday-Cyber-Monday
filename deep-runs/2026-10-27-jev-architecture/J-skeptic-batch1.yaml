@@ -1,0 +1,66 @@
+- "id": "tar-12"
+  "case": "Defer as a standalone option and fold it into one session-grain build item. memo.md already says the observation\
+    \ log is 'timestamped atomic observations across all videos of a session', so session as the unit of analysis is the memo's\
+    \ premise, not a new idea; tar-12 restates it in e-discovery vocabulary ('family-level responsiveness') and adds only\
+    \ the evaluation rule that recall and sampling are computed over sessions. That rule is real but is a few lines in the\
+    \ eval harness the memo's step 3 already requires (accuracy against hand-labelled sessions), and it is listed as a variant\
+    \ of planner-23, so scoring it separately counts the same insight several times. It also depends on a session_id that\
+    \ spec.md lists as unspecified ('how videos of one session are linked'), so nothing here can be built until that is confirmed,\
+    \ and if linking is unreliable the 'any hit marks the whole session' rule propagates false positives to every player in\
+    \ a mis-stitched session. The worked example (71 players versus 94 positive videos) is invented arithmetic, not evidence\
+    \ about JEV data; the cited spec quotes show per-video tables exist but not that anyone has been double-counting. Its\
+    \ effect also does not depend on tutorial-only questions, but a hit-anywhere rule is wrong for questions like 'did the\
+    \ player finish', where the last video decides rather than any video. Verdict: do not rank it as its own item; keep the\
+    \ eval-unit rule as an acceptance criterion on the stitching item."
+- "id": "obs-29"
+  "case": "Defer or fold into stitch-1, which is the cleaner and more complete version of the same thing. This option's contribution\
+    \ is arithmetic: session_t_ms = video_idx * 900000 + offset_ms, gap rows, and session_id as partition key. That formula\
+    \ assumes every non-final video is exactly 15 minutes, but spec.md says only that each video is 'capped at 15 minutes',\
+    \ so a recorder restart or a short segment breaks the offset and the gap logic then has to patch the error. Ordering 'from\
+    \ upload order or filename' is a guess about metadata the spec says is unspecified ('how videos of one session are linked'),\
+    \ so the real work is the unknown linkage problem, which this option treats as solved. The 5-second gap threshold and\
+    \ 'single contiguous key range' are store-specific details (they presuppose a key-ordered store such as a wide-column\
+    \ or clustered table) and add nothing at 500 sessions, where a plain indexed table answers 'timeline of player 0042' in\
+    \ milliseconds regardless of layout. It is already contested by stitch-30 and is a variant of stitch-1, so building it\
+    \ separately duplicates the manifest. The memo's observation log presupposes a session timeline already. Cost is low,\
+    \ so I would not reject it; a manifest row plus a session-relative timestamp column is a day of work and does not need\
+    \ its own contest slot. Fold into stitch-1 and use real per-video duration_ms rather than the 900000 constant."
+- "id": "planner-23"
+  "case": "Fold into the stitching and session-table work rather than treating it as a separate planner feature. The session-grain\
+    \ rule ('every aggregate groups by session_id, never by video_id') only has meaning once a session_id exists and is correct,\
+    \ which spec.md lists as unspecified, so this option depends on stitch-1 or obs-29 and adds a policy on top of them. Once\
+    \ the observation log in memo.md is keyed by session, the planner groups by session by construction; a rule written as\
+    \ a prompt instruction to the LLM planner is weak, because a model can still emit a per-video GROUP BY, so the real fix\
+    \ is a schema in which the video table is not queryable for counts, which is stat-7's mechanism, not this one's. The one\
+    \ distinct piece is the sessions table with complete bool, and 'how long' summing durations with gaps counted separately;\
+    \ that duration logic is shared with obs-29's gap rows. The worked numbers (median 1,140 s over 375 completers, 14 sessions\
+    \ with gaps) are illustrative, not measured, and the 8x dilution claim assumes uniform per-video answers that spec.md\
+    \ does not state. The 'complete bool' is also hard to define without game-specific tutorial_outcome semantics, which pushes\
+    \ the hard part into question generation. Defer as a standalone item and keep it as a requirement on the query planner\
+    \ design, tested by a small set of count questions with known session-level answers."
+- "id": "stitch-1"
+  "case": "The case against is mostly that this is the right idea but is not a design choice worth contesting. A manifest\
+    \ with session_id, segment_index, wall_clock_start, duration_ms and gap_before_ms is data plumbing that any competent\
+    \ build includes, and the memo's session-level observation log already presupposes it. The real risk is the field that\
+    \ matters most: stitch_confidence. spec.md says how videos of one session are linked is unspecified, so if capture does\
+    \ not give a session id the stitcher has to infer membership from filenames, timestamps or visual continuity, which is\
+    \ a research problem, not a manifest column, and an inferred wrong link silently merges two players. The 'tutorial_complete=false\
+    \ on the last segment' example also assumes the last video reliably carries the outcome, but a player who quits mid-tutorial\
+    \ and one whose final video was dropped or failed to upload look identical, so the quit count is biased by upload failures.\
+    \ Because three other options (obs-29, planner-23, stat-7) restate the same manifest or grain idea, ranking all of them\
+    \ double counts; if one survives it should be this one as the foundation. Verdict: accept as-is but as a prerequisite,\
+    \ not a differentiator; do not spend contest effort on it, and do not credit it for answering unknown questions, since\
+    \ it only makes counts correct, not the question set larger."
+- "id": "stat-7"
+  "case": "Fold into stitch-1 and the query planner; the distinct part is a policy, and the policy is partly unenforceable\
+    \ and partly wrong for some questions. 'Player is the unit of inference' is the same insight as tar-12 and planner-23\
+    \ (the file marks it a variant of planner-23), and it needs both a session_id and a player_id that spec.md lists as unspecified;\
+    \ a player with several sessions or a shared device breaks the 'sessions into players' step, and nothing in the spec says\
+    \ players return. The mechanism 'per-question reducer declared in the question schema' is the valuable part but it adds\
+    \ a cost: every question must declare how a player-level answer is reduced (any, last, majority, first), and for LLM-generated\
+    \ ontology questions that declaration is one more field the generator can get wrong, so errors move from counting to reducer\
+    \ choice. 'The chatbot is forbidden from querying the video table' is a prompt rule; a few seconds of query budget and\
+    \ a model that may still write a bad query make it a guideline, not a guarantee, unless the video table is simply not\
+    \ exposed. The 212-versus-88 example is made up, and the claim that churn rates are 'biased low' is only true if long\
+    \ sessions are also the retained ones, which the spec does not show. Defer as a separate item; keep the reducer-per-question\
+    \ field as a small addition to the question schema in memo.md step 3."

@@ -1,0 +1,709 @@
+- id: tar-12
+  title: 'Family-level responsiveness: a hit in any video of a session marks the whole session as a candidate, and coding, sampling and recall are all computed at session (player) granularity, never at
+    video granularity'
+  part: session-stitching
+  mechanism: 'Changes session-stitching and every evaluation computation: unit of coding, sampling and reporting is the session; videos are evidence locations within it'
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''The answers form a structured table per video.'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'Defer as a standalone option and fold it into one session-grain build item. memo.md already says the observation log is ''timestamped atomic observations across all videos of a session'', so
+    session as the unit of analysis is the memo''s premise, not a new idea; tar-12 restates it in e-discovery vocabulary (''family-level responsiveness'') and adds only the evaluation rule that recall and
+    sampling are computed over sessions. That rule is real but is a few lines in the eval harness the memo''s step 3 already requires (accuracy against hand-labelled sessions), and it is listed as a variant
+    of planner-23, so scoring it separately counts the same insight several times. It also depends on a session_id that spec.md lists as unspecified (''how videos of one session are linked''), so nothing
+    here can be built until that is confirmed, and if linking is unreliable the ''any hit marks the whole session'' rule propagates false positives to every player in a mis-stitched session. The worked
+    example (71 players versus 94 positive videos) is invented arithmetic, not evidence about JEV data; the cited spec quotes show per-video tables exist but not that anyone has been double-counting. Its
+    effect also does not depend on tutorial-only questions, but a hit-anywhere rule is wrong for questions like ''did the player finish'', where the last video decides rather than any video. Verdict: do
+    not rank it as its own item; keep the eval-unit rule as an acceptance criterion on the stitching item.'
+  case_b: 'spec.md says one session is many videos and that ''the answers form a structured table per video'', so today every ''how many players'' answer is really a count of 15-minute clips; the option''s
+    own example shows ''players who complained before quitting the tutorial'' returning 94 positive videos when only 71 players qualify, a one-third overstatement a studio would act on. Borrowing the e-discovery
+    family rule (a responsive attachment makes the whole family responsive), a hit in any video marks the session, so a complaint in video 4 and a quit in video 9 become one positive player instead of one
+    positive and eight negatives. That is what makes the cross-video tutorial-churn questions JEV is sold on answerable at all: ''did players who complained later quit'', ''what did quitters say before
+    quitting'', ''what share of players hit friction anywhere in onboarding''. It also makes the memo''s own quality gate meaningful: memo item 3 judges questions by ''accuracy against hand-labelled sessions'',
+    and that accuracy, plus any recall or elusion sample, is only valid if sampling and coding are done per session, otherwise long sessions (the engaged players) are oversampled and the recall denominator
+    shifts with the session-length distribution. The cost is a group-by on session_id at ingestion and nothing extra at query time, so answers stay sub-second (scored impact 4, confidence 5, cost 1, query_speed
+    5). Its one dependency, a session_id linking videos, is delivered by stitch-1 and obs-29 in the same quarter. Without it, every number the chatbot returns, and every backfilled field the memo''s planner
+    adds later, inherits the wrong unit.'
+- id: obs-29
+  title: 'Session stitching at ingestion: video_idx from upload order or filename, session_t_ms = video_idx * 900000 + offset_ms, gap_ms recorded between consecutive videos, session_id as the partition
+    key so a 12-video session is one contiguous key range'
+  part: ingestion
+  mechanism: Wall-clock from file metadata orders videos; gaps above 5 s are stored as gap rows (event_type='gap'); all duration math uses session_t_ms minus accumulated gaps
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''how videos of one session are linked'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'Defer or fold into stitch-1, which is the cleaner and more complete version of the same thing. This option''s contribution is arithmetic: session_t_ms = video_idx * 900000 + offset_ms, gap rows,
+    and session_id as partition key. That formula assumes every non-final video is exactly 15 minutes, but spec.md says only that each video is ''capped at 15 minutes'', so a recorder restart or a short
+    segment breaks the offset and the gap logic then has to patch the error. Ordering ''from upload order or filename'' is a guess about metadata the spec says is unspecified (''how videos of one session
+    are linked''), so the real work is the unknown linkage problem, which this option treats as solved. The 5-second gap threshold and ''single contiguous key range'' are store-specific details (they presuppose
+    a key-ordered store such as a wide-column or clustered table) and add nothing at 500 sessions, where a plain indexed table answers ''timeline of player 0042'' in milliseconds regardless of layout. It
+    is already contested by stitch-30 and is a variant of stitch-1, so building it separately duplicates the manifest. The memo''s observation log presupposes a session timeline already. Cost is low, so
+    I would not reject it; a manifest row plus a session-relative timestamp column is a day of work and does not need its own contest slot. Fold into stitch-1 and use real per-video duration_ms rather than
+    the 900000 constant.'
+  case_b: 'The memo''s first component is a ''session-level observation log'' of timestamped observations ''across all videos of a session'', but spec.md lists ''how videos of one session are linked'' as
+    unspecified, so nothing today defines how time runs across a session; this option is the concrete mechanism that makes the memo''s log exist. It orders videos by file wall-clock, assigns a monotonic
+    session_t_ms, stores any gap over 5 s as an explicit gap row, and partitions by session_id so a 12-video session is one contiguous key range. That makes the sequence and dwell questions at the heart
+    of tutorial churn answerable: ''how long did players spend on step 3'' returns one 6m10s span when step 3 straddles videos 2 and 3 instead of two unrelated partials, ''what happened in the two minutes
+    before the quit'' is a range scan, and ''timeline of player 0042'' is one ORDER BY over one partition in about 0.02 s. Storing gaps explicitly also keeps a recorder restart (gap_ms=120000 in the example)
+    from being read as two minutes of idle friction, which would otherwise poison every dwell-based friction signal. The one refinement to take into the build is the one stitch-30 raises: files are capped
+    at 15 minutes but can end early, so the offset should accumulate actual durations and wall-clock rather than assume video_idx*900000; the stored wall-clock and gap rows already make that a small change.
+    It has no dependencies, costs a metadata pass at ingestion and nothing at query time (cost 1, confidence 5, query_speed 5). Without it, the planner, the backfill and ''before quit'' retrieval are all
+    built on per-video timestamps that do not compose.'
+- id: planner-23
+  title: 'Session-grain rule in the executor: every aggregate groups by session_id, never by video_id, and ''how long'' plans sum durations across a session''s videos with inter-video gaps counted separately'
+  part: store
+  mechanism: Store and query path. A sessions table (session_id, player_id, video_count, total_ms, gap_ms, complete bool) is the join anchor for every plan
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''The answers form a structured table per video.'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'The memo''s planner turns closed-field questions into ''aggregate queries over all players (instant)'', but the only table spec.md has is per video, so unless grain is enforced the planner (or
+    the model writing its SQL) will group by video and silently return per-clip numbers. This option makes the rule mechanical in the executor: a sessions table (session_id, player_id, video_count, total_ms,
+    gap_ms, complete) is the join anchor of every plan, every aggregate groups by session_id, and ''how long'' plans sum durations across a session''s videos with inter-video gaps counted separately. ''How
+    many players quit?'' is the clearest case: over the per-video table an 8-video session is 8 rows with one quit flag, so engaged long-session players weigh 8x in the denominator and the churn rate studios
+    buy JEV for is understated. ''How long do players take to finish the tutorial?'' becomes a correct median of 1,140 s across 375 completers, measured from first step_on_screen=1 to tutorial_outcome=complete
+    across videos, with the 14 sessions that have a gap over 60 s listed separately instead of inflating the median. Because the rule lives in the executor rather than in prompt instructions, every unknown
+    question the planner compiles, including fields added later by the memo''s backfill, inherits correct grain without anyone having to remember it, which is what turns ''fast'' answers into correct ones.
+    The cost is one small table built at ingestion and one join over a few hundred rows at query time, well inside the few-second budget (cost 1, query_speed 5, confidence 5). Its dependency, session-to-video
+    linkage, is supplied by stitch-1 or obs-29 in the same quarter.'
+  case_b: Fold into the stitching and session-table work rather than treating it as a separate planner feature. The session-grain rule ('every aggregate groups by session_id, never by video_id') only has
+    meaning once a session_id exists and is correct, which spec.md lists as unspecified, so this option depends on stitch-1 or obs-29 and adds a policy on top of them. Once the observation log in memo.md
+    is keyed by session, the planner groups by session by construction; a rule written as a prompt instruction to the LLM planner is weak, because a model can still emit a per-video GROUP BY, so the real
+    fix is a schema in which the video table is not queryable for counts, which is stat-7's mechanism, not this one's. The one distinct piece is the sessions table with complete bool, and 'how long' summing
+    durations with gaps counted separately; that duration logic is shared with obs-29's gap rows. The worked numbers (median 1,140 s over 375 completers, 14 sessions with gaps) are illustrative, not measured,
+    and the 8x dilution claim assumes uniform per-video answers that spec.md does not state. The 'complete bool' is also hard to define without game-specific tutorial_outcome semantics, which pushes the
+    hard part into question generation. Defer as a standalone item and keep it as a requirement on the query planner design, tested by a small set of count questions with known session-level answers.
+- id: stitch-1
+  title: 'Session manifest table built at ingestion: one row per video with session_id, segment_index, wall_clock_start, duration_ms, gap_before_ms, source_file, stitch_confidence'
+  part: session-stitching
+  mechanism: 'Changes the store: a manifest keyed by session_id is written per upload batch; every downstream row (observation, answer) carries video_id and the manifest resolves video_id to session position;
+    11 rows for an 11-video session, each with duration_ms (900000 for a full segment) and gap_before_ms'
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''The answers form a structured table per video.''; ''how videos of one session are
+    linked'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'The case against is mostly that this is the right idea but is not a design choice worth contesting. A manifest with session_id, segment_index, wall_clock_start, duration_ms and gap_before_ms
+    is data plumbing that any competent build includes, and the memo''s session-level observation log already presupposes it. The real risk is the field that matters most: stitch_confidence. spec.md says
+    how videos of one session are linked is unspecified, so if capture does not give a session id the stitcher has to infer membership from filenames, timestamps or visual continuity, which is a research
+    problem, not a manifest column, and an inferred wrong link silently merges two players. The ''tutorial_complete=false on the last segment'' example also assumes the last video reliably carries the outcome,
+    but a player who quits mid-tutorial and one whose final video was dropped or failed to upload look identical, so the quit count is biased by upload failures. Because three other options (obs-29, planner-23,
+    stat-7) restate the same manifest or grain idea, ranking all of them double counts; if one survives it should be this one as the foundation. Verdict: accept as-is but as a prerequisite, not a differentiator;
+    do not spend contest effort on it, and do not credit it for answering unknown questions, since it only makes counts correct, not the question set larger.'
+  case_b: 'spec.md describes sessions of n hours split into 15-minute files and lists ''how videos of one session are linked'' as unspecified; in the option''s situation a 2h40m session arrives as 11 files
+    and nothing records which is first, so ''did the player finish the tutorial'' or ''how long was the session'' is either unanswerable or answered from whichever video the chatbot happens to read. The
+    manifest (one row per video: session_id, segment_index, wall_clock_start, duration_ms, gap_before_ms, source_file, stitch_confidence) is the smallest artifact that fixes this, and every downstream row
+    (observation, answer, backfilled field) carries video_id that resolves through it. With it, ''how many of the 500 players quit during the tutorial'' becomes: join answers to session_videos, take each
+    session''s last segment, count sessions with tutorial_complete=false, a sub-second query over 500 rows instead of a count of videos. stitch_confidence is what sets it apart: where order is inferred
+    from filenames or upload order rather than a recorder session id, low-confidence sessions can be flagged in the answer (''12 sessions had uncertain ordering'') rather than silently mis-sequencing a
+    quit. It depends on nothing, costs a metadata pass at ingestion and nothing at query time (cost 1, confidence 5, query_speed 5), and it is the prerequisite that tar-12, planner-23 and stat-7 name, so
+    building it first unblocks the whole session-grain cluster. Because the original videos remain available (A-frame assumption), it can be built retroactively over the existing corpus, so the current
+    per-video answers become session-correct without re-running extraction. Without it, the memo''s session-level observation log has no key to hang on.'
+- id: stat-7
+  title: 'Player is the unit of inference: stitch videos into sessions and sessions into players before any count, so n is players, never video rows'
+  part: ingestion
+  mechanism: Ingestion writes video rows with the stitching key; a materialised player view applies the per-question reducer declared in the question schema; the chatbot is forbidden from querying the video
+    table for counts
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''The answers form a structured table per video.''; ''A chatbot for the gaming studio
+    answers the studio''s questions from that table, so that a question over, say, 500 players is fast.'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'Fold into stitch-1 and the query planner; the distinct part is a policy, and the policy is partly unenforceable and partly wrong for some questions. ''Player is the unit of inference'' is the
+    same insight as tar-12 and planner-23 (the file marks it a variant of planner-23), and it needs both a session_id and a player_id that spec.md lists as unspecified; a player with several sessions or
+    a shared device breaks the ''sessions into players'' step, and nothing in the spec says players return. The mechanism ''per-question reducer declared in the question schema'' is the valuable part but
+    it adds a cost: every question must declare how a player-level answer is reduced (any, last, majority, first), and for LLM-generated ontology questions that declaration is one more field the generator
+    can get wrong, so errors move from counting to reducer choice. ''The chatbot is forbidden from querying the video table'' is a prompt rule; a few seconds of query budget and a model that may still write
+    a bad query make it a guideline, not a guarantee, unless the video table is simply not exposed. The 212-versus-88 example is made up, and the claim that churn rates are ''biased low'' is only true if
+    long sessions are also the retained ones, which the spec does not show. Defer as a separate item; keep the reducer-per-question field as a small addition to the question schema in memo.md step 3.'
+  case_b: 'spec.md promises that ''a question over, say, 500 players is fast'', but because the answers table is per video, n is really video rows; the option''s example shows ''players who called the tutorial
+    confusing'' returning 212 rows when the true answer is 88 of 403 players (21.8%), an error of more than 2x that a studio would carry into a design review. This option rolls videos into sessions and
+    sessions into players before any count, and has each question in the schema declare its reducer, so the materialised player view knows that ''said the tutorial was confusing'' is any-of across videos
+    while ''tutorial outcome'' is last-of, and the chatbot is forbidden from counting off the video table. Declared reducers matter most for the memo''s growth path: when a ''genuinely new question'' triggers
+    a one-time batch extraction and is ''cached as a new field'', the reducer is declared with it, so the new field is immediately countable per player with the right semantics instead of needing a second
+    fix. It removes the systematic bias the option names, where long-session players, who are the retainers, inflate both numerator and denominator and push churn rates low, which is exactly the metric
+    JEV''s tutorial targets measure. Going to player rather than stopping at session also prepares the store for players with several sessions (return visits, day-2 questions), which session grain alone
+    cannot express. The query is a lookup on a materialised view of a few hundred rows and the ingestion cost is a view refresh (cost 1, confidence 5, query_speed 5). Its dependency, session and player
+    ids in capture metadata, is covered for sessions by stitch-1 in the same quarter; where a player id is absent, the view can treat each session as one player, which is still correct for single-session
+    playtests.'
+- id: stitch-2
+  title: 'Every observation carries two clocks: (video_id, video_ms) for clip lookup and session_offset_ms = sum of prior segment durations plus gaps for duration arithmetic'
+  part: store
+  mechanism: 'Changes ingestion and store: the extractor writes video-local timestamps; a post-step adds session_offset_ms from the manifest (segment start offset plus video_ms); queries about duration
+    use session_offset_ms, queries that need a clip use video_id+video_ms'
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; memo.md: ''timestamped atomic observations across all videos of a session'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'Fold this into obs-29 and stitch-1; it should not be a separate build item. obs-29 already defines session_t_ms with gap_ms rows and an ORDER BY over one session_id partition, and stitch-1 already
+    stores duration_ms and gap_before_ms per segment, so ''session_offset_ms = sum of prior durations plus gaps'' is a derived column of that manifest, not a new design choice. The memo also already asks
+    for ''timestamped atomic observations across all videos of a session'', so the second clock is how that sentence gets implemented, not an alternative to it. The option also depends on stitch-1 and on
+    video-to-session linkage, which spec.md lists as unspecified (''how videos of one session are linked''). If capture metadata has no wall-clock or the recorder restarts, gaps are unknown and session_offset_ms
+    only looks precise. The harder problem in its own example is not the clock. It is whether the extractor working on video 3 knows that the screen at 00:00 is still tutorial step 3 (extract-3''s state
+    card, extract-28''s step chain), and without that the straddling step has no start in video 3 to subtract from. The ''4m20s including 20 players'' figure is illustrative, not measured. Verdict sought:
+    keep the column, but merge it into the stitching option; it does not justify its own slot in the top 25.'
+  case_b: 'JEV should build the two-clock timestamp in the next quarter because the spec states that ''a session can be n hours; each video is capped at 15 minutes, so one session is many videos'', and
+    the memo''s observation log promises ''timestamped atomic observations across all videos of a session'' without saying which clock those timestamps use. Video-local time cannot express any duration
+    that crosses a cut: in the option''s own example, tutorial step 3 starts at 13:50 in video 2 and ends at 02:10 in video 3, which yields a negative duration. Adding session_offset_ms (segment start offset
+    from the manifest plus video_ms) makes ''median time on tutorial step 3'' a one-line SQL percentile and returns 4m20s including the 20 players whose step 3 straddled a cut. Without it, any duration
+    question over 500 players is biased toward short steps that fit inside a single video, which is exactly the tutorial-churn question studios ask first (how long until they gave up, how long stuck on
+    step 3, time to first success). The cost is small: ingestion is one post-step that adds an integer per row from the manifest, and query time is unchanged and instant because it is plain arithmetic on
+    a stored column, so there is no latency risk. Keeping (video_id, video_ms) beside it preserves clip lookup, so evidence and clips still work. It is cheap, depends only on the manifest and stitch-1,
+    and unlocks every dwell, time-to-event and ordering question, so it should be built as a foundation before any planner work.'
+- id: qgen-1
+  title: Every generated question carries a typed answer contract (answer_type, aggregation, null option 'not-observable', evidence rule, unit) and the planner routes on answer_type, not on question text
+  part: question-generation
+  mechanism: question-generation emits a schema row per question, not a prompt string; the answers table gets a typed column per qid; the planner compiles studio questions to (answer_type, aggregation)
+    and refuses a route whose type does not match
+  evidence: 'memo.md item 3: "each with an answer type and an evidence requirement"'
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'This largely restates the memo, and the new part moves the hard problem rather than solving it. memo.md item 3 already says each generated question carries ''an answer type and an evidence requirement'',
+    and that is the evidence this option cites. The additions (aggregation, unit, a ''not-observable'' null) are fields in the same registry row, which the ontology generator has to produce anyway. ''Routes
+    on answer_type, not on question text'' still needs the planner to read the studio''s free text and decide its answer type. That is easy for ''how long on step 3'' but not for the questions that matter
+    for unknown asks (''where do players get confused'', ''what made them quit''), where duration, rate and quote are all plausible readings, so the misrouting it warns about comes back at classification
+    time. Its storage choice also conflicts with the memo: ''a typed column per qid'' in the answers table is the fixed per-video table with more columns. With ontology generation plus backfill adding fields
+    from real use, that means schema migrations per new question, whereas the memo''s observation log and planner-1''s (field, value) rows absorb new fields without them. stitch-7 is listed as its variant,
+    and planner-1''s evidence_form already carries the answer form. The best course is to fold the not-observable null and the unit into the memo''s registry and planner-1''s plan, not to fund a separate
+    component. This is a fold, not a reject: the idea is cheap and right, but it is not new.'
+  case_b: 'JEV should build typed answer contracts now because the memo already says each generated question comes ''with an answer type and an evidence requirement'' but names no mechanism that makes the
+    chatbot obey it, and the fixed table today stores per-video answer text with no type, so counts, durations and quotes are indistinguishable. The option makes question generation emit a schema row per
+    question (answer_type, aggregation, unit, evidence rule, and a ''not-observable'' null option) and gives the answers table a typed column per qid, so the planner routes on answer_type and refuses a
+    route whose type does not match. Concretely, ''how long do players spend on tutorial step 3'' matches dwell_time(step=3) with answer_type duration_s and aggregation p50 and returns ''p50 4m10s, n=487
+    of 500 observable, 13 not-observable (video cut before step 3)'', instead of answering with the enum rate ''stalled on step 3: 41%'' that the studio would read as a time. The consequence it prevents
+    is trust loss: one wrong-kind number and the studio stops asking, which defeats the whole point of fast answers over hundreds of players. The explicit not-observable option also fixes a hidden bias
+    in the fixed table, where unseen steps are silently counted as no. It depends only on a question registry keyed by qid, costs essentially nothing at ingestion (a few extra fields per question) and nothing
+    at query time, and every later option (planner, backfill, cached new fields) needs these contracts to compile against, so it is the cheapest high-impact correctness gain in the batch.'
+- id: stitch-7
+  title: Each generated question declares scope in {video, step, session, player} and, for scope above video, a reducer in {first, last, any, all, max, sum, latest-nonnull} applied over segment-level answers
+  part: question-generation
+  mechanism: 'Changes question-generation and query path: the planner rewrites a session-scope question as reducer(video answers) grouped by session_id; the reducer is part of the question''s version so
+    changing it creates a new field version'
+  evidence: 'spec.md item 1: "each video is capped at 15 minutes, so one session is many videos" and item 3: "The answers form a structured table per video."'
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'Defer or fold: this hardens the per-video answering model that the memo is replacing. Reducers over ''segment-level answers'' only matter if questions are still asked once per 15-minute video
+    and then combined, which is the spec''s current ''structured table per video''. Under the memo''s session-level observation log, ''did the player complete the tutorial'' is a query for any tutorial_complete
+    event in the session''s rows; under stitch-27, one roll-up call over the whole session writes session-scope fields directly. In both cases there are no conflicting per-video booleans to reduce. Its
+    own example shows the weakness: ''where did they quit = last(step_on_screen) over segments where tutorial_complete=false'' is order-sensitive and needs a session clock and quit detection, which are
+    stitch-2 and clinical-16, not a reducer. Putting the reducer into the question''s version means every reducer change forks a field version, adding version churn to a registry that backfill is already
+    growing. The option is listed as a variant of qgen-1 and depends on stitch-1, which is not built. At most, ''scope'' becomes one more column in qgen-1''s answer contract; a reducer algebra on top is
+    cost without return once observations are session-native.'
+  case_b: 'JEV should build declared scope and reducers in the next quarter because the spec says answers form ''a structured table per video'' while the unit studios care about is the player or session,
+    and nothing today defines how video answers roll up. The option makes every generated question declare scope in {video, step, session, player} and, above video, a reducer in {first, last, any, all,
+    max, sum, latest-nonnull}, versioned with the question so a reducer change creates a new field version. In the option''s example, ''did the player complete the tutorial'' reads no, yes, no across segments
+    1, 4 and 9 (free play, no tutorial visible); a naive per-video aggregate reports 33% completion for a player who completed it, while any() gives 312 of 500 completers and last(step_on_screen) where
+    tutorial_complete is false answers ''where did they quit'' correctly. Without a declared reducer the chatbot picks one at random or averages booleans, so the headline tutorial-churn number is wrong
+    in a way no studio can detect, and wrong numbers are what ends adoption. The cost is low: it adds two metadata fields per question at generation time and a deterministic rewrite in the planner, with
+    query time staying a grouped SQL aggregate. It is a variant of qgen-1 but carries the multi-video correctness that qgen-1''s answer type alone does not, and it directly addresses the owner''s named
+    problem of long multi-video sessions, so it should be built together with stitch-1 and qgen-1.'
+- id: planner-1
+  title: Planner emits a typed plan JSON {route, fields, filters, cohort, evidence_form} and the chatbot executes the plan, not the question
+  part: query
+  mechanism: 'Changes the query path for every asker. Plan shape: {route: sql|retrieval|backfill|clip, fields: [field_id@version], filters: [{field, op, value}], cohort: cohort_id|null, group_by: [step_id],
+    evidence_form: count-with-denominator|quote-with-timestamp|clip}. Executor runs SQL over the observation log (session_id, t_ms, field, value, confidence, video_index) or a vector/keyword retrieval;
+    the LLM sees only plan + results'
+  evidence: 'memo.md item 2: ''The chatbot runs a query planner'''
+  scores:
+    impact: 5.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'This is the memo''s query planner (memo.md item 2: ''The chatbot runs a query planner''), with a JSON schema added. It is an implementation detail of something already decided, not a separate
+    option to build or drop. The typed plan does not solve the part that decides correctness for unknown questions: mapping a studio''s words onto the right field@version, filters and denominator. An LLM
+    still makes that mapping, and a wrong field choice gives a confidently typed wrong answer. Typing makes the error inspectable, which is useful for audit, but it does not make the answer correct. The
+    stated harm (''the same question answered two ways on two days'') is fixed more cheaply by caching the resolved plan per normalised question. The option depends on an observation log with closed fields
+    keyed by session_id, which does not exist yet, and its cohort and backfill routes assume cohort tables and a backfill executor that are other options. The retrieval route cannot fill ''count-with-denominator''
+    without the session-level coding in tar-12 and stat-7, so the schema promises evidence forms that the routes cannot yet deliver. It costs M, against S for most peers. The ''137 of 512 in 0.4 s'' figure
+    is illustrative. I cannot make a strong case to reject the idea: some intermediate plan object is needed. The case is that it should be folded into building the memo''s planner, not ranked as a distinct
+    top-10 choice.'
+  case_b: 'JEV should build the typed plan object now because it is the missing intermediate between a studio''s question and an answer: the memo says ''the chatbot runs a query planner'' and names three
+    routes, but today the chatbot goes straight from question text to answer, so the route, fields and denominator are invisible and the same question can be answered two ways on two days. The plan is a
+    small JSON, {route: sql|retrieval|backfill|clip, fields: [field_id@version], filters, cohort, group_by, evidence_form}, which the executor runs against the observation log while the LLM sees only the
+    plan and the results. For ''how many players quit during the tutorial'' the plan resolves to route sql over tutorial_outcome@v3 with a count-with-denominator evidence form and returns ''137 of 512 sessions
+    (26.8%)'' in 0.4s, and the answer can print the plan as its own audit trail. This is what makes unknown studio questions answerable correctly: the planner can combine fields, filters and cohorts that
+    no fixed question anticipated, and an unresolvable plan becomes an explicit backfill or clip request instead of a guess. Its fields carry versions, so a re-run after a question change is distinguishable
+    rather than silently different. It affects every asker and every question, so it is the highest-impact item in this batch (impact 5), with only an LLM call of a few hundred tokens added at query time
+    and no ingestion cost. It depends on the memo''s observation log with closed fields keyed by session_id, which the memo already commits to, so the dependency is a plan item and not a new risk.'
+- id: latency-16
+  title: Observation log stored columnar (ClickHouse or Parquet) partitioned by (game_id, build_id) with LowCardinality enums for step, action, friction_signal, sentiment, so count/group-by over 500 players
+    x ~1.2k observations finishes under 200 ms
+  part: store
+  mechanism: 'Store: physical layout of the memo''s observation log'
+  evidence: 'memo.md: ''with closed enum fields and short open fields''; ''closed-field questions become aggregate queries over all players (instant)'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'JEV should build the columnar layout now because the memo''s central promise, ''closed-field questions become aggregate queries over all players (instant)'', is only true with the right physical
+    layout, and the memo does not specify one. The option''s sizing is concrete: roughly 600k observation rows (500 players x ~1.2k observations) by about 12 columns costs 1 to 2 seconds per group-by in
+    a row store, but in columnar storage with LowCardinality enum dictionaries for step, action, friction_signal and sentiment only the 2 or 3 needed columns are read, giving roughly 50 to 150 ms. A question
+    like ''how many friction signals per step on build 1.4'' then returns in about 90 ms, and partitioning by (game_id, build_id) keeps one studio''s or one build''s query from scanning another''s data.
+    That speed is what lets the chatbot run several plans per user question, retry a route, or compute a cohort comparison inside the few-seconds budget, which is the owner''s stated constraint (ingestion
+    cost is fine, query speed is not negotiable). It adds nothing to ingestion beyond a write path to Parquet or ClickHouse and nothing to query cost, and it depends on nothing beyond the memo''s log. Without
+    it the memo''s architecture works functionally but misses its own latency claim as data grows past one studio, and the fix gets more expensive once rows and clients exist, so it is cheap to do first
+    and costly to retrofit.'
+  case_b: 'Defer: this is premature infrastructure for a latency problem the stated scale does not have. 500 players x ~1.2k observations is about 600k rows. A plain Postgres table with indexes on (game_id,
+    step_id) does a two-column GROUP BY over 600k narrow rows in the low hundreds of milliseconds, and DuckDB over a single Parquet file does it in tens of milliseconds with no server. The ''1-2 s in a
+    row store'' premise is overstated, and partitioning by (game_id, build_id) does nothing at this size. The frame assumes ''a few seconds'' of query-time budget, and the planner''s own LLM call (planner-1)
+    takes 1-3 s, so 90 ms versus 300 ms of storage time does not show in the studio''s experience. Running ClickHouse adds ops cost for a team whose bottleneck is extraction quality. Fixed LowCardinality
+    enum columns also conflict with the memo''s growing question set: every backfilled field becomes a schema change, unless the log is stored as (field, value) rows as in planner-1, in which case the per-enum
+    column layout this option specifies does not exist. Most importantly, it makes no unknown question answerable that was not answerable before. It only speeds up closed fields that already exist, so it
+    does not serve the goal of answering correctly. Revisit when measured p95 latency on real query logs exceeds the budget or row counts grow about 100x; until then, store Parquet with DuckDB as the default
+    and move on.'
+- id: cv-1
+  title: Keyframe table from 1 fps sampling plus perceptual-hash change gate (dHash distance > 10 keeps a frame), replacing per-video transcript as the unit of visual ingestion
+  part: ingestion
+  mechanism: ffmpeg decodes at 1 fps; dHash computed per frame; frame kept if Hamming distance to last kept frame > 10 or 10 s elapsed; row written to keyframes table with absolute session time t_ms = video_idx*900000
+    + offset
+  evidence: 'spec.md: ''the transcript alone is not enough; what is on screen is largely lost'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 3.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'Defer as a standalone build and fold it into the observation-log work the memo already commits to. memo.md item 1 already says ''Video frames add screen state and on-screen text'', so a frame
+    sampler is plumbing inside that step, not a new option; the leaf adds only a threshold choice (dHash distance > 10, 10 s cap). The worked example does not stand on cv-1 alone: ''dwell is computed from
+    consecutive keyframe t_ms where screen_state=step-2'' needs a screen_state column, and a keyframe row has no screen_state until a vision model or OCR labels it, which is the expensive and error-prone
+    part that this option leaves out. The perceptual-hash gate is also tuned to cuts and UI swaps, and games break it both ways: a 3D scene with constant camera motion, particles or a skybox drifts past
+    distance 10 on nearly every frame and keeps most of the 900 frames per video, while a slow tutorial dialogue or a held loading screen changes too little and is cut to the 10 s cap, so friction signals
+    such as hovering, repeated failed clicks or short flashes of an error toast fall between samples at 1 fps. The 150-400 keyframes per video figure is asserted with no measurement, and one threshold will
+    not carry across studios whose art styles differ, which spec.md says ''each game differs'' for. Ingestion cost is explicitly ''not a concern'' in spec.md, so the saving from sparsity buys little; a
+    long-context multimodal model can take dense frames directly and decide what matters per game. The depends_on is ''nothing'' and its evidence is only the owner''s complaint about lost visual information,
+    so it proves a need, not this gate. Accept it as a sub-step of the frame pipeline, validate the gate against hand-labelled sessions before committing to the threshold, and do not schedule it as a separate
+    quarter item.'
+  case_b: 'The owner has already named the core defect: ''the transcript alone is not enough; what is on screen is largely lost'' (spec.md), and the memo commits to frames adding ''screen state and on-screen
+    text, because speech alone cannot answer where did they click''. This option is the cheapest concrete step that makes that commitment real: decode at 1 fps, keep a frame only when its dHash distance
+    to the last kept frame exceeds 10 or 10 s have passed, and write each kept frame as a row stamped with absolute session time t_ms = video_idx*900000 + offset. That turns 27,000 frames per 15-minute
+    video into roughly 150-400 rows, which gives every later visual field (screen state, OCR, UI elements) a stable, sparse row set to attach to. With it, questions the studio cannot ask today become answerable
+    as table scans: ''how long did players sit on the step-2 crafting screen'' is dwell computed from consecutive keyframe timestamps over a ~200k-row table for 500 players, with no transcript involved
+    and no model call at query time. It depends on nothing else, uses only ffmpeg and a hash, and spends cost at ingestion, where the spec says cost does not matter. Without it, every visual option on the
+    list (screen-state classification, step state machines, OCR, the memo''s ''where did they click'') has no unit to hang on, and silent players, who are common in tutorials, stay invisible because the
+    fixed table has zero visual columns. It should be built first in the quarter because nearly every visual and step-level option depends on it.'
+- id: owner-16
+  title: 'Automatic churn-vs-retain contrast on the first cohort: churner defined from the game profile (for example ''quit within 10 minutes after tutorial end''), then every universal primitive and per-step
+    column is ranked by difference between churners and retainers, output as a 10-row table'
+  part: query
+  mechanism: 'A fixed job over the per-video and per-step tables: split by churn flag, compute per-column rates, rank by difference, show top 10 with denominators'
+  evidence: 'spec.md item 3: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'Defer, and fold it with designer-14 into one churn-contrast job. Both are variants of obs-3 and compute the same thing: split players by churn flag, rank columns by difference, show the top 10
+    or top 5. Building two is waste; the only difference is whether the columns are ''universal primitives and per-step columns'' or per-step metrics only, which is a column-list choice rather than a design.
+    The job is only as good as its inputs: its depends_on lists owner-2 and owner-31 tables plus a churn definition in the profile, none of which exist, so it cannot start next quarter and is bounded by
+    their delivery. The deeper problem is statistical. Ranking dozens or hundreds of columns by churner-versus-retainer rate difference on a few hundred players is a multiple-comparisons exercise, and the
+    ''top 10 with denominators'' will be dominated by noise and by columns that are consequences of churn rather than causes: ''silence run >60s: 44% vs 12%'' is largely what leaving looks like, and anything
+    measured near the end of a recording separates quitters by construction because quitters'' recordings end earlier. Without effect-size intervals, correction, and a time-ordering guard, the report makes
+    confident, wrong ''why they churn'' claims, which breaks the requirement that answers be correct. Its evidence is the line ''The targets are mostly detecting churn in the tutorial and just after it''
+    from spec.md, which supports that churn matters, not that an automatic ranker is the right instrument. A studio that gets a 10-row table of correlations will ask ''is that real'' next, and the planner
+    in memo.md item 2 already handles that follow-up as a closed-field aggregate once the columns exist. The tables are the work; the contrast is a few lines of SQL on top and can wait until the tables
+    and a churn definition are validated.'
+  case_b: 'The spec says the targets ''are mostly detecting churn in the tutorial and just after it'', but the studio''s real question, ''why do they churn'', is one it cannot phrase as a specific column
+    query, because it does not know which attribute matters. This option answers that unknown question without anyone naming the attribute. A fixed job splits the first cohort by a churn flag taken from
+    the game profile (for example, ''quit within 10 minutes after tutorial end''), computes the rate of every universal primitive and per-step column for churners and retainers, ranks the columns by difference,
+    and returns a 10-row table with denominators, for example ''stalled >90s on Craft a torch: churners 58% (n=112) vs retainers 19% (n=388)''. It is pure aggregation over tables the store already holds,
+    so it costs almost nothing to build and runs in well under a second. It turns the memo''s query planner from reactive into proactive: the first report a studio receives names the discriminating attributes,
+    so its follow-up questions hit closed fields that the planner answers instantly instead of falling to open-field retrieval or batch backfill. Without it, a large observation log is still read one guessed
+    question at a time, and the studio''s highest-value question is answered by trial and error. It should ship in the quarter as the default first deliverable for every new game.'
+- id: designer-14
+  title: 'Automatic contrast on the step funnel: for tutorial quitters vs completers, rank every per-step metric (duration, stalls, wrong actions, hint ignored, regressions) by difference and show the top
+    5'
+  part: query-path
+  mechanism: SQL over the step aggregate and observation counts per player; no model call; the model only phrases the top 5 rows
+  evidence: 'spec.md item 3: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'Fold into owner-16 (or the reverse) and reject as a separate build. Both declare variants_of obs-3, both are a no-model SQL contrast between quitters and completers, and both quote the same line
+    from spec.md (''The targets are mostly detecting churn in the tutorial and just after it''). This version is the narrower one: only per-step metrics, top 5, so it is a strict subset of owner-16''s column
+    set. It also depends on designer-1, designer-2 and designer-7, three unbuilt tables, which means it is blocked on work that has not been scoped and cannot show value next quarter. The statistical objections
+    apply with full force: the example ''step 3 wrong_action opened_other_menu 61% vs 19%'' compares group rates with no interval, and ranking every per-step metric across every step multiplies the number
+    of comparisons, so on 500 players the top 5 will often include chance differences. Step-level contrast also has a built-in confound: quitters never reach later steps, so ''step 5 fail_screen count 3.2
+    vs 1.1'' compares populations with different exposure, and without conditioning on reaching the step the comparison is misleading, a survivorship problem the leaf does not mention. The claim that the
+    fixed table has ''no mechanism to compare the other columns between churners and the rest'' is not a real gap: comparing a column across a churn flag is a GROUP BY that the memo''s closed-field aggregate
+    path already performs for any question the designer can name, and the consequence says the designer ''guesses a step and asks one question at a time'', which an interface suggestion could address without
+    a new component. Keep one contrast routine, make it the owner-16 version, and spend the quarter on the tables both depend on.'
+  case_b: 'A designer''s most common opening question, ''what is different about players who quit in the tutorial?'', comes with no hypothesis, and today the fixed table has churn as one column but no way
+    to compare the other columns between quitters and completers (spec.md item 3: targets ''are mostly detecting churn in the tutorial and just after it''). This option adds a narrowly scoped, model-free
+    query path: SQL over the per-step aggregate and observation counts ranks every per-step metric (duration, stalls, wrong actions, hints ignored, regressions) by the difference between quitters and completers
+    and returns the top 5. The model only phrases those rows, so the answer arrives in milliseconds and cannot be hallucinated. For example: ''Quitters (n=140) vs completers (n=360): step 3 wrong_action
+    opened_other_menu 61% vs 19%; step 5 fail_screen count 3.2 vs 1.1; step 2 duration no difference.'' The null result for step 2 matters as much as the hits, because it stops the designer from redesigning
+    the wrong step. It is the step-funnel counterpart to the cohort-level contrast (owner-16), and because it works per step, its output maps directly to a screen the designer can change. Without it, the
+    designer guesses a step and asks one question at a time, which is exactly the slow, hypothesis-limited loop the memo''s ''index once, query many'' direction is meant to end.'
+- id: clinical-16
+  title: 'churn_event table, one row per player: churn_t_ms, churn_type_concept in {quit_to_menu, idle_over_300s, rage_quit, uninstall_seen, recording_end_unexplained}, last_step_concept, last_ui_concept,
+    evidence_span; all churn questions resolve to this table first'
+  part: store
+  mechanism: 'Store: the terminal event is a dedicated table, like a death table, with cause and context columns and a definition version'
+  evidence: 'spec.md: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'Fold into the step state-machine table (latency-15) and the churn-definition work, and do not build it as its own store next quarter. It is a variant of store-23 and overlaps latency-15 directly:
+    one row per player with last_step_concept and last_ui_concept is a view over the per-player step rows plus the final observation, and a separate churn_event table creates a second source of truth that
+    must be kept consistent with them. The decisive weakness is that its enum is not observable from what spec.md says is available. Classifying churn_type as quit_to_menu, rage_quit, idle_over_300s, uninstall_seen
+    or recording_end_unexplained requires reliably detecting a rage quit, an uninstall, or the difference between a player who stopped playing and one whose recording was cut, from video capped at 15 minutes
+    and a transcript the owner says is insufficient. ''Rage_quit'' and ''uninstall_seen'' are inference from tone and screen state that today''s models will label inconsistently, so the headline column
+    would be the least trustworthy one, and the example''s ''12 rage_quit with a negative affect era in the preceding 60 s'' reads as precision the pipeline does not have. It also depends on clinical-5,
+    an upstream option that is not built. The ''under 100 ms'' latency claim is not a differentiator: any indexed table over 500 players answers in milliseconds, and spec.md only requires answers ''fast'',
+    so a per-player last-event lookup does not need a dedicated store to meet that. Studio questions about churn will be about the definition (quit within 10 minutes of tutorial end, versus within the session,
+    versus not returning for a day), which is why the churn flag belongs in a versioned game profile that owner-16 and designer-14 share, not hard-coded in a table whose enum was chosen before any studio
+    was asked. Build the step table and a profile-driven churn flag; revisit a dedicated churn_event table if real questions show the view is too slow or too lossy.'
+  case_b: '''Who churned and what were they doing?'' is the question the whole product exists for (spec.md: targets ''are mostly detecting churn in the tutorial and just after it''), yet the per-video answers
+    table forces the planner to reconstruct ''the last thing before leaving'' across video boundaries for every player on every query. This option stores the terminal event once, the way clinical registries
+    keep a death table: one churn_event row per player with churn_t_ms, a churn_type_concept from {quit_to_menu, idle_over_300s, rage_quit, uninstall_seen, recording_end_unexplained}, last_step_concept,
+    last_ui_concept, an evidence_span, and a definition version. The most-asked question then becomes a single SELECT that returns, for example, 115 churners in under 100 ms, each with a playable span:
+    41 at tutorial step 2 (crew hiring), 38 who quit to menu within 20 s of a ''no crew available'' dialog, and 12 rage quits preceded by 60 s of negative affect. The closed churn_type enum makes ''what
+    kinds of churn'' an instant aggregate under the memo''s planner. The definition version lets a studio that redefines churn (300 s idle versus 600 s) recompute the table at ingestion without touching
+    queries. Ingestion cost is trivial because the row is folded from the observation log the memo already plans. Without it, every churn question pays the cross-video reconstruction cost at query time,
+    and two queries can disagree about who churned.'
+- id: latency-15
+  title: 'Per-player step state-machine rows written at ingestion (one row per player per tutorial step: entered_ts, exited_ts, outcome enum, retries, seconds_silent) so how-long/how-many/find-players-who
+    are column scans over ~5k rows, not over ~600k observations'
+  part: store
+  mechanism: 'Store: a derived table folded from the observation log once per session; the cube (latency-1) rolls up from it'
+  evidence: 'memo.md: ''step on screen, action, utterance, friction signal, sentiment, quote with timestamp as evidence''; spec.md: ''The targets are mostly detecting churn in the tutorial and just after
+    it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  case_a: 'Defer behind the observation log and fold the table into it as a materialised view, not a separate build. Its own depends_on says it needs an ''observation log with step_on_screen transitions
+    (frame pipeline or OCR)'', so it can only be produced after the hardest, least proven part of the memo works, namely reliably extracting which tutorial step is on screen across 15-minute video boundaries.
+    The state machine is a fold over those transitions and is only as accurate as the step labels, and the table hides label errors behind clean-looking columns such as outcome enum, retries and seconds_silent;
+    a missed transition or a mislabelled step silently moves seconds between steps and the ''seconds > 300 then quit'' list is wrong with no evidence span to catch it. The performance case is also weaker
+    than stated: the 600k observation figure and the ''~1-3 s cold'' self-join are estimates, 500 players is a small dataset for any columnar or indexed store, and spec.md asks only that queries be ''fast''
+    with a few seconds of budget, so a plain index on player, step and time over the observation log already meets the target and the 12 ms versus 1-3 s gap does not change what a studio experiences. It
+    also assumes a tutorial with a linear list of numbered steps, which is the shape of the game the examples use; open-world, sandbox or branching onboarding has no clean step_id, and ''each game differs''
+    per spec.md, so the schema would need to be redefined per game, the per-game hand-written work the frame says does not scale. It is contested by telem-8, which would derive the same per-step rows from
+    game telemetry where that exists with exact timestamps instead of vision guesses. The idea is sound as a rollup and is what latency-1 builds on, but it should come after the log and be sized by measured
+    query times, not be a next-quarter commitment.'
+  case_b: 'The memo''s observation log (''step on screen, action, utterance, friction signal, sentiment, quote with timestamp'') is the right raw layer, but the tutorial questions the spec says dominate
+    become slow, error-prone windowed self-joins when asked against it. ''List players who spent over 5 minutes on step 3 and then quit'' is a self-join over ~600k observation rows (about 1-3 s cold), and
+    the model or planner has to get the window logic right every time. This option folds the log once per session at ingestion into one row per player per tutorial step: entered_ts, exited_ts, an outcome
+    enum, retries and seconds_silent. The same question becomes ''WHERE step_id=3 AND seconds>300 AND outcome=quit'' over about 5k rows, returning 27 of 500 players, each with an entered_ts and a clip reference,
+    in about 12 ms. Every how-long, how-many and find-players-who question about the tutorial becomes a column expression rather than a hand-written question per metric, which is exactly what lets unknown
+    studio questions be answered without new extraction. It is also the base table that the funnel contrast (designer-14), the churn contrast (owner-16) and the cube roll-up (latency-1) read from, so building
+    it unlocks three other options. Without it, the planner''s ''instant'' tier holds only for single-row facts, and the step questions that matter most fall to slow joins or model reads.'
+- id: obs-3
+  title: 'BubbleUp contrast: given a churned-player selector, compute for all 80-200 attributes which values are over-represented versus the completing cohort, ranked by chi-square, in one query, so ''why''
+    is answered without anyone naming the attribute'
+  part: query
+  mechanism: Planner turns any 'why did cohort C do X' into cohort = players matching C, baseline = all others in same build; a single GROUP BY over all LowCardinality and attrs keys; results above 2x lift
+    and n>=5 are returned as a ranked contrast table plus 3 example clips per top attribute
+  evidence: 'spec.md Known problems: ''The question set is small, so most of what is in the video and transcript is never captured.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'Build this because it is the only option in the batch that answers the question studios ask most and cannot phrase as a schema: why did these players leave. spec.md names the core failure, ''the
+    question set is small, so most of what is in the video and transcript is never captured'', and a fixed table can only confirm a cause someone already suspected. The planner turns any ''why did cohort
+    C do X'' into cohort versus same-build baseline and runs one GROUP BY across all closed and attrs fields, returning attributes above 2x lift with n>=5 plus three example clips each. On the tutorial-churn
+    question it returns ''first_death_before_step_4 = true: 71% vs 19%'', ''utterance_count in tutorial = 0: 44% vs 9%'' and ''settings_menu_opened: 38% vs 6%'' in about 0.9 s over 500 players, which meets
+    the few-seconds query budget with no model reading of rows. It extends memo.md item 2, whose closed-field aggregates need the asker to name the field; contrast removes that step and so makes unknown
+    questions answerable on day one, and every new observation attribute becomes a candidate cause automatically with no extra question authored. Without it the studio guesses ''is it popups'' one hypothesis
+    at a time, and the memo''s batch-extraction path is triggered once per guess at ingestion-scale cost. It is a cheap, deterministic query-path feature (cost 2, depends only on obs-1), so the quarter''s
+    risk is low and the payoff is the headline demo of the product.'
+  case_b: Fold this into owner-16 and designer-14 instead of building it on its own. All three run the same churner-vs-rest contrast, rank attributes by difference and attach denominators; obs-3 differs
+    only in running the contrast at query time over 80-200 columns with chi-square. It also depends on obs-1, the 60-column wide-event table with an attrs JSON column. That table is not in the top 25 and
+    replaces the memo's observation log rather than extending it, so the next quarter would have to settle the store before this option has any input. On 500 players the statistics are weak. A single GROUP
+    BY that tests 200 attributes at a 2x-lift and n>=5 threshold will show several spurious 'causes' per question by chance (5% of 200 is 10 false hits before any correction), and the studio will file tickets
+    against them. The worked example also mixes up cause and symptom. 'settings_menu_opened 38% vs 6%' and 'utterance_count = 0' are correlates, and a studio reading a ranked list as an answer to 'why'
+    will treat them as reasons. Many attributes are also derived from each other (first death, step reached, dwell), so the top 10 rows tend to describe the same thing several times. The safer quarter-one
+    form is owner-16's fixed job over a curated list of per-step columns, with a multiple-comparison correction and a 'correlate, not cause' label. Open-ended BubbleUp over every attrs key should wait until
+    the store exists and someone has measured the false-discovery rate on hand-labelled sessions, as memo.md item 3 requires.
+- id: analyst-15
+  title: '''Why do players quit at step 3'' returns a ranked reason list (reason, players, % of quitters, 3 clips each) built from the closed friction_reason enum, not a free-text essay'
+  part: query-path
+  mechanism: Ingestion tags each stall/quit observation with friction_reason; planner maps 'why' + step to a GROUP BY over quitters; clip montage per reason from the rows
+  evidence: 'spec.md item 3: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'Defer this, or treat it as a special case of stitch-27 and clinical-16. It is one query template (''why'' + step -> GROUP BY friction_reason), not an architectural choice. It depends on two things
+    that are not built: a per-genre friction_reason enum and analyst-2''s step_state, which is not in the top 25. The enum is where the real cost and risk sit. memo.md item 3 already plans to generate closed
+    fields from an ontology. A hand-defined per-genre reason enum duplicates that, and spec.md says ''each game differs, so per-game hand-written questions do not scale'', which applies just as much to
+    hand-written reason lists. The option''s own example shows the problem: ''other 23'' of 94 is 24% of quitters already falling outside the enum on the tutorial case it was designed for. On a studio''s
+    unknown question the ''other'' bucket will be larger, and it is exactly the part the studio cares about. Assigning a single friction_reason to each stall at ingestion also asks today''s models for a
+    causal judgement from a 15-minute clip. That label is the least reliable thing an extractor produces, and the confident percentages hide the uncertainty. This option only helps tutorial ''why did they
+    quit at step N'' questions. Ship it as a planner template once the memo''s ontology and stitch-27''s session-scope quit_reason exist, not as a separate build.'
+  case_b: 'Build this because ''why do players quit at step 3'' is the literal shape of the target in spec.md item 3, ''detecting churn in the tutorial and just after it'', and today the nearest artifact
+    is an MCQ ''reason for struggle: A/B/C/D'' per video that nobody aggregates, so the studio gets one option letter per video and no ranked answer. With a closed friction_reason enum tagged on each stall
+    or quit observation at ingestion, the planner maps ''why'' plus a step to a GROUP BY over the quitters and returns a reason list with counts, share of quitters and three clips per reason. Worked example:
+    step 3 quitters (94) split into cannot-find-ui 38 (40%), misread-text 21 (22%), input-fail 12 (13%) and other 23, with the ''other'' quotes listed, so the analyst files three concrete tickets instead
+    of one vague one. It runs at query time as a single aggregate (instant), which fits the speed constraint, and the enum is defined per genre so it scales across studios without hand-writing per-game
+    questions. It is complementary to obs-3: contrast finds unanticipated attributes, while this gives the stable, trusted, clip-backed reason taxonomy that studios will request weekly and that the evaluation
+    set can score against hand-labelled sessions. Without it, the most common churn question falls through to the planner''s slow open-field retrieval path every time, and answers drift between runs because
+    reasons are re-invented from free text.'
+- id: cv-3
+  title: OCR text track per keyframe with region class (hud, objective-tracker, dialog, tooltip, error-popup, chat), stored as a second timestamped text stream parallel to the speech transcript
+  part: ingestion
+  mechanism: PaddleOCR or cloud OCR on each keyframe; deduplicate identical text across consecutive keyframes into (text, first_t, last_t) spans; index text in an inverted index alongside transcript
+  evidence: 'memo.md: ''Video frames add screen state and on-screen text''; spec.md: ''What a transcript contains (speech only, on-screen text, events)'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 4.0
+  case_a: Build this because it directly fixes the owner's first-named problem, 'transcript loses visual information', and memo.md already commits to it ('Video frames add screen state and on-screen text,
+    because speech alone cannot answer where did they click'); spec.md lists on-screen text as an unspecified transcript content, so today it is simply unknown whether it is captured. Running OCR per keyframe,
+    deduplicating identical text into (text, first_t, last_t) spans with a region class (hud, objective-tracker, dialog, tooltip, error-popup, chat) and indexing it beside the transcript gives a second,
+    searchable stream. The tutorial prompt 'Press E to craft' is on screen for 4 seconds and the player never says it, so no speech-based question can ever answer 'did players see the craft prompt'; with
+    this track it is a keyword lookup joined to the step-3 exit, e.g. 'Inventory full' popup seen by 61 of 500, in an inverted-index query. Cost is purely ingestion (cost 2, which the constraints say is
+    not a concern) with query cost near zero, and unlike a vision-model description it is deterministic, auditable evidence that a studio can verify by opening the frame. It is also the cheapest way to
+    get exact on-screen strings (UI labels, error messages, objective text) that vision-language models paraphrase or hallucinate. Without it, every question about what the player saw rather than said stays
+    unanswerable, however good the planner is.
+  case_b: The real case against this one is weak; the most I can argue is about scope and sequencing. It depends on cv-1, the keyframe table, which has to come first. Per-region classification (hud, objective-tracker,
+    dialog, tooltip, error-popup, chat) needs a layout model or per-game region map, and per-game hand mapping does not scale (spec.md). A modern multimodal model reading keyframes at ingestion (A-frame
+    assumption) can produce screen state and on-screen text in the same pass the memo already plans ('Video frames add screen state and on-screen text'). That makes a separate PaddleOCR pipeline with its
+    own deduplication and inverted index a second visual extractor to maintain. Generic OCR also does badly on stylised game fonts, outlined HUD text and text over moving backgrounds. Exact-string search
+    such as text='Inventory full' misses typo-variant and localised strings, and the spec leaves languages unspecified. In the 'did players see the craft prompt' example, text being on screen is not the
+    same as the player reading it, so the count overstates exposure. Fold it into the memo's frame pass as an on_screen_text field on observations, without a separate OCR stack. Add region classes only
+    for games whose HUD layout the step list already describes.
+- id: extract-7
+  title: 'Negative-evidence extraction: for every step in the game''s step list, emit an explicit row seen / not_seen / unknown per session with the coverage basis, so ''how many players never opened X''
+    has a denominator'
+  part: ingestion
+  mechanism: 'Session-level pass after all videos: for each step_id in the game''s step list, output {status: seen|not_seen|unknown, first_ts, basis: frames|speech|both|no_coverage}. unknown is forced when
+    any video of the session is missing or when frame coverage for the session is under 80%. Store step_presence(session_id, step_id, status, basis)'
+  evidence: 'memo.md: ''closed-field questions become aggregate queries over all players (instant)'' (an aggregate needs a denominator, and a missing row cannot distinguish absence from an unprocessed video)'
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'There is only a modest case for folding this rather than rejecting it. The seen / not_seen / unknown distinction is right, and without it a missing-video session is silently counted as ''never
+    reached'', so there is no case to drop the idea. The case is that it should not be a separate ingestion pass. It overlaps latency-15, whose per-player step state-machine rows already give one row per
+    player per step with an outcome enum. A status of not_reached plus a coverage flag on those rows gives the same denominator, with no second step_presence table to keep consistent. It also depends on
+    two things that are not built: a step list per game, and a session-completeness flag from the stitcher (obs-29 / stitch-1). The 80% frame-coverage threshold for forcing ''unknown'' is arbitrary and
+    untested. The option is graded ''inferred'', not quoted, and the worked range ''85-140'' shows that on real data with 11% of sessions incomplete the answer becomes a wide interval that studios may find
+    less useful than expected. It also covers only steps in a predeclared list, so a studio''s unknown question about something off the list still cannot tell absence from no coverage. Build it as columns
+    on latency-15''s step rows plus a session coverage field, not as its own extraction pass.'
+  case_b: 'Build this because every aggregate the memo promises (''closed-field questions become aggregate queries over all players'') needs a denominator, and an observation log that only stores things
+    that happened cannot supply one: a missing row means either ''did not happen'' or ''video 7 was not processed''. spec.md says a session is many 15-minute videos, so partial processing and missing videos
+    are the normal case. The option adds a session-level pass emitting seen / not_seen / unknown per step with a basis (frames, speech, both, no_coverage), forcing unknown when a video is missing or frame
+    coverage is under 80%, stored as step_presence(session_id, step_id, status, basis). Worked example: ''how many players never opened the inventory during the tutorial'' returns 85 of 445 with full coverage
+    (19.1%), 55 sessions excluded, range 85-140, instead of a flat 140 that sends the studio to redesign a step that was fine. That is the worst failure mode for a studio-facing product, a confidently wrong
+    count, and the fixed table cannot even express the distinction. Ingestion cost is a one-off pass (cost 2), query cost is a plain SQL filter (instant), and it relies on the stitcher''s completeness flag
+    and a per-game step list that the ontology in memo.md item 3 already produces. Without it, every ''never'', ''how many did not'' and percentage-of-players question is silently wrong by an unknown margin.'
+- id: stitch-27
+  title: 'Session roll-up pass: after per-segment extraction, one LLM call reads the session''s concatenated observation rows (not raw transcript, about 2-4k tokens) and writes session-scope fields: quit_reason,
+    churn_step, arc_summary, 3 representative evidence URIs'
+  part: ingestion-extraction
+  mechanism: 'Changes ingestion and store: one extra call per session over 2-4k tokens; outputs are session-scope closed fields queryable by SQL and an open summary for retrieval'
+  evidence: 'memo.md: ''Ingestion produces a session-level observation log, not answers'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: Build this because the studio's most common question, 'why did this player quit', needs a judgement over the whole session, and nothing in the current or memo design computes one at the right
+    level. spec.md says a session is many videos with answers per video, so asking per video yields about 10 contradictory quit reasons for one player; asking at query time means reading 500 x 400 observation
+    rows per question, which breaks the few-seconds budget. The fix is one extra LLM call per session over the concatenated observation rows (about 2-4k tokens, since it reads rows, not raw transcript)
+    that writes session-scope closed fields (quit_reason, churn_step) and an arc_summary plus three evidence URIs. It follows memo.md item 1 ('ingestion produces a session-level observation log') by adding
+    the one derived layer the log needs to be queryable. 'Top 3 reasons players quit the tutorial' then becomes a GROUP BY on quit_reason returning, for example, could not find objective 17, combat too
+    hard 12, crash 8, each with evidence, in under 2 s. The marginal ingestion cost is tiny against what already runs, and the output gives the hand-labelled evaluation set a single field per session to
+    score against. Without it, the headline churn question is either slow, contradictory or both, and the planner has no session-level field to aggregate on.
+  case_b: Defer this, and narrow it to closed fields. It depends on stitch-4, which is not among the top 25 options, and on per-segment extraction producing clean observation rows first. A one-shot LLM
+    judgement of 'quit_reason' over 2-4k tokens of already-compressed rows stacks two layers of model abstraction. Any friction the per-segment pass did not log cannot appear in the quit_reason, so the
+    session field inherits and hides the observation log's recall gaps. A free-form quit_reason has to be normalised before GROUP BY works. The example's 'could not find objective' 17 / 'combat too hard'
+    12 / 'crash' 8 implies a closed enum that the option does not define, so it either duplicates analyst-15's friction_reason enum or produces labels that will not group. It also overlaps clinical-16's
+    churn_event table, which already stores churn_step, churn type and last step and UI, and it is a variant of latency-10. arc_summary is free text for retrieval, which the memo's open-field path already
+    covers by retrieving matching rows. The useful part is churn_step and a quit cause with evidence URIs. That fits as two more columns in clinical-16's churn_event row, produced by the same session pass.
+    A separate roll-up whose fields are fixed in advance also does not help with studio questions that are unknown.
+- id: latency-12
+  title: 'Precomputed question-answer bank: the top 200 ontology-generated questions per game are answered at ingestion for the all-players cohort and the 8 standard segments, and the planner''s first branch
+    is bank lookup'
+  part: question-generation
+  mechanism: Question generation output feeds an ingestion-time answer job; the chatbot's semantic cache (latency-2) is seeded with the bank
+  evidence: 'spec.md Constraints: "Ingestion time and cost are not a concern. Answering a studio''s question must be fast."'
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'The spec states that ''Ingestion time and cost are not a concern. Answering a studio''s question must be fast''. A precomputed answer bank is the most direct way to turn that asymmetry into speed:
+    spend ingestion compute once, then answer from a lookup. Of the roughly 900 ontology candidates that memo point 3 generates, the top 200, ranked by coverage of real studio questions, are answered for
+    the all-players cohort and 8 standard segments. That is 1,800 rows per game per build, so storage is trivial. A paraphrase such as ''where do mobile players drop in the tutorial'' then returns in about
+    110 ms with its evidence refs (''step 3: 44% of 212 mobile players''), and the other 700 candidates still resolve by cube or column scan in under 2 s. Without the bank, every common question goes through
+    planning, aggregation and model synthesis at query time, so the tutorial and segment questions studios ask most often pay full latency, and the memo''s ''instant'' tier exists only for fields that happen
+    to match exactly. The bank also replaces the frozen hand-written table with one that is generated, 10x wider and segment-aware, and that is promoted or demoted by the query log. This is the memo''s
+    ''question set grows from real use'' made concrete. It reuses the ontology generator the memo already commits to, so the main new pieces are an ingestion job and a cache seed, which fit within a quarter.'
+  case_b: 'Defer it, and when it is built, fold it into the semantic cache (latency-2) rather than keeping it as its own option. spec.md sets the query budget at a few seconds, and the option''s own example
+    shows the memo''s closed-field cube path already answers 700 of the 900 candidate questions in under 2 s, so the 110 ms bank hit buys speed the constraint does not ask for, while the cost is real: 200
+    questions x 9 cohorts = 1,800 natural-language answers that must be regenerated whenever players are added or a build changes. The speed also comes with a correctness risk that the owner''s brief (''fast,
+    correct'') cares about more: matching a studio''s paraphrase to a stored question at cosine similarity will sometimes return the answer to a nearby question with a different cohort, step or build filter,
+    and it will do so confidently and in 110 ms. The option depends on an ontology generator that three contesting options (convo-21, longctx-8, qgen-16) refuse as the primary question source, and on a
+    ranking signal that does not exist until a query log does; until then the ''top 200'' is ranked by the owner''s churn targets, which is the same tutorial-churn question set the fixed table already covers.
+    Studio questions are stated to be unknown, so a bank of ontology guesses is a bet on the head of a distribution nobody has measured, and the long tail falls through to the planner anyway. The honest
+    remaining value is as a warm-start seed for latency-2 after the first month of real queries, when the ranking is measured instead of guessed.'
+- id: qgen-10
+  title: 'Per-step transition templates: for each tutorial step in the entity table, generate exactly 6 questions (entered, dwell_s, attempts, exit_reason enum, skipped, first_utterance_after_enter) from
+    a step state machine'
+  part: question-generation
+  mechanism: question-generation emits the 6 templates per step; ingestion fills them from the screen-state classifier plus transcript; store keeps the transition log as the source and the 54 fields as
+    a materialised view
+  evidence: 'spec.md Known problems: "The question set is small, so most of what is in the video and transcript is never captured."'
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'The spec''s first named problem is that ''The question set is small, so most of what is in the video and transcript is never captured''. In the tutorial this shows up as hand-written questions
+    covering steps 1, 3 and 5 of 9, only because those were the known problems. Per-step transition templates fix this structurally: each step gets the same 6 questions (entered, dwell_s, attempts, exit_reason
+    enum, skipped, first_utterance_after_enter), filled from the screen-state classifier plus the transcript. For a 9-step tutorial that gives 54 closed fields as a materialised view over a transition log.
+    ''Where do players drop in the tutorial'' then becomes a funnel query that returns in milliseconds. In the example, it shows step 7 with abandoned=18% against 4% or less elsewhere, a p50 dwell of 6m40s,
+    and ''what now'' as the first utterance for 61 players. Today that stall is invisible until someone at the studio reads transcripts. Because the templates are generated from a state machine, every new
+    game with a step list gets uniform coverage for free, with no per-game hand-writing, which the frame assumes does not scale. The templates also apply memo point 3''s ontology (entities x dimensions
+    x outcomes) to the target the owner says matters most, tutorial churn, so they can ship first as the reference slice of the ontology generator. The store keeps the transition log as the source, so new
+    per-step questions can be added later as views without re-extraction.'
+  case_b: 'Reject as a separate option and fold the useful part into owner-31 (the per-step table it is explicitly a variant of) and latency-15 (per-player step state-machine rows), both already in the
+    top 25. It only helps tutorial questions, which is the one area the existing fixed table already targets (spec.md: targets are ''mostly detecting churn in the tutorial''), so it does little for the
+    stated problem that most of the video is never captured outside the tutorial. The decisive weakness is the dependency: it needs a screen-state classifier that recognises step boundaries and a per-game
+    step list from qgen-2, and neither is built; without them the six fields are filled by the model guessing from transcript, and exit_reason as an enum per step is exactly the kind of field where a model
+    will pick a plausible label with no visual grounding. Only two of the six templates (entered, dwell_s) are cheap and reliable; first_utterance_after_enter is a trivial text lookup, and attempts and
+    skipped are definitions that vary by game and by step. Fixing the count at exactly six, when owner-31 uses eight columns, is arbitrary, and a fixed per-step schema is the fixed-table approach again
+    at finer granularity rather than a question-generation framework that generalises to games with no steps. Keeping the transition log as source with a materialised view is sound, but that is a store
+    design that belongs to the per-step table, not a question-generation option.'
+- id: extract-3
+  title: 'Session state card carried across videos: after video k is extracted, a 200-token card (current step, unresolved friction, player traits, inventory) is prepended to the video k+1 prompt and stored
+    per boundary'
+  part: ingestion
+  mechanism: 'Extraction output for each video includes a state_card object: {current_step, open_frictions: [{label, since_ts}], traits: [max 5 short strings], last_goal_stated}. The next video''s prompt
+    starts with the card; the model must emit resolved_frictions referencing since_ts when a friction closes. Store table session_boundary(session_id, video_idx, state_card_json)'
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''Long multi-video sessions.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'The spec names ''Long multi-video sessions'' as a known problem and states that each video is capped at 15 minutes. As a result, every per-video extraction today starts blind: video 5 opens with
+    ''still can''t find it'', ''it'' is unresolvable, and friction_type defaults to none. A 200-token state card ({current_step, open_frictions with since_ts, traits, last_goal_stated}) is prepended to
+    the next video''s prompt and stored per boundary in session_boundary. It turns a 40-minute hunt for the map button from 3 unrelated low-severity rows into one friction with a true start and end time.
+    That makes cross-video questions answerable with a fast aggregate, which per-video rows cannot express at all. One example is ''how long were tutorial quitters stuck before quitting'', answered as a
+    median of 14 min 20 s across 37 churners instead of durations capped at 15 minutes. These cross-video stalls are the frictions most likely to precede churn, the owner''s main target, so undercounting
+    them biases exactly the answers studios pay for. The cost is entirely at ingestion (one small sequential dependency and about 200 extra tokens per video), which the spec says is acceptable, while query
+    cost is unchanged. It also strengthens the memo''s session-level observation log, which needs friction rows that span video boundaries to be correct. The only prerequisite is an ordered video index
+    per session, which JEV must build anyway because the spec lists video linkage as unspecified.'
+  case_b: 'Defer; the cross-video stall problem is real, but a carried card is the wrong mechanism and it is already covered by the session roll-up and stitching options (stitch-27, stitch-1, obs-29). Chaining
+    makes video k+1 extraction depend on video k, which turns a parallel batch job into a serial one for a 12-video session and means any reprocessing of video 3 forces reprocessing of 4 through 12; the
+    owner says ingestion cost is fine, but serial latency to first answer and the re-run blast radius are real operating costs. Worse, the card is an unaudited free-text summary written by the model: a
+    wrong ''current_step'' or a hallucinated open friction on video 3 is then injected as ground truth into every later prompt and compounds, with nothing in the design to detect it. The cost of the card
+    is paid on every video to fix the minority of cases where video 5 begins with an unresolvable pronoun, and the free-string labels in open_frictions make the ''resolved_frictions references since_ts''
+    matching fragile, since the model must reproduce a label verbatim. The stated example answer (median stuck time across videos) can be computed after the fact by merging friction rows with the same step
+    across the stitched session timeline, with no serial dependency and with a model that reads the whole session''s observation log in one pass; the frame''s assumption of a modern long-context model makes
+    that available. The spec also lists video linkage as unspecified, so the card has no reliable ordered input yet, and the stitching option has to be built first anyway.'
+- id: extract-28
+  title: 'Step identification with explicit fallback chain: step_id comes from the frame classifier, then OCR match of on-screen prompt text against the step list, then speech; the chosen source and a confidence
+    are stored, and rows with step_id=unknown are excluded from step denominators with a coverage statement'
+  part: ingestion
+  mechanism: 'Per window: step_source in {frame_classifier, ocr_match, speech, unknown}, step_conf 0-1. OCR match: on-screen prompt text fuzzy-matched (>=0.8) against the glossary''s step prompt strings.
+    Speech fallback: the model infers step from utterances with conf<=0.6. Materialised per game and build: step_coverage(step_id, n_players_identified, n_players_total). Chatbot: any per-step answer prints
+    ''step identified for 470 of 500 players''; an answer where coverage differs by more than 10 points between two builds is flagged'
+  evidence: 'memo.md: ''step on screen'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: Fold into the per-step table and the planner's answer rendering, and reject the fallback chain as a standalone ingestion build. The one valuable idea is the denominator statement ('step identified
+    for 470 of 500 players') with a flag when coverage shifts between builds; that is cheap, belongs in answer formatting (planner-1 evidence form, stat-7), and needs no new ingestion machinery. The chain
+    itself rests on a frame classifier that does not exist, trained per game on a specific build's screenshots, so the option builds a classifier-staleness problem and then a fallback to paper over it.
+    The OCR stage needs a per-game glossary of step prompt strings, which is the hand-written per-game content that the frame says does not scale across many studios, and the speech stage with its 'conf<=0.6'
+    and the 0.8 fuzzy threshold are invented numbers with no calibration plan or labelled sessions behind them. A modern multimodal model at ingestion, given the step list, can name the step from frames
+    directly without a trained classifier, which removes both the stale-classifier scenario and the chain. The scenario motivating it (build 1.2 restyles the UI and two of nine steps collapse) is an edge
+    case, and the option's evidence is a one-word quote from memo.md ('step on screen') that does not mention fallbacks or coverage. The confidence stored per window also multiplies row width across every
+    ingested window for a benefit that is realised only at version-compare questions.
+  case_b: The memo makes 'step on screen' the backbone of the observation log, and nearly every tutorial-churn answer is a per-step rate. That makes it the highest-stakes field to get silently wrong. The
+    failure it prevents is concrete and likely. A frame classifier trained on build 1.1 screenshots meets a restyled build 1.2, its confidence collapses on 2 of 9 steps, and the step-level counts fall to
+    near zero. A compare-versions answer then tells the studio those steps were 'fixed', a confident and wrong answer to exactly the question studios ask after every patch. The fallback chain resolves step_id
+    from the frame classifier first, then from OCR fuzzy-matching (0.8 or more) against the glossary's prompt strings, then from speech at confidence 0.6 or less, and stores step_source and step_conf. It
+    also materialises step_coverage per game and build, so every per-step answer can print 'step identified for 470 of 500 players' and flag a coverage swing of more than 10 points between builds. The studio
+    question 'did the stealth step stall rate improve in 1.2?' then gets '22% vs 9%, but coverage dropped from 480 to 310, classifier likely stale', which is correct and still a fast lookup. The cost is
+    a few extra fields per window plus one small materialised table, which is negligible at ingestion and free at query time. Without the chain, JEV's speed advantage just delivers wrong per-step answers
+    faster, and studios lose trust in the product.
+- id: playfill-10
+  title: 'Planner unit resolver: question nouns (boss, match, run, level, quest, floor, round, mission) map to unit_type, named entities (''the Warden'', ''Drowned Bell'') fuzzy-match a unit_id from OCR''d
+    labels, and the plan groups by play_unit instead of falling to retrieval; a noun with no unit_type in the manifest gets a clarifying reply naming the declared structure'
+  part: query-path
+  mechanism: 'Step 1: extract unit nouns and named entities. Step 2: map nouns to unit_type via lexicon; map names to unit_id by edit distance (2 or less) or embedding cosine 0.85 or more against catalogue
+    labels and aliases. Step 3: emit plan over play_unit or cube. If no unit_type maps, reply ''This game is declared match-or-round-based; did you mean match?'''
+  evidence: 'memo.md: ''closed-field questions become aggregate queries over all players (instant)'' (routing to the instant path depends on a closed field matching; mapping unit nouns and names to such
+    a field is not described)'
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  case_a: 'Defer until the play_unit table (playfill-1) and its alias catalogue exist, and then fold into the typed planner (planner-1). It has a hard dependency on a per-game unit catalogue with aliases,
+    which is hand-curated per-game content and the same scaling problem the frame warns about, and it is marked ''inferred'' in its own evidence, with no spec or memo line asking for it. The scenario is
+    non-tutorial play (bosses, matches, runs), while spec.md says the targets are mostly tutorial and the period just after it, so the first quarter''s studio questions largely do not touch this path. The
+    planner is a language model reading the question: if the catalogue''s unit labels and aliases (a few hundred strings per game) are placed in its context, it resolves ''the Warden'' to boss_warden_of_ash
+    without a hand-built edit-distance and embedding pipeline, and handles nicknames and typos better than a 2-edit threshold or a 0.85 cosine cut that someone must tune. The 0.8 s versus 6-minute comparison
+    is a straw man, since a planner with a schema-aware prompt would not start a backfill for a field that exists. OCR''d labels that feed the fuzzy match are themselves noisy, so the resolver''s accuracy
+    is capped by cv OCR quality that is not yet built. The hard-coded clarifying reply about ''match-or-round-based'' also presupposes a manifest declaration that no other option guarantees. Keep the idea
+    as a prompt-time catalogue injection, not a separate component.'
+  case_b: 'The memo routes closed-field questions to an ''instant'' aggregate path, but it never says how a studio''s words reach a closed field. Studios ask in their own vocabulary (''the Warden'', ''the
+    Drowned Bell'', ''the match after the tutorial''), not in column names. Without a resolver, the planner sees no match and falls through to the memo''s backfill tier. In the example, that means a 6-minute
+    extraction for ''who quit after the Warden fight in hour 3'' when the answer was already stored. The unit resolver maps question nouns (boss, match, run, level, quest, floor, round, mission) to unit_type
+    through a lexicon, and named entities to unit_id by edit distance of 2 or less, or embedding cosine of 0.85 or more, against OCR''d catalogue labels and aliases. It then emits a filtered plan over play_unit,
+    which returns ''29 players, with a clip of each final attempt'' in 0.8 s. When the game declares no such unit type, it replies with a clarifying question that names the declared structure instead of
+    guessing. This matters because JEV''s buyers are many studios with different genres, and the spec says their questions are unknown in advance. Anything past the tutorial in a non-step game is unreachable
+    by the instant path today. The resolver is cheap: it runs at query time over a small catalogue in milliseconds, and nothing is added at ingestion beyond the aliases already captured in the unit catalogue.
+    It is the piece that decides whether the memo''s fast tier actually gets used.'

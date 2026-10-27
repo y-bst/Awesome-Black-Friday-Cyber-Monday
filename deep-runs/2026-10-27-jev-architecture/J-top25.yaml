@@ -1,0 +1,676 @@
+- id: tar-12
+  title: 'Family-level responsiveness: a hit in any video of a session marks the whole session as a candidate, and coding,
+    sampling and recall are all computed at session (player) granularity, never at video granularity'
+  part: session-stitching
+  mechanism: 'Changes session-stitching and every evaluation computation: unit of coding, sampling and reporting is the session;
+    videos are evidence locations within it'
+  example: '''Players who complained before quitting the tutorial'': 500 sessions, 4,100 videos; session-level coding finds
+    71; a per-video count would have reported 94 positive videos from 71 players'
+  situation: A player's session has 9 videos; the quit is in video 9 and the complaint in video 4; a per-video classifier
+    codes 8 videos negative and 1 positive; an elusion sample drawn over videos oversamples long sessions
+  consequence: E-discovery codes families (email plus attachments) as a unit because a responsive attachment makes the family
+    responsive; a per-video unit here means a 500-player question is really a 4,000-video question and the recall denominator
+    is wrong by the session length distribution
+  grounded: quote
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''The
+    answers form a structured table per video.'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: a session_id linking videos (spec.md names this as unspecified)
+  better_than_fixed_table: The per-video table double-counts players and loses cross-video evidence; session-level coding
+    counts players once
+  contested_by: null
+  variants_of:
+  - planner-23
+- id: obs-29
+  title: 'Session stitching at ingestion: video_idx from upload order or filename, session_t_ms = video_idx * 900000 + offset_ms,
+    gap_ms recorded between consecutive videos, session_id as the partition key so a 12-video session is one contiguous key
+    range'
+  part: ingestion
+  mechanism: Wall-clock from file metadata orders videos; gaps above 5 s are stored as gap rows (event_type='gap'); all duration
+    math uses session_t_ms minus accumulated gaps
+  example: '''How long did players spend on step 3?'' where step 3 straddles videos 2 and 3 -> one span of 6m10s per player;
+    the per-video table would report two unrelated partial answers'
+  situation: Video 4 of a session is uploaded 2 minutes after video 3 ends (recorder restart) and a step spans videos 3 and
+    4
+  consequence: Both videos' rows share session_id and monotonic session_t_ms; gap_ms=120000 is stored on video 4's first row
+    and dwell computations subtract it; 'timeline of player 0042' is ORDER BY session_t_ms over one partition, 0.02 s
+  grounded: quote
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''how
+    videos of one session are linked'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: nothing
+  better_than_fixed_table: Session-level questions become single-partition reads; today the unit is the video
+  contested_by:
+  - stitch-30
+  variants_of:
+  - stitch-1
+- id: planner-23
+  title: 'Session-grain rule in the executor: every aggregate groups by session_id, never by video_id, and ''how long'' plans
+    sum durations across a session''s videos with inter-video gaps counted separately'
+  part: store
+  mechanism: Store and query path. A sessions table (session_id, player_id, video_count, total_ms, gap_ms, complete bool)
+    is the join anchor for every plan
+  example: '''How long do players take to finish the tutorial?'' -> median 1,140 s across 375 completers, computed from first
+    step_on_screen=1 to tutorial_outcome=complete across videos; 14 sessions with a gap > 60 s between videos listed separately'
+  situation: Question 'how many players quit?' over the per-video table counts a 2-hour session with 8 videos as 8 rows; one
+    quit flag in video 8 becomes 1 of 8
+  consequence: 'Quit rate is diluted by session length: long sessions (the engaged players) weigh 8x more in the denominator'
+  grounded: quote
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''The
+    answers form a structured table per video.'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: 'session-to-video linkage (spec unspecified: ''how videos of one session are linked'')'
+  better_than_fixed_table: The per-video table cannot express a session; this makes every count a per-player count
+  contested_by: null
+  variants_of: null
+- id: stitch-1
+  title: 'Session manifest table built at ingestion: one row per video with session_id, segment_index, wall_clock_start, duration_ms,
+    gap_before_ms, source_file, stitch_confidence'
+  part: session-stitching
+  mechanism: 'Changes the store: a manifest keyed by session_id is written per upload batch; every downstream row (observation,
+    answer) carries video_id and the manifest resolves video_id to session position; 11 rows for an 11-video session, each
+    with duration_ms (900000 for a full segment) and gap_before_ms'
+  example: Studio asks 'how many of the 500 players quit during the tutorial'; the planner joins answers to session_videos,
+    finds the last segment per session, and counts sessions whose last segment has tutorial_complete=false, instead of counting
+    videos
+  situation: A 2h40m session arrives as 11 files; nothing in the current pipeline records which file is first, and the answers
+    table is per video
+  consequence: Every session-level question (did the player finish the tutorial, how long did the whole session last) is unanswerable
+    or answered off a single video picked at random
+  grounded: quote
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''The
+    answers form a structured table per video.''; ''how videos of one session are linked'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: nothing
+  better_than_fixed_table: Fixed table has no session key, so 'per player' counts today are really 'per 15-minute video' counts
+  contested_by: null
+  variants_of: null
+- id: stat-7
+  title: 'Player is the unit of inference: stitch videos into sessions and sessions into players before any count, so n is
+    players, never video rows'
+  part: ingestion
+  mechanism: Ingestion writes video rows with the stitching key; a materialised player view applies the per-question reducer
+    declared in the question schema; the chatbot is forbidden from querying the video table for counts
+  example: '''Players who called the tutorial confusing'' -> video table says 212 rows; player view says 88 of 403 players
+    (21.8%)'
+  situation: A 3-hour session is 12 video rows; 'how many players said the tutorial was confusing' summed over rows counts
+    one player who said it in 4 videos as 4
+  consequence: Per-video counting inflates both numerator and denominator by the number of videos per session, so long-session
+    players (who are the retainers) dominate every aggregate; churn rates are biased low
+  grounded: quote
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''The
+    answers form a structured table per video.''; ''A chatbot for the gaming studio answers the studio''s questions from that
+    table, so that a question over, say, 500 players is fast.'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: A session id and player id in the capture metadata (spec lists linking as unspecified)
+  better_than_fixed_table: Same questions, but counts are of players, and a player who speaks a lot no longer counts more
+    than one who speaks once
+  contested_by: null
+  variants_of:
+  - planner-23
+- id: stitch-2
+  title: 'Every observation carries two clocks: (video_id, video_ms) for clip lookup and session_offset_ms = sum of prior
+    segment durations plus gaps for duration arithmetic'
+  part: store
+  mechanism: 'Changes ingestion and store: the extractor writes video-local timestamps; a post-step adds session_offset_ms
+    from the manifest (segment start offset plus video_ms); queries about duration use session_offset_ms, queries that need
+    a clip use video_id+video_ms'
+  example: '''Median time on tutorial step 3'' becomes SELECT percentile(0.5, max(so)-min(so)) GROUP BY session_id, step=3
+    and returns 4m20s including the 20 players whose step 3 crossed a cut'
+  situation: Tutorial step 3 starts at 13:50 in video 2 and ends at 02:10 in video 3; a single video-local timestamp gives
+    a negative duration
+  consequence: Step durations that straddle a cut are dropped or negative; 'how long did step 3 take' over 500 players is
+    biased toward short steps that fit inside one video
+  grounded: quote
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; memo.md:
+    ''timestamped atomic observations across all videos of a session'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: stitch-1
+  better_than_fixed_table: Fixed table cannot express any duration longer than 15 minutes or crossing a cut
+  contested_by: null
+  variants_of: null
+- id: qgen-1
+  title: Every generated question carries a typed answer contract (answer_type, aggregation, null option 'not-observable',
+    evidence rule, unit) and the planner routes on answer_type, not on question text
+  part: question-generation
+  mechanism: question-generation emits a schema row per question, not a prompt string; the answers table gets a typed column
+    per qid; the planner compiles studio questions to (answer_type, aggregation) and refuses a route whose type does not match
+  example: '''how long on step 3'' matches template dwell_time(step=3) -> answer_type duration_s, aggregation p50 -> ''p50
+    4m10s, n=487 of 500 observable, 13 not-observable (video cut before step 3)'''
+  situation: 'A studio asks ''how long do players spend on tutorial step 3'' and the only stored field is the enum ''stalled
+    on step 3: yes/no''; the planner has no way to know a duration question cannot be served from an enum'
+  consequence: The chatbot answers a duration question with a rate (41% stalled) and the studio reads it as a time; one wrong
+    number and the chatbot is not asked again
+  grounded: quote
+  evidence: 'memo.md item 3: "each with an answer type and an evidence requirement"'
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: a question registry table keyed by qid; nothing else
+  better_than_fixed_table: the fixed table has per-video answer text with no type, so counts, durations and quotes are indistinguishable
+    to the chatbot
+  contested_by: null
+  variants_of: null
+- id: stitch-7
+  title: Each generated question declares scope in {video, step, session, player} and, for scope above video, a reducer in
+    {first, last, any, all, max, sum, latest-nonnull} applied over segment-level answers
+  part: question-generation
+  mechanism: 'Changes question-generation and query path: the planner rewrites a session-scope question as reducer(video answers)
+    grouped by session_id; the reducer is part of the question''s version so changing it creates a new field version'
+  example: '''How many players completed the tutorial'' = count(sessions where any(tutorial_complete)) = 312 of 500; ''where
+    did they quit'' = last(step_on_screen) over segments where tutorial_complete=false'
+  situation: 'The question ''did the player complete the tutorial'' is asked per video: segment 1 says no, segment 4 says
+    yes, segment 9 says no (free play, no tutorial visible)'
+  consequence: A naive aggregate over videos says 33% completed the tutorial for a player who completed it; without a declared
+    reducer the chatbot picks one at random or averages booleans
+  grounded: quote
+  evidence: 'spec.md item 1: "each video is capped at 15 minutes, so one session is many videos" and item 3: "The answers
+    form a structured table per video."'
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: stitch-1
+  better_than_fixed_table: The fixed table has no notion of scope, so every answer is a video answer and session answers are
+    undefined
+  contested_by: null
+  variants_of:
+  - qgen-1
+- id: planner-1
+  title: Planner emits a typed plan JSON {route, fields, filters, cohort, evidence_form} and the chatbot executes the plan,
+    not the question
+  part: query
+  mechanism: 'Changes the query path for every asker. Plan shape: {route: sql|retrieval|backfill|clip, fields: [field_id@version],
+    filters: [{field, op, value}], cohort: cohort_id|null, group_by: [step_id], evidence_form: count-with-denominator|quote-with-timestamp|clip}.
+    Executor runs SQL over the observation log (session_id, t_ms, field, value, confidence, video_index) or a vector/keyword
+    retrieval; the LLM sees only plan + results'
+  example: '''How many players quit in the tutorial?'' -> {route: sql, fields: [tutorial_outcome@v3], filters: [{tutorial_outcome,
+    =, quit}], group_by: [], evidence_form: count-with-denominator} -> ''137 of 512 sessions (26.8%)'' in 0.4s'
+  situation: A studio analyst types 'how many players quit during the tutorial'. The planner must pick one of three routes
+    (sql, retrieval, backfill) and the chatbot today has no intermediate object between the question and the answer
+  consequence: Without a typed plan the route choice, the fields used and the denominator are invisible; the same question
+    can be answered two ways on two days and the studio notices the discrepancy
+  grounded: quote
+  evidence: 'memo.md item 2: ''The chatbot runs a query planner'''
+  scores:
+    impact: 5.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: observation log with closed fields keyed by session_id (memo item 1)
+  better_than_fixed_table: The fixed table can only answer by scanning its own columns; a plan can combine fields, filters
+    and cohorts that no fixed question anticipated, and every answer records how it was computed
+  contested_by: null
+  variants_of: null
+- id: latency-16
+  title: Observation log stored columnar (ClickHouse or Parquet) partitioned by (game_id, build_id) with LowCardinality enums
+    for step, action, friction_signal, sentiment, so count/group-by over 500 players x ~1.2k observations finishes under 200
+    ms
+  part: store
+  mechanism: 'Store: physical layout of the memo''s observation log'
+  example: '''how many friction signals per step on build 1.4'' -> GROUP BY step_id, friction_signal over 600k rows in 90
+    ms'
+  situation: The memo's observation log lands in a row store and every closed-field group-by scans all columns
+  consequence: 600k rows x ~12 columns in a row store takes 1-2 s per group-by; columnar with enum dictionaries reads only
+    the 2-3 columns needed, ~50-150 ms; the memo's 'instant' claim holds only with this layout
+  grounded: quote
+  evidence: 'memo.md: ''with closed enum fields and short open fields''; ''closed-field questions become aggregate queries
+    over all players (instant)'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: nothing beyond the memo's log
+  better_than_fixed_table: Same latency as the fixed table for counts, over every observation instead of only the pre-asked
+    answers
+  contested_by: null
+  variants_of: null
+- id: cv-1
+  title: Keyframe table from 1 fps sampling plus perceptual-hash change gate (dHash distance > 10 keeps a frame), replacing
+    per-video transcript as the unit of visual ingestion
+  part: ingestion
+  mechanism: ffmpeg decodes at 1 fps; dHash computed per frame; frame kept if Hamming distance to last kept frame > 10 or
+    10 s elapsed; row written to keyframes table with absolute session time t_ms = video_idx*900000 + offset
+  example: Studio asks 'how long did players sit on the step-2 crafting screen'; dwell is computed from consecutive keyframe
+    t_ms where screen_state=step-2, no transcript needed; 500 players answered from a 200k-row table
+  situation: A 15-minute video at 30 fps is 27,000 frames; the pipeline today keeps 0 of them
+  consequence: 'Every downstream visual field (screen state, OCR, UI elements) has a stable, sparse row set to attach to:
+    typically 150-400 keyframes per video instead of 27,000'
+  grounded: quote
+  evidence: 'spec.md: ''the transcript alone is not enough; what is on screen is largely lost'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 3.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 100.0
+  depends_on: nothing
+  better_than_fixed_table: Visual facts exist at all; the fixed table has zero visual columns
+  contested_by: null
+  variants_of: null
+- id: owner-16
+  title: 'Automatic churn-vs-retain contrast on the first cohort: churner defined from the game profile (for example ''quit
+    within 10 minutes after tutorial end''), then every universal primitive and per-step column is ranked by difference between
+    churners and retainers, output as a 10-row table'
+  part: query
+  mechanism: 'A fixed job over the per-video and per-step tables: split by churn flag, compute per-column rates, rank by difference,
+    show top 10 with denominators'
+  example: 'Output row 1: ''stalled >90s on Craft a torch: churners 58% (n=112) vs retainers 19% (n=388)''; row 2: ''silence
+    run >60s: 44% vs 12%'''
+  situation: The studio's real question is 'why do they churn' but they do not know which attribute to ask about
+  consequence: The first report names the 10 attributes that most separate churners from retainers, with counts; the studio's
+    next questions are specific
+  grounded: quote
+  evidence: 'spec.md item 3: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 5.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: owner-2 and owner-31 tables; churn definition in profile
+  better_than_fixed_table: Finds the discriminating column instead of waiting for someone to ask about it
+  contested_by: null
+  variants_of:
+  - obs-3
+- id: designer-14
+  title: 'Automatic contrast on the step funnel: for tutorial quitters vs completers, rank every per-step metric (duration,
+    stalls, wrong actions, hint ignored, regressions) by difference and show the top 5'
+  part: query-path
+  mechanism: SQL over the step aggregate and observation counts per player; no model call; the model only phrases the top
+    5 rows
+  example: '''Quitters (n=140) vs completers (n=360): step 3 wrong_action opened_other_menu 61% vs 19%; step 5 fail_screen
+    count 3.2 vs 1.1; step 2 duration no difference'''
+  situation: Designer asks 'what is different about players who quit in the tutorial' with no hypothesis
+  consequence: The fixed table has churn as one column but no mechanism to compare the other columns between churners and
+    the rest; the designer guesses a step and asks one question at a time
+  grounded: quote
+  evidence: 'spec.md item 3: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: designer-1, designer-2, designer-7
+  better_than_fixed_table: Finds the step that explains churn without the designer naming it
+  contested_by: null
+  variants_of:
+  - obs-3
+- id: clinical-16
+  title: 'churn_event table, one row per player: churn_t_ms, churn_type_concept in {quit_to_menu, idle_over_300s, rage_quit,
+    uninstall_seen, recording_end_unexplained}, last_step_concept, last_ui_concept, evidence_span; all churn questions resolve
+    to this table first'
+  part: store
+  mechanism: 'Store: the terminal event is a dedicated table, like a death table, with cause and context columns and a definition
+    version'
+  example: '115 churners: 41 at tutorial_step 2 (crew hiring), 38 quit_to_menu within 20 s of a ''no crew available'' dialog;
+    12 rage_quit with a negative affect era in the preceding 60 s'
+  situation: Studio asks 'who churned and what were they doing?'
+  consequence: SELECT player_id, churn_type, last_step, last_ui FROM churn_event WHERE game_id=... returns 115 rows in under
+    100 ms with a span each; the per-video answers table needs the planner to reconstruct 'last thing before leaving' across
+    video boundaries per player
+  grounded: quote
+  evidence: 'spec.md: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: clinical-5
+  better_than_fixed_table: The most asked question is a table scan with evidence, not a reconstruction
+  contested_by: null
+  variants_of:
+  - store-23
+- id: latency-15
+  title: 'Per-player step state-machine rows written at ingestion (one row per player per tutorial step: entered_ts, exited_ts,
+    outcome enum, retries, seconds_silent) so how-long/how-many/find-players-who are column scans over ~5k rows, not over
+    ~600k observations'
+  part: store
+  mechanism: 'Store: a derived table folded from the observation log once per session; the cube (latency-1) rolls up from
+    it'
+  example: '''players who spent over 5 min on step 3 then quit'' -> 27 of 500, listed with entered_ts and a clip ref each,
+    in 12 ms'
+  situation: '''list players who spent over 5 minutes on step 3 and then quit'' must be answered from the observation log'
+  consequence: Against observations this is a windowed self-join over 600k rows (~1-3 s cold); against step rows it is 'WHERE
+    step_id=3 AND seconds > 300 AND outcome=quit' over 500 x 10 = 5k rows (~5 ms) and returns a per-player list with timestamps
+  grounded: quote
+  evidence: 'memo.md: ''step on screen, action, utterance, friction signal, sentiment, quote with timestamp as evidence'';
+    spec.md: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 1.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: observation log with step_on_screen transitions (frame pipeline or OCR)
+  better_than_fixed_table: Fixed table has one row per video and a hand-written question per metric; this has one row per
+    player per step and any metric is a column expression
+  contested_by:
+  - telem-8
+  variants_of: null
+- id: obs-3
+  title: 'BubbleUp contrast: given a churned-player selector, compute for all 80-200 attributes which values are over-represented
+    versus the completing cohort, ranked by chi-square, in one query, so ''why'' is answered without anyone naming the attribute'
+  part: query
+  mechanism: Planner turns any 'why did cohort C do X' into cohort = players matching C, baseline = all others in same build;
+    a single GROUP BY over all LowCardinality and attrs keys; results above 2x lift and n>=5 are returned as a ranked contrast
+    table plus 3 example clips per top attribute
+  example: '''Why do players churn after the tutorial?'' -> top contrasts: ''first_death_before_step_4 = true: 71% vs 19%'',
+    ''utterance_count in tutorial = 0: 44% vs 9%'', ''settings_menu_opened: 38% vs 6%''; 0.9 s over 500 players'
+  situation: Studio asks 'why do players quit at step 3' and no pre-written question covers the cause
+  consequence: 'The answer lists the top 10 attributes where the step-3 quitters differ from completers, each with a lift
+    and n: ''popup_count>=2: 68% of quitters vs 12% of completers (n=61 vs 439)''; the studio never had to guess ''is it popups'''
+  grounded: quote
+  evidence: 'spec.md Known problems: ''The question set is small, so most of what is in the video and transcript is never
+    captured.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: obs-1
+  better_than_fixed_table: Answers why-questions nobody wrote a question for; the fixed table can only confirm a cause someone
+    already suspected
+  contested_by: null
+  variants_of: null
+- id: analyst-15
+  title: '''Why do players quit at step 3'' returns a ranked reason list (reason, players, % of quitters, 3 clips each) built
+    from the closed friction_reason enum, not a free-text essay'
+  part: query-path
+  mechanism: Ingestion tags each stall/quit observation with friction_reason; planner maps 'why' + step to a GROUP BY over
+    quitters; clip montage per reason from the rows
+  example: 'Step 3 quitters (94): cannot-find-ui 38, misread-text 21, input-fail 12, other 23 (''other'' quotes listed)'
+  situation: 'Analyst asks why; the old pipeline has an MCQ ''reason for struggle: A/B/C/D'' per video that nobody aggregates'
+  consequence: 'Answer: ''cannot find map button 38 (40%), misread objective text 21 (22%), input not registering 12 (13%),
+    other 23'' each with 3 clips; the analyst files three tickets instead of one vague one'
+  grounded: quote
+  evidence: 'spec.md item 3: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: friction_reason enum defined per genre; step_state (analyst-2)
+  better_than_fixed_table: Reasons are aggregated across players with clips, instead of one option letter per video
+  contested_by: null
+  variants_of: null
+- id: cv-3
+  title: OCR text track per keyframe with region class (hud, objective-tracker, dialog, tooltip, error-popup, chat), stored
+    as a second timestamped text stream parallel to the speech transcript
+  part: ingestion
+  mechanism: PaddleOCR or cloud OCR on each keyframe; deduplicate identical text across consecutive keyframes into (text,
+    first_t, last_t) spans; index text in an inverted index alongside transcript
+  example: '''How many players saw the error popup "Inventory full" before quitting step 3?'' -> keyword search on ocr_spans.region_class=''error-popup''
+    AND text=''Inventory full'', joined to step-3 exit; answer: 61 of 500'
+  situation: The tutorial prompt text ('Press E to craft') is on screen for 4 s and the player never reads it aloud
+  consequence: Studio can ask 'did players see the craft prompt' and get a count with denominator; today the answer is unknowable
+  grounded: quote
+  evidence: 'memo.md: ''Video frames add screen state and on-screen text''; spec.md: ''What a transcript contains (speech
+    only, on-screen text, events)'''
+  scores:
+    impact: 4.0
+    confidence: 5.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 4.0
+  priority: 80.0
+  depends_on: cv-1
+  better_than_fixed_table: Any on-screen string is searchable after the fact; no question had to anticipate it
+  contested_by: null
+  variants_of: null
+- id: extract-7
+  title: 'Negative-evidence extraction: for every step in the game''s step list, emit an explicit row seen / not_seen / unknown
+    per session with the coverage basis, so ''how many players never opened X'' has a denominator'
+  part: ingestion
+  mechanism: 'Session-level pass after all videos: for each step_id in the game''s step list, output {status: seen|not_seen|unknown,
+    first_ts, basis: frames|speech|both|no_coverage}. unknown is forced when any video of the session is missing or when frame
+    coverage for the session is under 80%. Store step_presence(session_id, step_id, status, basis)'
+  example: 'Studio asks ''how many players never opened the inventory during the tutorial?'' Answer: ''85 of 445 players with
+    full coverage (19.1%); 55 sessions excluded for missing video, so the range is 85-140'''
+  situation: Studio asks how many players never reached the inventory tutorial; the store only has rows for things that happened,
+    and absence of a row can mean 'did not happen' or 'video 7 was not processed'
+  consequence: Chatbot reports 140 of 500 'never reached' when 55 of those are sessions with a missing video; the studio redesigns
+    a step that was fine
+  grounded: inferred
+  evidence: 'memo.md: ''closed-field questions become aggregate queries over all players (instant)'' (an aggregate needs a
+    denominator, and a missing row cannot distinguish absence from an unprocessed video)'
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: step list per game; session completeness flag from the stitcher
+  better_than_fixed_table: The fixed table cannot distinguish 'no' from 'not observed'; this stores both
+  contested_by: null
+  variants_of: clinical-13
+- id: stitch-27
+  title: 'Session roll-up pass: after per-segment extraction, one LLM call reads the session''s concatenated observation rows
+    (not raw transcript, about 2-4k tokens) and writes session-scope fields: quit_reason, churn_step, arc_summary, 3 representative
+    evidence URIs'
+  part: ingestion-extraction
+  mechanism: 'Changes ingestion and store: one extra call per session over 2-4k tokens; outputs are session-scope closed fields
+    queryable by SQL and an open summary for retrieval'
+  example: '''Top 3 reasons players quit the tutorial'' = GROUP BY quit_reason: ''could not find objective'' 17, ''combat
+    too hard'' 12, ''crash'' 8, each with 3 evidence URIs, in under 2s'
+  situation: The observation log has 400 rows for a session; the studio's most common question, 'why did this player quit',
+    needs a judgement over all of them
+  consequence: Answering at query time means reading 500 x 400 rows per question; answering per video gives 10 contradictory
+    quit reasons
+  grounded: quote
+  evidence: 'memo.md: ''Ingestion produces a session-level observation log, not answers'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: stitch-4
+  better_than_fixed_table: Session-scope answers are computed from the whole session rather than from one video
+  contested_by: null
+  variants_of:
+  - latency-10
+- id: latency-12
+  title: 'Precomputed question-answer bank: the top 200 ontology-generated questions per game are answered at ingestion for
+    the all-players cohort and the 8 standard segments, and the planner''s first branch is bank lookup'
+  part: question-generation
+  mechanism: Question generation output feeds an ingestion-time answer job; the chatbot's semantic cache (latency-2) is seeded
+    with the bank
+  example: 'Ontology question ''exit rate per tutorial step'' x segment ''mobile'' is precomputed; studio asks ''where do
+    mobile players drop in the tutorial'' -> bank hit, 110 ms: ''step 3: 44% of 212 mobile players; step 1: 9%; ...'''
+  situation: The ontology prunes to ~900 candidate questions; 200 of them (ranked by coverage of real studio questions, memo
+    point 3) are worth precomputing
+  consequence: Any studio question that paraphrases one of the 200 returns in under 200 ms with the stored evidence refs;
+    the remaining 700 are answered by cube or column scan in under 2 s; bank size x 9 cohorts = 1,800 rows per game per build,
+    trivial storage
+  grounded: quote
+  evidence: 'spec.md Constraints: "Ingestion time and cost are not a concern. Answering a studio''s question must be fast."'
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: ontology generator and a ranking signal (initially the owner's churn targets, later the query log)
+  better_than_fixed_table: It is the fixed table done 10x wider and per segment, generated instead of hand-written, and demoted/promoted
+    by usage rather than frozen
+  contested_by:
+  - convo-21
+  - longctx-8
+  - qgen-16
+  variants_of: null
+- id: qgen-10
+  title: 'Per-step transition templates: for each tutorial step in the entity table, generate exactly 6 questions (entered,
+    dwell_s, attempts, exit_reason enum, skipped, first_utterance_after_enter) from a step state machine'
+  part: question-generation
+  mechanism: question-generation emits the 6 templates per step; ingestion fills them from the screen-state classifier plus
+    transcript; store keeps the transition log as the source and the 54 fields as a materialised view
+  example: '''where do players drop in the tutorial'' -> exit_reason per step: step 7 has abandoned=18% vs <=4% elsewhere;
+    dwell p50 at step 7 is 6m40s; first utterance after entering step 7 is ''what now'' for 61 players'
+  situation: A tutorial has 9 steps; hand-written questions cover steps 1, 3 and 5 because those were the known problems
+  consequence: A stall at step 7 is invisible until a studio reads transcripts
+  grounded: quote
+  evidence: 'spec.md Known problems: "The question set is small, so most of what is in the video and transcript is never captured."'
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: screen-state classifier that recognises step boundaries; step list per game (qgen-2)
+  better_than_fixed_table: covers every step uniformly instead of the 3 someone guessed; timeline questions become a funnel
+    query
+  contested_by:
+  - convo-21
+  variants_of: owner-31
+- id: extract-3
+  title: 'Session state card carried across videos: after video k is extracted, a 200-token card (current step, unresolved
+    friction, player traits, inventory) is prepended to the video k+1 prompt and stored per boundary'
+  part: ingestion
+  mechanism: 'Extraction output for each video includes a state_card object: {current_step, open_frictions: [{label, since_ts}],
+    traits: [max 5 short strings], last_goal_stated}. The next video''s prompt starts with the card; the model must emit resolved_frictions
+    referencing since_ts when a friction closes. Store table session_boundary(session_id, video_idx, state_card_json)'
+  example: Studio asks 'how long did players who quit during the tutorial spend stuck before quitting?' Answer uses open_frictions
+    since_ts to end-of-session timestamps across videos; median 14 min 20 s over 37 churners, rather than per-video durations
+    capped at 15 min
+  situation: Video 5 of a 12-video session begins with the player saying 'still can't find it'; extracted alone, 'it' is unresolvable
+    and friction_type defaults to none
+  consequence: Cross-video stalls (the ones most likely to precede churn) are undercounted; a 40-minute hunt for the map button
+    appears as 3 unrelated low-severity rows
+  grounded: quote
+  evidence: 'spec.md: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos.''; ''Long
+    multi-video sessions.'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: ordered video index per session (spec says linkage is unspecified)
+  better_than_fixed_table: Fixed table answers per video and cannot express a friction that lasts across 3 videos
+  contested_by: null
+  variants_of: null
+- id: extract-28
+  title: 'Step identification with explicit fallback chain: step_id comes from the frame classifier, then OCR match of on-screen
+    prompt text against the step list, then speech; the chosen source and a confidence are stored, and rows with step_id=unknown
+    are excluded from step denominators with a coverage statement'
+  part: ingestion
+  mechanism: 'Per window: step_source in {frame_classifier, ocr_match, speech, unknown}, step_conf 0-1. OCR match: on-screen
+    prompt text fuzzy-matched (>=0.8) against the glossary''s step prompt strings. Speech fallback: the model infers step
+    from utterances with conf<=0.6. Materialised per game and build: step_coverage(step_id, n_players_identified, n_players_total).
+    Chatbot: any per-step answer prints ''step identified for 470 of 500 players''; an answer where coverage differs by more
+    than 10 points between two builds is flagged'
+  example: 'Studio asks ''did the stealth step stall rate improve in 1.2?'' Answer: ''1.1: 22% (step identified for 480 of
+    500); 1.2: 9% (step identified for 310 of 500, coverage drop flagged, classifier likely stale)'''
+  situation: The frame classifier is trained on build 1.1 screenshots; build 1.2 restyles the tutorial UI and step_id confidence
+    collapses for 2 of 9 steps
+  consequence: Step-level counts for those 2 steps silently drop to near zero and a compare-versions answer says the steps
+    were 'fixed'
+  grounded: quote
+  evidence: 'memo.md: ''step on screen'''
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: frame classifier; glossary with step prompt strings
+  better_than_fixed_table: The fixed table does not know how it decided which step it was answering about
+  contested_by: null
+  variants_of: null
+- id: playfill-10
+  title: 'Planner unit resolver: question nouns (boss, match, run, level, quest, floor, round, mission) map to unit_type,
+    named entities (''the Warden'', ''Drowned Bell'') fuzzy-match a unit_id from OCR''d labels, and the plan groups by play_unit
+    instead of falling to retrieval; a noun with no unit_type in the manifest gets a clarifying reply naming the declared
+    structure'
+  part: query-path
+  mechanism: 'Step 1: extract unit nouns and named entities. Step 2: map nouns to unit_type via lexicon; map names to unit_id
+    by edit distance (2 or less) or embedding cosine 0.85 or more against catalogue labels and aliases. Step 3: emit plan
+    over play_unit or cube. If no unit_type maps, reply ''This game is declared match-or-round-based; did you mean match?'''
+  example: '''Who quit after the Warden fight in hour 3?'' -> ''Warden'' maps to boss_warden_of_ash (edit distance 2 from
+    ''WARDEN OF ASH''); plan filters session_hour=2, outcome=failed, last in session: ''29 players, list with a clip of each
+    final attempt'', 0.8 s instead of a 6-minute backfill'
+  situation: Any non-step game (play-structure not in C-axes; nearest granularity level-quest-match-mission); the question
+    names a boss by a nickname the studio uses, not the on-screen label
+  consequence: Without the resolver the planner sees no matching closed field and starts a backfill of several minutes; with
+    it the same question is a filtered SQL query in under 1 s
+  grounded: inferred
+  evidence: 'memo.md: ''closed-field questions become aggregate queries over all players (instant)'' (routing to the instant
+    path depends on a closed field matching; mapping unit nouns and names to such a field is not described)'
+  scores:
+    impact: 4.0
+    confidence: 4.0
+    fit: 4.0
+    cost: 2.0
+    query_speed: 5.0
+  priority: 80.0
+  depends_on: playfill-1; unit catalogue with aliases
+  better_than_fixed_table: The fixed table has no entity names beyond tutorial steps; the resolver lets studio vocabulary
+    hit unit rows directly
+  contested_by: null
+  variants_of: null

@@ -62,5 +62,5 @@ with open('leaves.md','w') as f:
         f.write('\n## Audit: mode-collapse clusters\n')
         for c in H.get('mode_collapse',[]) or []: f.write(f"- {esc(c.get('theme'))} (about {c.get('approx_count')}; e.g. {', '.join((c.get('example_ids') or [])[:4])})\n")
     f.write('\n## Run stats\n')
-    f.write(f"- perspectives: 23 (18 written, 5 added by the critique stage)\n- axes: 20, values: 260 (critique added 6 axes)\n- raw leaves: 848; surviving after merge and cross-bucket dedupe: {len(R)}\n- scoring: 3 runs per leaf, medians by script; contest on top 25 with 2 judges\n- leaves per perspective (surviving): " + ', '.join(f'{k} {v}' for k,v in persp.most_common()) + '\n')
+    f.write(f"- perspectives: 23 (18 written, 5 added by the critique stage)\n- axes: 20, values: 260 (critique added 6 axes)\n- raw leaves: 848; 601 after in-bucket merge; 540 after cross-bucket dedupe; +93 from the audit fill of 8 empty cells (7 off-axis; fill yield 0.15 vs estimate 0.08) = {len(R)}\n- scoring: 3 runs per leaf, medians by script; contest on top 25 with 2 judges\n- leaves per perspective (surviving): " + ', '.join(f'{k} {v}' for k,v in persp.most_common()) + '\n')
 print('rows',len(rows),'scored',sum(1 for x in R if x['scores']),'verdict files',len(glob.glob('J-verdicts-*.yaml')))

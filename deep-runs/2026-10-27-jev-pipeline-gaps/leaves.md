@@ -662,6 +662,6 @@
 ## Run stats
 - perspectives: 23 (18 written, 5 added by the critique stage)
 - axes: 20, values: 260 (critique added 6 axes)
-- raw leaves: 848; surviving after merge and cross-bucket dedupe: 633
+- raw leaves: 848; 601 after in-bucket merge; 540 after cross-bucket dedupe; +93 from the audit fill of 8 empty cells (7 off-axis; fill yield 0.15 vs estimate 0.08) = 633
 - scoring: 3 runs per leaf, medians by script; contest on top 25 with 2 judges
 - leaves per perspective (surviving): fillA 47, fillB 46, percep 40, eval 33, l10n 31, auditor 31, chat 30, ops 30, sec 28, extract 27, privacy 26, stitch 24, moderator 24, cost 24, ds 22, onboard 22, speech 21, uxr 21, design 18, skeptic 17, player 17, qauthor 16, pipe 14, analyst 12, exec 12
