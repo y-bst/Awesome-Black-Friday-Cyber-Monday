@@ -12,7 +12,7 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 | positive options with `contested_by` | 5 |
 | refusal leaves kept (`refusal: true`) | 26 |
 | surviving | 159 |
-| leaves with cell values added in normalisation | 158 (971 values added) |
+| leaves with cell values added in normalisation | 158 (969 values added) |
 
 ## Rejected
 
@@ -157,7 +157,7 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 
 | value | leaves |
 |---|---|
-| own-players-consented-sdk | 100 |
+| own-players-consented-sdk | 99 |
 | recruited-playtesters | 2 |
 | platform-or-emulator-capture | 13 |
 | public-streams-and-ugc | 2 |
@@ -189,7 +189,7 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 | compliance-audit | 12 |
 | creative-insight-for-ads | 2 |
 | coaching-feedback | 0 |
-| training-dataset-export | 6 |
+| training-dataset-export | 5 |
 | cohort-comparison | 28 |
 | ask-a-question-over-footage | 15 |
 | build-to-build-regression-diff | 17 |
@@ -286,3 +286,13 @@ Buyer roles: analytics-bi, product-retention, engineering-performance. Cells wer
 
 0 leaves carry `uncategorised: true`.
 
+
+## Refusal leaves kept (refusal: true)
+
+cto-4, cto-8, cto-9, cto-21, cto-22, cto-23, ds-8, ds-20, ds-21, oem-16, oem-24, f2p-21, f2p-22, f2p-23, bi-25, bi-26, bi-27, bi-28, bi-30, indie-26, player-14, player-22, player-27, publisher-14, sdk-28, cfo-13
+
+Tagging rule: willingness_to_pay 1, plus publisher-14 (wtp 2, but the row records a refused seat licence). cto-27 and f2p-24/f2p-25 carry REFUSED/LOW titles but describe a bought option at wtp 2, so they are not tagged.
+
+## Normalisation method
+
+Values were added only from C-axes.yaml, by matching each leaf's own text per axis: buyer-role and buyer-org-type from `buyer`; video-source and companion-data from `input`; signal-extracted, analysis-type and automation-level from `title` + `mechanism`; delivery-form from `title` + `mechanism` + `proposed`; pricing-model from `title` + `mechanism` + `proposed` + `example` (comparator prices in `willingness_to_pay` were not used); effort from `cost` (S/M/L/XS) plus partner wording in `depends_on`. `evidence` and `why_existing_tools_cannot` were not used, because they describe other vendors. Cluster survivors also take the union of their absorbed members' cells. Null cell values were dropped.
