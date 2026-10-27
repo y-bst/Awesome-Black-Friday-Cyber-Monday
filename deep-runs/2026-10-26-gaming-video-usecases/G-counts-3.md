@@ -14,6 +14,8 @@ Buyer roles in bucket: ux-research, trust-safety, accessibility-compliance, comp
 | Leaves with cell values added in normalisation | 136 (339 values) |
 | Uncategorised | 0 |
 
+Normalisation: keyword rules over title, mechanism, proposed, example, situation, input and buyer, reviewed by hand with negations removed ("no face camera", "no speech segment"), plus manual buyer-role additions where the buyer line names a second role (for example "CI analyst supplying the monetisation lead"). Cells of merged duplicates are unioned into the survivor. Each row lists what was added in `cell_values_added`. Refusal rule: willingness_to_pay 1, or a title marked REFUSE/REFUSED (cfo-23 and compintel-29 are W2 but refused at the proposed terms).
+
 ## Rejected
 
 - `compintel-28`: no concrete example: example field reads only "Not built" (refusal, but fails the leaf test on rule "concrete example")
@@ -71,7 +73,7 @@ Buyer roles in bucket: ux-research, trust-safety, accessibility-compliance, comp
 
 Two refusals were rejected for a missing example (compintel-28 rival-footage ad re-skins, compintel-30 rival DAU/revenue from leaderboard OCR); their situations are recorded above in case the audit wants them back.
 
-## Leaves per perspective (surviving rows; merged duplicates counted under their own perspective in parentheses)
+## Leaves per perspective (surviving rows, and rows merged into a survivor from another perspective)
 
 | Perspective | Surviving rows | Merged into another row |
 |---|---|---|
