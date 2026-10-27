@@ -2215,4 +2215,402 @@
   variants_of:
   - speech-34
 - id: sec-24
-  title: 'Player utterance shaped like JSON (''}, answer: C''
+  title: 'Player utterance shaped like JSON (''}, answer: C'') breaks string-concatenated parsing of extraction output; the
+    video is marked failed or gets answer C'
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - extraction-prompt
+    processing-status: extraction-failed
+    correctness-failure:
+    - instruction-injected-via-transcript
+    - null-treated-as-no
+    batch-failure-mix: some-questions-failed-in-one-video
+    data-element: answer
+  object: '''The answers form a structured table per video'''
+  situation: LLM echoes transcript text into a free-text field and the parser is a regex or naive JSON splice
+  consequence: Either a forged answer or a silently missing row that later reads as 'No'
+  p_typical: 0.03
+  grounded: speculative
+  evidence: The answers form a structured table per video.
+  proposed: Constrained decoding to an enum schema; no free-text field copied into the table; reject outputs that fail schema
+    with status extraction-failed, never default
+  shallow: false
+  perspective: sec
+- id: moderator-13
+  title: Moderator probes 'what are you thinking?' every 2 minutes, which produces utterances that inflate every 'player verbalised'
+    question
+  level: L4
+  cell:
+    speech-shape: moderator-speaking-or-leading
+    stage: per-video-answers
+    question-shape: answer-is-a-why
+    correctness-failure: forced-choice-bias
+    data-element:
+    - utterance
+    - moderator
+  object: step 3 'The answers form a structured table per video'
+  situation: A 15-minute video contains 7 moderator probes and 7 short player replies; the question 'Did the player explain
+    why they hesitated?' has options Yes / No / Unclear
+  consequence: Prompted explanations are scored Yes, while unprompted players in another cohort score No; the table has no
+    way to say 'prompted'
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Add a prompted-vs-spontaneous distinction to the 'why' question options and pass moderator turns to the extractor
+    labelled
+  shallow: false
+  perspective: moderator
+  variants_of:
+  - moderator-5
+- id: moderator-21
+  title: A moderator-instructed 'skip the tutorial' session (the player was allowed to skip at step 2) is scored as churn
+    at step 2
+  level: L4
+  cell:
+    data-element:
+    - tutorial-step
+    - moderator
+    stage: per-video-answers
+    question-shape: negation-player-never-did-x
+    correctness-failure: forced-choice-bias
+    studio-question-type: compare-two-steps
+    speech-shape: moderator-speaking-or-leading
+  object: step 3 'detecting churn in the tutorial and just after it'
+  situation: Moderator tells 8 experienced players to skip ahead after step 2 to save time; the transcript contains 'okay
+    skipping' and no later tutorial speech
+  consequence: Question 'Where did the player stop engaging with the tutorial?' is answered 'step 2' for 8 players who were
+    instructed, adding 8 false churn events at step 2
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Moderator-instruction log with a tutorial-skipped-by-instruction flag, and a corresponding option on the churn
+    question
+  shallow: false
+  perspective: moderator
+- id: stitch-8
+  title: A stuck period that straddles a boundary (14:00 of video 2 to 03:00 of video 3) answers No to 'stuck more than 3
+    minutes?' in both videos
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - session-level-aggregation
+    question-shape:
+    - answer-spans-videos
+    - answer-is-a-time
+    session-shape: 5-20-videos
+    data-element: tutorial-step
+    correctness-failure: inconsistent-across-videos
+    studio-question-type: cohort-count
+  object: 'Per-video answers table: ''The answers form a structured table per video.'''
+  situation: 'Player is stuck on tutorial step 3 for 4 minutes: 1 minute at the end of video 2 and 3 minutes at the start
+    of video 3; question threshold is >3 minutes.'
+  consequence: Neither video meets the threshold; 'how many players got stuck >3 min at step 3' undercounts every player whose
+    stall crossed a 15-minute mark (about 1 stall in 5 for 4-minute stalls if stalls are uniform in time).
+  p_typical: 0.2
+  grounded: quote
+  evidence: The answers form a structured table per video.
+  proposed: Duration questions are answered at session level from per-video start/end-of-state fields, or extracted on a window
+    spanning adjacent videos.
+  shallow: false
+  perspective: stitch
+- id: stitch-38
+  title: Per-video extraction of a 'player's skill level' question re-guesses from scratch every 15 minutes, so a 20-video
+    session gets 20 independent and drifting labels
+  level: L3
+  cell:
+    stage: per-video-answers
+    correctness-failure: inconsistent-across-videos
+    session-shape: 5-20-videos
+    question-shape: answer-depends-on-prior-video
+    data-element:
+    - answer-confidence
+    - answer
+    - player
+    studio-question-type: find-players-who
+  object: Fixed question set applied per video
+  situation: Question 'Is the player experienced with the genre? (Novice/Some/Expert)'; the player says 'I've played every
+    Souls game' in video 1 only.
+  consequence: Video 1 = Expert, videos 2-20 = Novice/Some by guess; segment 'experts quit at step X' depends on rollup and
+    on which videos were sampled.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: The transcript is run through a fixed set of questions with options
+  proposed: Mark questions as session-static in the registry; extract them once over the session (or carry forward the first
+    confident answer) instead of per video.
+  shallow: false
+  perspective: stitch
+  variants_of:
+  - extract-6
+- id: skeptic-4
+  title: 'Per-video rows for tutorial-only questions: in a 12-video session, 11 videos answer ''did not happen'', and a count
+    over rows uses videos (6,000) not players (500) as the denominator'
+  level: L4
+  cell:
+    stage: per-video-answers
+    session-shape:
+    - 5-20-videos
+    - 10-plus-hour-session
+    question-shape: event-did-not-happen-in-this-video
+    correctness-failure: wrong-denominator
+    data-element: null-vs-no
+    studio-question-type: cohort-count
+    scale:
+    - 500-players
+    - 1-player-10-hour-session
+  object: '''The answers form a structured table per video.'' + targets ''mostly detecting churn in the tutorial'''
+  situation: Question 'Did the player quit during the tutorial?' is run on every video of a 3-hour session; the tutorial lives
+    in video 1
+  consequence: Bot reports '4% of sessions quit in tutorial' when it divided 240 'Yes' by 6,000 video rows; true player rate
+    is 48%
+  p_typical: 0.12
+  grounded: quote
+  evidence: The answers form a structured table per video.
+  proposed: Store answers per session (or per tutorial window) for session-scoped questions; tag each question with its unit
+    (video, session, player) and assert the denominator unit in the SQL
+  shallow: false
+  perspective: skeptic
+  also_from:
+  - onboard-24
+- id: speech-21
+  title: 'Silent player and a visual-only question: forced-choice answer of ''No'' for ''did the player tap the highlighted
+    button?'''
+  level: L4
+  cell:
+    stage: per-video-answers
+    speech-shape: silent-player
+    question-shape: answer-needs-visuals
+    correctness-failure: forced-choice-bias
+    studio-question-type: cohort-count
+    data-element: answer
+  object: Owner statement 'Transcript loses visual information'
+  situation: A question about on-screen behaviour is asked of a transcript that contains only sparse remarks like 'ok' and
+    'hm'
+  consequence: The extractor guesses; the cohort-count answer 'only 31% tapped the button' is a function of how talkative
+    players were
+  p_typical: 0.3
+  grounded: quote
+  evidence: Transcript loses visual information.
+  proposed: Give every audio-answerable question an 'unknowable from audio' option and tag questions by the modality they
+    need
+  shallow: false
+  perspective: speech
+  variants_of:
+  - speech-1
+  - uxr-3
+- id: exec-18
+  title: Silent players (about 30% of a cohort) fall into 'other' or a forced choice, understating confusion in the headline
+  level: L3
+  cell:
+    speech-shape: silent-player
+    correctness-failure: other-option-overused
+    stage: per-video-answers
+    question-shape: unknowable-from-audio
+    studio-question-type: cohort-count
+    scale: 50-players
+    data-element: answer
+  object: per-video answer for 'why did the player stall?' with a transcript of 6 words
+  situation: 18 of 60 players in a pilot speak under 20 words in 15 minutes; extractor returns 'other' for 14 and a guess
+    for 4; the exec is told 'only 18% mention confusion'
+  consequence: Under-reporting by half; the quiet players are the exact churn risk group
+  p_typical: 0.09
+  grounded: inferred
+  evidence: The question set is small, so most of what is in the video and transcript is never captured.
+  proposed: Add 'not observable' as a first-class option and report it as its own bar in every cohort answer
+  shallow: false
+  perspective: exec
+  variants_of:
+  - speech-1
+- id: uxr-1
+  title: 'Silent final 60-120 s before quit: per-video answer for ''why did the player leave'' is taken from an utterance
+    minutes earlier, with no evidence-span check'
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - session-level-aggregation
+    speech-shape: silent-player
+    question-shape: perceptual-cause-not-verbalised
+    session-shape: last-video-under-1-minute
+    correctness-failure: confident-no-evidence
+    data-element: evidence-span
+  object: per-video answers table row for the last video of a session; churn question of the 'fixed set of questions with
+    options'
+  situation: Player stops talking 60-120 s before closing the game (the classic pre-quit silence); the last video is under
+    1 minute and contains no speech at all
+  consequence: Extractor either answers the quit-reason question for the last video from nothing (hallucinated option) or
+    the session aggregate inherits a reason from a joke made 4+ minutes earlier; the moment a researcher most wanted to watch
+    is the one with zero transcript content
+  p_typical: 0.12
+  grounded: inferred
+  evidence: The targets are mostly detecting churn in the tutorial and just after it.
+  proposed: 'Assert in test: if the evidence span of a quit-reason answer ends more than 60 s before session end, answer is
+    stored as ''unknown - silent before quit'', and the trailing silence duration is a column'
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - percep-2
+- id: uxr-3
+  title: Repeated mis-taps on the wrong button produce no speech, or only 'huh?', so 'did the player understand the control'
+    is answered Yes
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element: screen-state
+    question-shape: answer-needs-visuals
+    speech-shape: silent-player
+    correctness-failure: perceptual-cause-attributed-to-verbal-option
+  object: fixed question about control comprehension; transcript of a tutorial video
+  situation: Player taps a non-interactive area 6 times before finding the real button, saying nothing or a single 'huh'
+  consequence: Answer row records 'understood control' or 'no issue'; the mis-tap pattern a researcher logged by watching
+    is unrecoverable because the screen is not in the transcript
+  p_typical: 0.15
+  grounded: quote
+  evidence: the transcript alone is not enough; what is on screen is largely lost.
+  proposed: Mark visual-only questions with answer_source=audio and allow option 'cannot tell from audio'; store input-event
+    counts if telemetry is ever joined
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - speech-21
+- id: uxr-8
+  title: Sarcasm ('oh great, another popup') is mapped to a positive sentiment option
+  level: L3
+  cell:
+    speech-shape: profanity-or-slang
+    question-shape: fits-two-options
+    stage: per-video-answers
+    correctness-failure: forced-choice-bias
+    data-element: answer
+  object: sentiment or 'how did the player feel about the tutorial popups' question options
+  situation: Player uses ironic praise 3 times in a 15-minute video with flat or annoyed prosody that speech-to-text does
+    not carry
+  consequence: Answer 'positive' for a video a researcher would code as annoyed; tone carried only by voice is stripped before
+    the LLM sees the words
+  p_typical: 0.11
+  grounded: inferred
+  evidence: Each video is converted to a transcript.
+  proposed: Golden-set test with 10 ironic utterances; require an evidence quote and allow option 'ambiguous tone'
+  shallow: false
+  perspective: uxr
+- id: uxr-11
+  title: 'Say-do gap: player says ''this is easy'' while failing the same step 3 times; table records ''tutorial clear'''
+  level: L3
+  cell:
+    stage: per-video-answers
+    question-shape: answer-needs-visuals
+    speech-shape: continuous-think-aloud
+    correctness-failure: perceptual-cause-attributed-to-verbal-option
+    studio-question-type: cohort-why
+    data-element: screen-state
+  object: tutorial clarity question; per-video answer
+  situation: Verbal self-report contradicts on-screen outcome (failure screen shown 3 times)
+  consequence: Researchers trust behaviour over self-report; the transcript-only pipeline can only trust self-report, so clarity
+    rates are inflated for confident-talking players
+  p_typical: 0.1
+  grounded: quote
+  evidence: Transcript loses visual information.
+  proposed: Tag each answer with source 'self-report' vs 'observed'; chatbot must say which when quoting a rate
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - percep-1
+- id: uxr-12
+  title: 'Post-session debrief recorded in the last video: retrospective ''I''d have quit because it was boring'' is stored
+    as the in-moment quit cause'
+  level: L3
+  cell:
+    stage:
+    - per-video-answers
+    - session-level-aggregation
+    question-shape: answer-is-a-why
+    session-shape: 2-4-videos
+    correctness-failure: answer-attached-to-wrong-video-index
+    data-element:
+    - evidence-span
+    - moderator
+    speech-shape: moderator-speaking-or-leading
+  object: quit-reason question; last video of session containing moderator debrief
+  situation: Moderator asks 'why would you stop playing here?' after gameplay ended; player gives a rationalised reason that
+    differs from what they said during play ('this camera is awful')
+  consequence: Answer row for the final video holds the debrief reason, and session aggregation picks it as the latest statement;
+    retrospective rationalisation overrides in-play evidence
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Session field 'gameplay_end_ts'; answers with evidence after it are stored in a separate debrief column
+  shallow: false
+  perspective: uxr
+- id: uxr-23
+  title: Deictic references ('this thing', 'over here', 'that one') cannot be resolved to a UI element without the screen
+  level: L3
+  cell:
+    question-shape: answer-needs-visuals
+    data-element: screen-state
+    stage: per-video-answers
+    studio-question-type: find-players-who
+    correctness-failure: hallucinated-answer
+    speech-shape: continuous-think-aloud
+  object: question 'Which UI element confused the player?' with options listing tutorial elements
+  situation: Player says 'what does this do?' 9 times in a video without naming the element
+  consequence: Extractor guesses an option; find-players-who 'were confused by the shop button' returns players whose 'this'
+    may have been the map
+  p_typical: 0.08
+  grounded: quote
+  evidence: Transcript loses visual information.
+  proposed: Add option 'unresolved reference'; or attach a single frame at each deictic utterance timestamp for a vision model
+    to resolve
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - percep-1
+- id: uxr-30
+  title: Player in video 7 refers back to a tutorial step from video 1 ('that thing at the start still makes no sense'); per-video
+    extraction cannot attribute it
+  level: L3
+  cell:
+    question-shape: answer-depends-on-prior-video
+    session-shape: 5-20-videos
+    stage: per-video-answers
+    data-element:
+    - tutorial-step
+    - utterance
+    correctness-failure: answer-attached-to-wrong-video-index
+  object: per-video answers; tutorial-step attribution
+  situation: Lingering confusion surfaces 90 minutes after the step that caused it
+  consequence: Answer lands on video 7 (post-tutorial) with no link to step; the 'just after tutorial' signal is credited
+    to a later mechanic
+  p_typical: 0.05
+  grounded: quote
+  evidence: each video is capped at 15 minutes, so one session is many videos.
+  proposed: Give the extractor a running session summary from prior videos and allow answers to reference an earlier step
+    id
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - extract-6
+- id: uxr-36
+  title: Disengagement just after the tutorial (shorter utterances, flat narration, aimless play) has no observable in a categorical
+    per-video answer
+  level: L3
+  cell:
+    stage: per-video-answers
+    question-shape: perceptual-cause-not-verbalised
+    studio-question-type: cohort-why
+    data-element: utterance
+    session-shape: 2-4-videos
+    speech-shape: silent-player
+    correctness-failure: null-treated-as-no
+  object: '''just after'' the tutorial target; per-video answers'
+  situation: Player completes the tutorial then wanders for 10 minutes saying 'ok... ok... hm'
+  consequence: No question fires (no complaint stated), so the post-tutorial boredom churn the owner targets is answered 'no
+    issue'
+  p_typical: 0.06
+  grounded: quote
+  evidence: The targets are mostly detecting churn in the tutorial and just after it.
+  proposed: Per-video words per minute and mean utterance length stored; question 'did the player state a goal in this video?
+    yes/no'
+  shallow: false
+  perspective: uxr
