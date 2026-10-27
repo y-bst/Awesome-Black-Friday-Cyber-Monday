@@ -107,9 +107,9 @@ None. Every row is L3/L4, names a spec.md, memo.md or A-frame object, and carrie
 - longctx-21: contests owner-23
 - platform-11: contests eval-13, askdata-26, ops-20, qgen-14, gur-9, designer-6, owner-1, owner-32, owner-23
 - platform-29: contests owner-23
-- owner-7: contests (no direct positive in this bucket)
+- owner-7: absorbed into convo-19 (same refusal)
 - publisher-4: contests analyst-22, extract-11, planner-12, convo-2, datateam-22
-- qgen-15: contests (no direct positive in this bucket)
+- qgen-15: absorbed into convo-19 (same refusal)
 - qgen-16: contests latency-12
 - privacy-13: contests convo-34, gur-23, obs-17, qgen-28, qgen-12, uxrepo-5
 - sec-29: contests owner-25, platform-26, privacy-34
