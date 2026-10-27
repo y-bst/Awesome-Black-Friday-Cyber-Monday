@@ -1,0 +1,339 @@
+# Stage E2 targeted fill, audit 1 empty cell 1 (netcode as the player saw it). Persona: cto-or-engine-lead-veto re-walked as the
+# online-services / netcode lead; positive options. label_neighbour not repeated: support-16, oem-15, cto-18 (fps, thermal, hitches);
+# also kept clear of tns-1, tns-2, tns-11, tns-16 (generic report clips and cheat second-look), esports-4 (reaction latency), cto-6 and
+# data-14 (replay re-render). Off-axis companion data is named in `companion-data-off-axis`, since C-axes has no server-log value.
+- id: netcode-1
+  title: "Tick-stamped ring buffer: each captured frame carries a 16-byte sidecar (client frame no., last server snapshot tick, RTT estimate, interp delay ms, prediction-error mm) so any clip can be laid against the server log tick by tick"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: root-cause-of-a-metric-change, delivery-form: api-or-sdk, game-platform-and-genre: competitive-multiplayer, capture-trigger-and-sampling: always-on-ring-buffer, constraint-to-overcome: joining-video-to-events, processing-location: on-device, effort: M-one-quarter, companion-data: telemetry-events, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "The netcode layer's own per-frame state (last acked snapshot tick, smoothed RTT, interpolation delay) that the engine already holds in memory; the 30-120 s on-device ring buffer pattern in methods-churn-funnel.md section 7 (b)"
+  situation: "A PC and console 5v5 shooter at 64 Hz server tick: the netcode lead cannot use any player clip as evidence because the video has a wall-clock timestamp and the server log has a tick number, and client clocks drift 20-80 ms"
+  consequence: "Without the sidecar every netcode option below is guesswork on alignment; with it, frame N of a clip maps to server tick T and RTT R to within one frame (16.6 ms at 60 fps)"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7 INFERRED (b): 'a 30-120 s on-device ring buffer uploaded only on trigger ... as Sentry does for errors'; methods-churn-funnel.md section 6: Sentry onErrorSampleRate keeps 'about the last minute before the error'"
+  proposed: "Engine plugin (Unreal NetDriver hook, Unity Netcode for GameObjects / Photon Fusion callback) that writes 16 bytes per frame into the encoder's SEI/user-data channel; server log keyed by match ID and tick"
+  shallow: false
+  mechanism: "The capture SDK embeds the netcode state in the video stream itself, so the clip and the server's per-tick log join on (match_id, tick) with no clock sync step; all analysis runs in the vendor cloud on trigger uploads only"
+  example: "A clip uploaded after a 'that's not fair' report: frame 3,412 = server tick 118,902, RTT 74 ms, interp 31 ms; the server's lag-compensated hitbox history for that tick is pulled and overlaid automatically"
+  cost: M
+  depends_on: "A low-cost capture path (cto-5 hardware encoder) and the cto-2 self-cost limiter; one integration per netcode stack (Unreal, NGO, Photon, custom)"
+  buyer: "Lead network or online-services programmer at a PC/console competitive multiplayer studio; CTO signs the allow-list"
+  input: "Consented ring-buffer video plus the engine's per-frame netcode state; server per-tick logs (hit validation, snapshot send, region, server instance ID)"
+  why_existing_tools_cannot: "adjacent-usecases.md section 9: no vendor ships a rolling game-client buffer at all; market.md section 2: IV Metrics, PostHog and UXCam record screens with no engine or server tick join; adjacent-usecases.md section 2: anti-cheat work is server-side ML on input and timing with no video"
+  willingness_to_pay: "3 - enabler, not bought alone; the paying use is the options below; Sentry-style on-error buffering is a pattern studios already accept (methods-churn-funnel.md section 6)"
+
+- id: netcode-2
+  title: "'I shot first' hit-registration adjudicator: victim and shooter clips at the same tick, server's rewound hitbox overlaid, each disputed death classed as lag-comp cap exceeded, favour-the-shooter window, hitbox/animation desync bug, or clean miss"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: player-skill-and-mechanics, analysis-type: root-cause-of-a-metric-change, delivery-form: issue-tracker-ticket, game-platform-and-genre: competitive-multiplayer, capture-trigger-and-sampling: on-player-report, automation-level: auto-created-ticket-or-asset, companion-data: touch-and-controller-input, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "The server's lag-compensation rewind (hitbox positions stored per tick, rewind cap e.g. 200 ms) and the player's crosshair over the enemy model in the shooter's frame at fire time"
+  situation: "After patch 7.2, 'my shots don't register' posts triple on Reddit; telemetry shows hit rate flat, so the netcode team cannot tell a perception problem from a hitbox bug"
+  consequence: "Only the 'hitbox/animation desync' class becomes a Jira ticket (with the frame pair and tick); the others become counts by region and ping bucket, so the team stops chasing 1,000 anecdotes"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 2 'What is manual today': players submit video clips and forum posts by hand; adjacent-usecases.md section 3: 'only about 23% of player reports contained actionable evidence'"
+  proposed: "On a 'shot did not register' report button or on a server-side 'fire with crosshair-on-model but no hit' event, upload 3 s around the shot; classifier outputs one of 4 classes with the frame pair and the rewound hitbox render"
+  shallow: false
+  mechanism: "Vision locates crosshair and enemy silhouette in the shooter's frame at the fire tick; server log gives the rewound hitbox at (fire tick - RTT - interp); if the silhouette and the rewound hitbox diverge by more than 5 cm with RTT under the cap, it is an animation-replication bug and a ticket is filed"
+  example: "1,240 disputed shots in 48 h: 61% clean misses, 22% RTT over the 200 ms cap (mostly Sao Paulo players on the Virginia server), 14% favour-the-shooter, 3% hitbox lag on the new crouch-slide animation; one ticket, fixed in 7.2.1"
+  cost: M
+  depends_on: "netcode-1 tick sidecar; server hit-validation log retained 72 h"
+  buyer: "Netcode lead at a PC/console shooter studio (5v5 tactical, battle royale)"
+  input: "Shooter and victim ring-buffer clips, controller or mouse input, server hit-validation and rewind log"
+  why_existing_tools_cannot: "adjacent-usecases.md section 2: Vanguard and Ricochet publish server-side ML on input/timing/recoil, not video; no vendor in market.md section 9 joins player footage to server state"
+  willingness_to_pay: "4 - hit-reg complaints are a top live-service grievance and the studio already staffs this by hand; no published price, enterprise quote like anti-cheat (adjacent-usecases.md section 2 'Price signals: None published. INFERRED: enterprise quote only')"
+
+- id: netcode-3
+  title: "Cross-POV desync detector: two consented players in the same match, frames at the same server tick compared on shared world state (door open vs closed, enemy alive vs ragdoll, objective owner), mismatches lasting 300+ ms filed per build"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: build-to-build-regression-diff, lifecycle-moment: new-version-release, delivery-form: issue-tracker-ticket, game-platform-and-genre: competitive-multiplayer, capture-trigger-and-sampling: random-sample, companion-data: build-and-config-metadata, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Replicated actors whose state the server owns (doors, destructibles, capture points, death state); two clients' frames tagged with the same tick via netcode-1"
+  situation: "A new build changes replication priority to save bandwidth; on 1-2% of matches one teammate sees a door open and walks into it while another sees it closed, and no counter flags this because each client is self-consistent"
+  consequence: "Desync that is invisible to single-client telemetry becomes a per-build rate ('door-state mismatches per 1,000 match-minutes: 0.4 on 7.1, 6.8 on 7.2') with two side-by-side clips per ticket"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 4: computer vision on game UI reads HUD and state from frames; market.md section 9: 'Session-replay SDKs record or screenshot but do not interpret game state'"
+  proposed: "Sample 2% of matches where 2+ players are consented; for each tick bucket, run a per-game state reader on both POVs and diff a list of 20 replicated objects"
+  shallow: false
+  mechanism: "Per-title object detector (door, capture-point flag colour, enemy health bar) reads state from both POVs; server log is the referee; a disagreement with the server on one client for more than 300 ms is a desync event keyed by object class, build and region"
+  example: "Build 7.2: destructible-wall state disagrees between squadmates in 3.1% of Frankfurt matches vs 0.2% on 7.1; root cause a relevancy-distance change; ticket includes two clips and the actor ID"
+  cost: L
+  depends_on: "netcode-1; per-title state reader (structured-game-state-reconstruction) for 20 object classes; matches with 2+ consented players"
+  buyer: "Netcode or online-services lead; QA director reads the per-build rate at release gate"
+  input: "Two or more players' consented clips from the same match plus build metadata and server state log"
+  why_existing_tools_cannot: "market.md section 3: AI QA agents (modl.ai, nunu.ai, Razer) test builds with bots in isolation, not live multi-client matches; adjacent-usecases.md section 1: video bug detection is per-stream"
+  willingness_to_pay: "3 - QA spend is proven (outsourced QA USD 15-50/hour, adjacent-usecases.md 'Signals of willingness to pay') but multi-client desync is a narrow bug class"
+
+- id: netcode-4
+  title: "Peeker's-advantage meter from esports VOD: for each first-contact duel, frames between attacker first seeing the defender and defender first seeing the attacker, read from both player POVs, per server region and tick rate (64 vs 128 Hz)"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: esports-vod, signal-extracted: player-skill-and-mechanics, analysis-type: cohort-comparison, delivery-form: per-cohort-report, game-platform-and-genre: competitive-multiplayer, value-lever-b2b: create-data-that-did-not-exist, companion-data: telemetry-events, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Pro league POV VODs (all 10 player cams recorded per match) and the match's server tick rate and per-player ping"
+  situation: "Pros claim peeker's advantage is worse on the new Seoul servers; the studio's server log shows ping but not the asymmetric visibility delay players actually experience on screen"
+  consequence: "A measured 'peeker's window' (e.g. 71 ms Seoul vs 48 ms Frankfurt at 128 Hz) decides whether to raise tick rate or move the league's server, instead of arguing from anecdotes"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 8: ClutchLabs derives VOD metrics 'without data feeds'; esports VOD is already recorded per player; market.md section 9: 'Relo-style CV exists in sports but was not found for in-game moments or esports'"
+  proposed: "Per duel, detect first frame of enemy silhouette in each POV, align POVs by the broadcast round timer OCR, subtract, aggregate by region and tick rate"
+  shallow: false
+  mechanism: "Enemy-visible detector run on both POVs; alignment by OCR of the round clock and kill-feed; window = attacker-first-sight minus defender-first-sight; server log adds RTT per player so the residual not explained by ping is attributed to tick and interpolation"
+  example: "Champions qualifier, 2,400 duels: median window 64 ms at 64 Hz and 41 ms at 128 Hz; the league moves playoff servers to 128 Hz and the studio budgets the extra server cost"
+  cost: M
+  depends_on: "League VOD rights for per-player POV; per-title enemy-visible detector"
+  buyer: "Netcode lead at the publisher of an esports title; league operations co-funds"
+  input: "Esports POV VODs plus server tick rate, region and per-player ping from the match log"
+  why_existing_tools_cannot: "adjacent-usecases.md section 8: Mobalytics, StatStack, ClutchLabs and Omnic sell player-skill metrics to players and teams, none measures network fairness; esports-4 measures reaction latency, not the network-induced window"
+  willingness_to_pay: "3 - publisher engineering budget, no price signal in the notes; nearest is Hudl at USD 1,500 per programme per year (adjacent-usecases.md section 8)"
+
+- id: netcode-5
+  title: "Tick-rate A/B explainer: 30 Hz vs 60 Hz servers in two regions, visible rubber-band snaps per match-minute and fire-to-hit-marker frames per arm, next to server cost per CCU, so the tick decision has a player-facing number"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: ab-test-variant-explanation, lifecycle-moment: ab-test-running, delivery-form: per-cohort-report, game-platform-and-genre: competitive-multiplayer, value-lever-b2b: de-risk-a-go-kill-decision, companion-data: telemetry-events, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Server fleet config (tick rate per region) and the cloud cost line per concurrent user; local-camera snap-back events and hit-marker frames in consented clips"
+  situation: "Doubling tick rate on a 60-player battle royale roughly doubles server CPU; finance asks whether players will notice, and retention A/B tests take 4 weeks to read"
+  consequence: "Within 5 days the test reads 'rubber-band snaps over 30 cm: 2.1 vs 0.6 per match-minute; fire-to-marker 5.2 vs 3.4 frames' with 10 example clips per arm, beside D7 and cost per CCU"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 1: event analytics judges funnels by counts and cannot see what the player saw (section 2); adjacent-usecases.md section 6: 'reliable fps/load measurement uses in-game profiling' (so video's edge is perception, not counters)"
+  proposed: "Random 1% sample of matches per arm, 60 s ring-buffer uploads every 10 minutes of play; snap detector on camera optical flow; arm label from server config"
+  shallow: false
+  mechanism: "Optical-flow discontinuity on the local camera (backwards jump over 30 cm with no player input reversal) counts as a visible correction; hit-marker detector times frames from muzzle flash to marker; results split by arm, ping bucket and device"
+  example: "EU-West at 60 Hz: visible snaps fall 71%, D7 flat; NA-East at 60 Hz: snaps fall 18% because NA players are ping-bound; the studio ships 60 Hz in EU only and saves the NA spend"
+  cost: M
+  depends_on: "netcode-1; an A/B framework at server-fleet level"
+  buyer: "Head of online services or CTO at a battle royale or extraction shooter studio; CFO is the second reader"
+  input: "Consented ring-buffer samples, controller input, server tick config per match, cloud cost per region"
+  why_existing_tools_cannot: "market.md section 2 and 6: GameAnalytics, IV Metrics and UXCam report events and screens, none counts visible corrections; methods-churn-funnel.md section 2: event analytics 'cannot see' what was on screen"
+  willingness_to_pay: "4 - the decision is a server bill in the millions per year; the closest priced analogue is UXCam's median USD 21k/year for replay (market.md 'Signals of willingness to pay')"
+
+- id: netcode-6
+  title: "ISP-route incident alert during a live event: visible rubber-band rate in sampled clips spikes 4x for one ASN (e.g. one Brazilian ISP) while other ISPs in the region are flat; Slack alert to live-ops with 3 clips, the ASN, and the relay to reroute through"
+  level: L4
+  cell: {buyer-role: live-ops, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: anomaly-alert, lifecycle-moment: live-event-or-update, delivery-form: alert-or-slack, game-platform-and-genre: competitive-multiplayer, capture-trigger-and-sampling: on-crash-or-anomaly, companion-data: telemetry-events, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Client IP's ASN and region from the matchmaking log; per-ASN rate of visible snaps from netcode-5's detector"
+  situation: "Saturday of a season-launch event: 18,000 players in Sao Paulo are rubber-banding; ping graphs look normal because packet loss and jitter on one ISP's peering path are not in the ping average"
+  consequence: "Live-ops posts a known-issue message in 20 minutes instead of after 600 support tickets, and the network team turns on the alternate relay for that ASN"
+  p_typical: 0.11
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 7: live-ops monitoring of events is staffed by hand; methods-churn-funnel.md section 7 (b): trigger-based ring-buffer uploads"
+  proposed: "Detector runs on-device on the ring buffer; only counts are sent each minute, with clip upload when the session's snap count passes 5 per minute"
+  shallow: false
+  mechanism: "On-device snap counter emits a 4-byte metric per minute; the backend computes per-ASN baselines over 7 days and alerts at 4x; three representative clips are uploaded for the alert so a human sees the problem, not a chart"
+  example: "Event day 1, 14:20 BRT: Vivo-fibre ASN snaps 9.1/min vs 1.8 baseline, Claro flat; alert links clips; reroute via the Rio relay at 14:42; tickets for 'lag' stop growing"
+  cost: S
+  depends_on: "netcode-5 snap detector running on-device; ASN lookup in matchmaking; a relay or route-override control"
+  buyer: "Live-ops manager or live-service network ops at a competitive multiplayer publisher"
+  input: "On-device snap counts and 3 trigger clips; matchmaking log with ASN, region, server instance"
+  why_existing_tools_cannot: "adjacent-usecases.md section 9: Helpshift captures device, version and session state but no video; support-16 and oem-15 diagnose local fps and thermal lag, not route-level network lag"
+  willingness_to_pay: "3 - live-ops buys incident speed; ticket deflection is priced per issue in Helpshift (adjacent-usecases.md section 9: monthly fee plus per-issue rate)"
+
+- id: netcode-7
+  title: "Lag-switch vs genuine-lag ruling for a T&S report: accused's server-side packet gaps (inputs silent 400-1,500 ms then burst-delivered) matched to the reporter's clip showing the accused teleporting into a kill; clean jitter elsewhere in the match"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: bot-or-fraud-behaviour, analysis-type: evidence-pack-for-enforcement, delivery-form: enforcement-or-cert-evidence-pack, game-platform-and-genre: competitive-multiplayer, capture-trigger-and-sampling: on-player-report, constraint-to-overcome: accuracy-and-trust, companion-data: touch-and-controller-input, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Server input-receipt log per player (gap length, burst size, timestamps of buffered inputs) and the reporter's clip around the reported kill"
+  situation: "'He's lag switching' reports on console ranked: some are real (deliberate packet holding), most are players on bad Wi-Fi; banning the second group is a false accusation"
+  consequence: "Pack shows pattern 'gap only when in combat, 9 of 9 kills preceded by a 600-900 ms gap, burst of 40+ inputs' vs 'random gaps across the match'; the moderator rules with evidence instead of guessing"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 2: server-side LSTM at 88.6% accuracy, 'authors stress false accusations as the key risk'; FACEIT says 'no ban is triggered solely by its flag'"
+  proposed: "Correlate gap timing with combat state (from the clip: enemy on screen, damage taken) over the whole match; output a 1-page pack with the 3 clearest gap-kill clips and the gap histogram"
+  shallow: false
+  mechanism: "Server log flags input gaps; reporter and other consented players' clips show what the gap looked like (accused frozen then teleported); a combat-conditioned gap ratio above 5x the non-combat ratio marks deliberate lag switching"
+  example: "Ranked report on a PS5 player: combat gap ratio 11x, kills during gap-burst 9 of 9; 30-day ban upheld on appeal using the pack; a second accused with ratio 1.1x is cleared and the reporter gets a 'network issue, not cheating' reply"
+  cost: M
+  depends_on: "netcode-1; server input-receipt log retained 7 days; tns-16 tamper-evident pack format"
+  buyer: "Trust and safety lead or anti-cheat ops lead at a console or PC competitive publisher"
+  input: "Reporter's ring-buffer clip, accused's server input-receipt log, match combat events"
+  why_existing_tools_cannot: "adjacent-usecases.md section 2: Anybrain and FACEIT Human Input Detection judge inputs, not network timing seen on screen; tns-2 second-looks cheat flags but has no packet-gap evidence"
+  willingness_to_pay: "4 - T&S teams pay at scale (Modulate up to USD 20,000/month, adjacent-usecases.md section 3); 77% of reports lack actionable evidence (same section)"
+
+- id: netcode-8
+  title: "'Died behind the wall' report filter: cheat reports whose clip shows the reporter killed after reaching cover are matched to the server's rewound position and auto-answered as lag compensation, not wallhack, and counted per region for the netcode team"
+  level: L4
+  cell: {buyer-role: trust-safety, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: root-cause-of-a-metric-change, delivery-form: issue-tracker-ticket, game-platform-and-genre: competitive-multiplayer, capture-trigger-and-sampling: on-player-report, automation-level: recommendation, value-lever-b2b: reduce-cost-per-incident, companion-data: support-ticket-text, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Moderation queue category 'wallhack/aimbot'; the server's rewound hitbox position of the victim at the shooter's fire tick vs the victim's own POV at death"
+  situation: "A third of 'wallhack' reports in a 5v5 shooter are victims killed 100-180 ms after they reached cover on their own screen; moderators spend 4 minutes each before closing them"
+  consequence: "Those reports leave the cheat queue with an explanation card to the reporter; the per-region count ('behind-cover deaths per 100 deaths: 7.2 in OCE vs 2.1 in EU') goes to the netcode team as a KPI ticket"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 3: 'only about 23% of player reports contained actionable evidence'; adjacent-usecases.md section 2: players submit clips of suspected cheaters by hand"
+  proposed: "Classifier: victim on-screen position at death inside cover polygon AND server rewind shows victim exposed at (fire tick - shooter RTT) AND shooter RTT under cap -> 'lag compensation' class"
+  shallow: false
+  mechanism: "Victim POV frame at death plus map cover geometry gives 'in cover on own screen'; server rewind gives 'exposed on shooter's timeline'; if both, the report is reclassified and a weekly aggregate ticket is filed for netcode by region and ping gap"
+  example: "Week 12: 3,900 wallhack reports, 1,310 reclassified as lag comp (most from players with 140+ ms vs shooters at 20 ms); moderators save about 87 hours; netcode ticket proposes lowering the rewind cap from 200 to 140 ms"
+  cost: M
+  depends_on: "netcode-1; map cover geometry per map; tns-1 report-button clip attach"
+  buyer: "Trust and safety lead (queue cost) with netcode lead as second consumer"
+  input: "Victim's report clip, reporter's free-text reason, server rewind log, shooter RTT"
+  why_existing_tools_cannot: "adjacent-usecases.md section 3: GGWP and Modulate classify voice and text, not gameplay frames; tns-11 summarises report clips but does not test them against server rewind"
+  willingness_to_pay: "4 - moderator hours are a direct cost and the queue is mostly unactionable (77% per adjacent-usecases.md section 3)"
+
+- id: netcode-9
+  title: "Esports referee desync ruling kit: when a team pauses for a netcode dispute, both teams' POV VODs and the server demo are tick-aligned within 3 minutes and the referee sees a 4-panel replay plus 'server saw / player saw' delta for the disputed event"
+  level: L4
+  cell: {buyer-role: esports-team-or-league, video-source: esports-vod, signal-extracted: structured-game-state-reconstruction, analysis-type: evidence-pack-for-enforcement, delivery-form: enforcement-or-cert-evidence-pack, game-platform-and-genre: competitive-multiplayer, lifecycle-moment: live-event-or-update, automation-level: insight-for-human, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "The league rulebook's technical-pause and round-restart clauses; per-player POV recordings and the server demo file of the match"
+  situation: "Online qualifier, round 22: a player claims his defuse was not registered; under the ruleset the referee must decide restart or play-on, and today rewinds a spectator demo by hand for 15 minutes"
+  consequence: "A ruling in 3-5 minutes with an archived pack, which the losing team can see; fewer forfeits and disputes after the event"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "adjacent-usecases.md section 8: 'coaches/analysts scrub VODs and comment by hand'; Insights.gg is annotation, not automated analysis"
+  proposed: "Referee console: pick the disputed timestamp; system aligns POVs by tick and shows defuse input frame, server receipt tick and the player's RTT"
+  shallow: false
+  mechanism: "Ingest POV VODs live from the league's recorder plus the server demo; event detector finds the disputed action (defuse, plant, shot) in POV; server log gives receipt tick; delta and a 4-panel clip are rendered for the referee"
+  example: "Defuse input at POV frame tick 51,204, server received at 51,209 (78 ms), spike timer ran out at 51,207: server-correct, play on; pack posted to the dispute channel"
+  cost: M
+  depends_on: "League per-player POV recording; server demo access from the publisher"
+  buyer: "League operations or tournament integrity officer at a third-party league or publisher-run circuit (off-axis buyer in the netcode cell)"
+  input: "Esports POV VODs, server demo, per-player ping"
+  why_existing_tools_cannot: "adjacent-usecases.md section 8: StatStack, Mobalytics, ClutchLabs sell coaching metrics; tns-24 checks stream-sniping, not netcode rulings"
+  willingness_to_pay: "2 - leagues pay modestly (StatStack Organization USD 149/month, Hudl USD 1,500/programme/year, adjacent-usecases.md section 8); value rises with prize pool"
+
+- id: netcode-10
+  title: "Muzzle-flash-to-hit-marker clock from VOD alone: frame count from muzzle flash to hit marker in pro POVs estimates each player's effective RTT per match, so a league can verify 'equal ping' claims on online events without server access"
+  level: L4
+  cell: {buyer-role: esports-team-or-league, video-source: esports-vod, signal-extracted: performance-fps-and-load, analysis-type: cohort-comparison, delivery-form: per-cohort-report, game-platform-and-genre: competitive-multiplayer, companion-data: none-video-only, value-lever-b2b: create-data-that-did-not-exist}
+  object: "Server-confirmed hit markers in games where the hit marker waits for server confirmation; 60 or 144 fps POV captures"
+  situation: "Online regional league for a third-party shooter; teams in Cairo and Riyadh play on a Bahrain server and the Cairo team protests that their ping is 80 ms higher than shown on the scoreboard"
+  consequence: "League has an independent RTT estimate per player (median of 200+ hits) from footage only, and can reseat servers or add a ping cap rule"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "adjacent-usecases.md section 8: ClutchLabs offers 'VOD-derived metrics without data feeds'"
+  proposed: "Detector for muzzle flash and hit marker; per-hit delay in frames times frame time; subtract the title's fixed client delay measured once on LAN"
+  shallow: false
+  mechanism: "Per-title calibration on LAN (0 ms network) gives the fixed client latency; online VODs give total delay; the difference is the network round trip as seen by the player"
+  example: "Cairo players median 112 ms, Riyadh 34 ms against scoreboard 70 and 30; league moves the next split to a Frankfurt-Bahrain midpoint and publishes the numbers"
+  cost: S
+  depends_on: "Title where hit marker is server-confirmed; LAN calibration footage"
+  buyer: "League operations at a third-party esports organiser"
+  input: "Esports POV VODs only"
+  why_existing_tools_cannot: "adjacent-usecases.md section 8: no listed tool measures network delay from VOD; esports-4 measures human reaction time, not network RTT"
+  willingness_to_pay: "2 - small league budgets (StatStack USD 49-149/month, adjacent-usecases.md section 8)"
+
+- id: netcode-11
+  title: "Remote-player jitter vs interpolation-delay tuner: visible stutter of enemy models (position steps over 8 cm between frames) measured per ping and loss bucket at interp 50/75/100 ms, with a recommended per-region interp default"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: cohort-comparison, delivery-form: per-cohort-report, game-platform-and-genre: competitive-multiplayer, automation-level: recommendation, capture-trigger-and-sampling: random-sample, companion-data: telemetry-events, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Client interpolation-buffer setting (ms) per region, packet-loss and jitter per session; tracked enemy model positions frame to frame"
+  situation: "The netcode team set interp to 100 ms globally to hide loss in South-East Asia; EU players complain enemies feel 'behind', but lowering it risks visible stutter for lossy players"
+  consequence: "A curve per region ('at 2% loss, 50 ms interp = 4.1 visible steps per second; 75 ms = 0.6') lets the team ship 60 ms in EU and keep 100 ms in SEA, with evidence"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7 (c): low-fps sampling suffices for UI state (so motion smoothness needs 60 fps short clips instead, a cost the ring buffer bounds)"
+  proposed: "Server-side randomised interp setting for 5% of sessions; 10 s 60 fps clips with enemies on screen; tracker measures step size distribution"
+  shallow: false
+  mechanism: "Enemy-model tracker computes per-frame displacement; steps above 8 cm at under 6 m/s speed count as visible jitter; aggregated by interp setting, loss and jitter bucket, and region"
+  example: "Patch 8.0 ships region-specific interp: EU 60 ms, NA 75 ms, SEA 100 ms; follow-up clips show EU 'enemy behind' complaints down and no stutter rise"
+  cost: M
+  depends_on: "netcode-1; per-title enemy tracker; server-controlled interp experiment"
+  buyer: "Netcode lead at a PC/console shooter or fighting-game studio"
+  input: "60 fps consented ring-buffer clips, interp setting, session loss and jitter, region"
+  why_existing_tools_cannot: "adjacent-usecases.md section 6: GameBench and device clouds measure local fps and frame stability, not remote-entity smoothness; cto-18 hitch clips are local frame-time spikes"
+  willingness_to_pay: "3 - engineering tooling, quote priced; no direct price in the notes"
+
+- id: netcode-12
+  title: "Server-tick overrun finder: when one server instance drops from 60 to 35 ticks per second, every consented clip from that match shows world-wide rubber-banding at the same tick; the clips show what was on screen (30 grenades, 12 vehicles) and the ticket names the ability or map zone"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: root-cause-of-a-metric-change, delivery-form: issue-tracker-ticket, game-platform-and-genre: competitive-multiplayer, capture-trigger-and-sampling: on-crash-or-anomaly, automation-level: auto-created-ticket-or-asset, companion-data: build-and-config-metadata, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Server frame-time log per instance (achieved tick rate per second), match ID, map coordinates; the end-circle scene in clips"
+  situation: "Battle royale final circles: server tick rate falls under load, every player rubber-bands at once, and server logs show the drop but not what game situation caused it"
+  consequence: "Instead of 'server perf bad late game', the ticket reads 'tick drop in 64% of incidents when 8+ smoke grenades plus 2+ vehicles in final circle on map Delta, build 4.6' with 5 clips"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "market.md section 3: Razer QA Companion and ManaMind detect bugs in builds, not live server load; methods-churn-funnel.md section 4: CV reads in-game state from frames"
+  proposed: "Server tick drop below 80% of target for 2+ s triggers upload requests to all consented clients in that match; VLM tags the scene (counts of grenades, vehicles, players visible) and clusters incidents"
+  shallow: false
+  mechanism: "Server-side trigger fans out an upload request; scene tagger lists visible entities and effects; incidents clustered by scene features, map zone and build; the top cluster becomes a ticket with server profile capture"
+  example: "Build 4.6: 412 tick-drop incidents in a week, 64% with 8+ smoke grenades in the circle; fix caps smoke particle simulation on the server; incidents fall to 90"
+  cost: M
+  depends_on: "netcode-1; server-to-client upload request channel; consent on 2+ clients per match"
+  buyer: "Server or online-services engineering lead at a battle royale or large-lobby shooter"
+  input: "Consented clips from every player in the affected match, server tick log, build config"
+  why_existing_tools_cannot: "adjacent-usecases.md section 6: performance tools measure the client device; no vendor in market.md shows the scene behind a server-side perf drop"
+  willingness_to_pay: "3 - server cost and player-facing quality both move; no price signal in the notes"
+
+- id: netcode-13
+  title: "New-region server placement test: before opening Middle East servers, beta players in Cairo, Riyadh, Dubai and Istanbul play 2 weeks on Bahrain vs Frankfurt routing; per-city visible-snap and hit-dispute rates decide the site"
+  level: L3
+  cell: {buyer-role: live-ops, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: cohort-comparison, lifecycle-moment: new-market-or-language-launch, delivery-form: per-cohort-report, game-platform-and-genre: competitive-multiplayer, value-lever-b2b: de-risk-a-go-kill-decision, capture-trigger-and-sampling: opt-in-panel, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Candidate data-centre list and the matchmaking routing rule per country; netcode-5 snap rate and netcode-2 dispute classes per city"
+  situation: "Ping maps say Bahrain is 30 ms closer for Cairo, but Egyptian ISPs route via Marseille and real play may be worse; a wrong site costs a multi-year hosting contract"
+  consequence: "The decision uses what players see per city, not ping maps: e.g. Cairo snaps 1.4/min on Frankfurt vs 2.9 on Bahrain"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "methods-churn-funnel.md section 7 (d): 'user-level sampling (e.g. 1-5% of new installs) with Wi-Fi-only upload'; market.md section 1: studios pay for recruited panels (PlaytestCloud)"
+  proposed: "Opt-in beta panel of 400 players across 6 cities, alternating routing by day, ring-buffer samples plus on-device snap counts"
+  shallow: false
+  mechanism: "Server-side routing alternation; on-device counters; per-city report with clips of the worst and median sessions per route"
+  example: "Report shows Bahrain wins for Riyadh and Dubai, Frankfurt wins for Cairo and Istanbul; publisher opens Bahrain and keeps Cairo on Frankfurt by ASN rule"
+  cost: S
+  depends_on: "netcode-1 and netcode-5 detectors; a beta with server routing control"
+  buyer: "Live-ops or regional publishing lead with online-services engineering; head of business for the new region"
+  input: "Opt-in beta panel clips, routing config, per-session ping, loss, ASN"
+  why_existing_tools_cannot: "adjacent-usecases.md section 6: device labs and GameBench measure the device, not the network path; market.md section 9: no vendor joins production player footage to infrastructure data"
+  willingness_to_pay: "3 - one-off project priced like a managed playtest (PlaytestCloud about EUR 113-141 per session, market.md 'Signals of willingness to pay')"
+
+- id: netcode-14
+  title: "Netcode-verified loss forgiveness: ranked points not deducted when the server log shows over 15% packet loss or a tick overrun for that player AND the player's on-device clip counter shows 5+ visible snaps per minute in the losing rounds"
+  level: L4
+  cell: {buyer-role: live-ops, video-source: own-players-consented-sdk, signal-extracted: visual-errors-and-glitches, analysis-type: real-time-in-session-intervention, delivery-form: api-or-sdk, game-platform-and-genre: competitive-multiplayer, automation-level: closed-loop-in-game-action, lifecycle-moment: season-or-battle-pass-start, companion-data: telemetry-events, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Ranked-points ledger and the end-of-match result screen; on-device snap counter (netcode-5) and server loss and tick logs"
+  situation: "Ranked players quit the ladder after losing points to matches they felt were unplayable; a ping-only forgiveness rule is gamed by players who throttle their own connection"
+  consequence: "Forgiveness needs two independent signals (server network log and the player's visible experience); the result screen says 'Network issues detected: no points lost', and abuse is harder because the video counter needs real snaps"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "methods-churn-funnel.md section 3: churn research links bad experiences to quitting (ranked ladder quits in esports-17's area); adjacent-usecases.md section 2: false judgements are the key risk"
+  proposed: "On-device counter sends one value per round; server decides at match end; monthly audit compares forgiveness rate to self-throttle detections"
+  shallow: false
+  mechanism: "No video upload in the common path; only counters; an audit sample of 1% of forgiven matches uploads clips so live-ops can check the rule is not abused"
+  example: "Season 5 launch: 2.3% of ranked matches forgiven, ladder quit rate after a forgiven loss 30% lower than after a normal loss in the 14-day holdout"
+  cost: S
+  depends_on: "netcode-5 on-device counter; ranked service hook"
+  buyer: "Live-ops or competitive product lead at a ranked PC/console/mobile shooter or MOBA"
+  input: "On-device snap counts, server loss and tick logs, ranked results"
+  why_existing_tools_cannot: "market.md section 9: no vendor turns production player video into an in-game action; existing forgiveness relies on server-only signals that players can manipulate"
+  willingness_to_pay: "3 - retention lever priced per MAU; no direct signal in the notes"
+
+- id: netcode-15
+  title: "Netcode regression gate per build: 24 bot clients on 4 emulated network profiles (20 ms clean, 80 ms 1% loss, 150 ms 3% loss, 250 ms jitter 40 ms) play 30 minutes; visible snaps, desyncs and dispute classes per profile diffed against the last build"
+  level: L4
+  cell: {buyer-role: engineering-performance, video-source: automated-bot-or-agent-playthrough, signal-extracted: visual-errors-and-glitches, analysis-type: build-to-build-regression-diff, lifecycle-moment: new-version-release, delivery-form: issue-tracker-ticket, game-platform-and-genre: competitive-multiplayer, capture-trigger-and-sampling: scheduled-bot-playthrough, automation-level: auto-created-ticket-or-asset, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "Network link conditioner profiles (tc netem) and bot clients rendering real frames; the netcode-3 and netcode-5 detectors"
+  situation: "Netcode changes break only under loss; QA tests on the studio LAN at 1 ms; the player base finds the regression on launch day"
+  consequence: "Release blocked when, for example, snaps at the 150 ms / 3% profile rise from 0.8 to 2.6 per minute; ticket shows the profile, clips and the commit range"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "market.md section 3: modl.ai, nunu.ai and GameDriver run bot QA on builds; adjacent-usecases.md section 1: QA video bug detection exists for builds, none cites network-conditioned runs"
+  proposed: "Nightly CI job; bots with GPU rendering in the cloud, netem per client, same detectors as production"
+  shallow: false
+  mechanism: "Same detectors as on players (snap, desync, hit dispute) run on bot render output under controlled network profiles, so pre-release and live numbers share one definition"
+  example: "Build 9.3 nightly: 3% loss profile desync rate up 5x on vehicle seats; commit that changed vehicle replication priority reverted before branch cut"
+  cost: M
+  depends_on: "netcode-1, netcode-3, netcode-5 detectors; bot clients that can render frames (modl.ai or in-house)"
+  buyer: "Netcode lead and QA director at a multiplayer studio"
+  input: "Bot playthrough render, network profile, server logs, build metadata"
+  why_existing_tools_cannot: "market.md section 3: AI QA agents test for functional and visual bugs on builds, not under network impairment; cto-3 and platform-3 gates measure frame cost and render faults"
+  willingness_to_pay: "3 - QA automation priced from USD 150/month (GameDriver) to enterprise (market.md 'Signals of willingness to pay')"
+
+- id: netcode-16
+  title: "Ask-a-question agent over netcode clips: the netcode lead types 'show disputed headshots on Ascent from players over 120 ms against defenders under 30 ms since 7.2' and gets a table plus aligned clip pairs"
+  level: L3
+  cell: {buyer-role: engineering-performance, video-source: own-players-consented-sdk, signal-extracted: structured-game-state-reconstruction, analysis-type: ask-a-question-over-footage, delivery-form: ask-question-agent-chat, game-platform-and-genre: competitive-multiplayer, effort: XS-repackage-existing-user-test-product, companion-data-off-axis: server-tick-ping-and-region-logs}
+  object: "The tagged clip store built by netcode-2 to netcode-12 (class, RTT, region, map, build) and the existing User Test ask-question agent (A-frame assumption 2)"
+  situation: "A designer proposes a map change; the netcode lead needs 20 examples of one dispute type in one region in minutes, not a new pipeline"
+  consequence: "Repackages the existing ask-a-question agent over netcode tags; turns every netcode investigation into a query"
+  p_typical: 0.10
+  grounded: inferred
+  evidence: "A-frame.yaml assumptions: 'the company building this already has video ingestion, transcription and a report/ask-question agent'; market.md section 1: PlaytestCloud First Findings links each finding to its clip"
+  proposed: "Expose clip metadata as SQL-queryable fields to the existing agent; return clip pairs aligned by tick"
+  shallow: false
+  mechanism: "Agent turns the question into a filter over (class, map, RTT pair, build, region), retrieves aligned pairs and renders a table with links"
+  example: "Query returns 48 pairs; 31 show the new elevated window on Ascent B-site exposing heads 6 cm above cover during the rewind; level design moves the window"
+  cost: S
+  depends_on: "netcode-1 and at least netcode-2 tags; existing ask-question agent"
+  buyer: "Netcode lead and level designers at a competitive shooter"
+  input: "Tagged consented clips and joined server metadata"
+  why_existing_tools_cannot: "market.md section 2: session-replay tools filter by screen and event, not by server-joined netcode class; bi-23 MCP tables cover funnel tables, not netcode"
+  willingness_to_pay: "3 - add-on to the clip pipeline; seat-priced like Hatchet USD 249-1,249/month (market.md 'Signals of willingness to pay')"
