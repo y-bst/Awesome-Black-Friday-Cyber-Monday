@@ -1,0 +1,629 @@
+- id: designer-1
+  title: "Per-player tutorial step funnel as a state machine with enter/exit timestamps per step, so 'where do they leave' is one SQL group-by"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: tutorial-step, query-path: precomputed-aggregate, question-type: how-long, user-segment: game-designer, latency-tier: under-2s}
+  object: "spec.md stage 3: 'a fixed set of questions with options, written per game target ... The answers form a structured table per video'"
+  situation: "Designer asks 'how long do players spend on step 3 (craft a pickaxe) and what share quit during it' across 500 players"
+  consequence: "Today the table is per video and per question; a step that spans two videos has no single duration, and no per-step abandonment share exists unless a question was written for exactly that step"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "spec.md: 'The answers form a structured table per video'; memo.md item 1: 'step on screen, action'"
+  proposed: "Table step_transitions(session_id, player_id, build_version, step_id, entered_at, exited_at, exit_type in {advanced, regressed, quit, session_end}, source_video_ids[])"
+  shallow: false
+  mechanism: "Ingestion emits one row per step entry/exit per player from the screen-state classifier plus transcript cues; the store keeps a p50/p90 duration, reached_n, abandoned_n per (game, build_version, step_id) as a materialised view refreshed on each ingested session"
+  example: "'Step 3 median 94 s, p90 311 s, 500 reached, 61 quit during it (12.2%)' returned in under 1 s from the view; the 61 player_ids are one click away"
+  cost: M
+  depends_on: "a step list per game (designer-6 or designer-18) and a screen-state classifier that recognises each step's screen"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Duration, reach and abandonment exist for every step without a question being written per step, and a step spanning video 3 and video 4 has one duration"
+
+- id: designer-2
+  title: "Stall observation: >=45 s on one screen state with no step progress, tagged with silence or a negative utterance, stored as a row with start/end and the on-screen state"
+  level: L4
+  cell: {part: ingestion-extraction, representation: timestamped-observation-log, modality: silence-or-absence-of-speech, granularity: variable-length-moment-or-episode, question-type: why, extraction-trigger: at-ingestion}
+  object: "memo.md item 1: 'friction signal, sentiment, quote with timestamp as evidence'"
+  situation: "Designer asks 'why do players stall on step 3' and wants the moments, not a sentiment average"
+  consequence: "Without a defined stall object, 'friction signal' is a per-utterance label and silent stalls (player staring at the crafting menu saying nothing) produce no observation at all"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'friction signal'; spec.md problem: 'Transcript loses visual information'"
+  proposed: "stall(session_id, step_id, t_start, t_end, screen_state, cue in {silence, negative_utterance, repeated_action, menu_loop}, quote_or_null, resolution in {self_solved, hint_shown, quit, session_end})"
+  shallow: false
+  mechanism: "At ingestion a rule over the screen-state timeline plus the transcript: any window >=45 s with unchanged screen_state and no step transition becomes a stall row; the model fills cue, quote and resolution from the +/-15 s window"
+  example: "'Step 3: 142 stalls across 118 players; 71% on screen_state=crafting_menu_open; 38% silent; top resolution self_solved after median 68 s; 24 quit' with 5 clip links"
+  cost: M
+  depends_on: "screen-state classifier with per-frame labels (frame-pipeline) and step_transitions (designer-1)"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "A 'did the player struggle on step 3 (yes/no)' MCQ gives one bit; a stall row gives where, how long, what was on screen and how it ended, and catches silent players"
+
+- id: designer-3
+  title: "Every count answer carries [video_id, t_start, t_end] per contributing row so 'show me 5 players failing step 3' returns a 5-clip montage of 20 s each"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: clip-montage-n-examples, query-path: clip-lookup, question-type: find-players-who, user-segment: game-designer, delivery-surface: clip-reel}
+  object: "spec.md stage 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "Chatbot says '61 players quit on step 3'; designer asks 'show me 5 of them at the moment they quit'"
+  consequence: "The answers table per video has no timestamp; the designer must open full 15-minute videos and scrub, so the number is never checked against footage and tuning decisions are made on the number alone"
+  p_typical: 0.3
+  grounded: inferred
+  evidence: "spec.md: 'The answers form a structured table per video' (no timestamp column named); memo.md: 'quote with timestamp as evidence'"
+  proposed: "Each observation row stores video_id, t_start, t_end; chatbot answer template: number, denominator, then 'Show 5 clips' which cuts t_start-10 s to t_end+10 s, capped at 20 s, and plays them in sequence"
+  shallow: false
+  mechanism: "Clip lookup is a key read: from the answer's contributing row ids select 5 by stratified sampling (longest stall, shortest, 3 random), cut from the original video with ffmpeg at request time (under 2 s per clip), cached by (video_id, t_start, t_end)"
+  example: "'61 quit on step 3' -> montage: P-0412 video 2 @ 08:14-08:34 crafting menu open, says 'where is the wood'; P-0088 video 1 @ 13:50-14:10 silent, quits"
+  cost: S
+  depends_on: "original videos retained with frame access (A-frame assumption 1); timestamps on observation rows"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no row-to-footage link; the designer can verify a number in 100 s of viewing instead of 75 minutes"
+
+- id: designer-4
+  title: "Build-version pair diff: same step funnel computed per build_version so 'did the step-3 fix work' returns stall rate and n for 1.3 vs 1.4 with a two-proportion CI"
+  level: L4
+  cell: {part: query-path, scope: build-version-pair, question-type: did-the-fix-work-pre-post, modality: build-version-metadata, evidence-form: contrast-vs-baseline, uncertainty-policy: answer-with-ci-and-n, moment-in-journey: new-build-version}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Designer shipped a crafting-hint change in build 1.4 and asks 'did it reduce step-3 stalls' two days after the new cohort was recorded"
+  consequence: "Nothing in spec.md or memo.md keys sessions by build; the aggregate mixes 1.3 and 1.4 players and the designer cannot tell whether the fix worked"
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "spec.md 'Unspecified' omits build version; memo.md names no version key"
+  proposed: "build_version column on session, captured from the on-screen version string via OCR on the title screen or from the recruitment manifest; chatbot 'compare builds' template"
+  shallow: false
+  mechanism: "Query planner recognises compare-versions questions, runs the per-step aggregate twice with a build filter, and renders 'stall rate 28% (n=180) -> 17% (n=95), diff -11 pts, 95% CI -21 to -1'"
+  example: "'Step 3 stalls fell from 28% to 17% between 1.3 and 1.4; median stall shortened 68 s -> 41 s; 5 clips from 1.4 players still stalling'"
+  cost: S
+  depends_on: "designer-1 funnel table; a build_version field per session"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no version axis; pre/post is the designer's most common question after any change"
+
+- id: designer-5
+  title: "Step timeline strip per player: coloured segment per tutorial step, markers for stall, quote, fail screen; click a marker to play the clip"
+  level: L4
+  cell: {part: chatbot-ui, question-type: timeline, granularity: player, delivery-surface: dashboard-standard-report, evidence-form: chart, representation: step-funnel-state-machine-per-player}
+  object: "spec.md stage 1: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos'"
+  situation: "Designer wants to look at one player's 3-hour session and see where the tutorial went wrong without scrubbing 12 videos"
+  consequence: "Today the unit of display is a video; the designer cannot see a session as one object, so 'walk me through player P-0412's tutorial' is answered by reading 12 tables"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'Long multi-video sessions' listed as a known problem"
+  proposed: "One horizontal strip per session, 0 to N minutes, segments coloured by step_id, markers at stall.t_start, quote.t, fail_screen.t; hover shows the quote; click opens a 20 s clip; 50 strips stacked make a cohort view"
+  shallow: false
+  mechanism: "Rendered from step_transitions and the observation log (designer-1, designer-2); no model call at view time"
+  example: "P-0412: step 1 0:00-1:10, step 2 1:10-3:40, step 3 3:40-14:50 with 3 stall markers and the quote 'where is the wood' at 8:14, quit at 14:50"
+  cost: M
+  depends_on: "designer-1, designer-2, session stitching of video order (designer-21)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table shows answers per video; the strip shows the order and duration of events across all videos of a session"
+
+- id: designer-6
+  title: "Day-0 step list typed by the designer from the tutorial design doc (step_id, name, expected_seconds, required_action, screen cue) seeds the funnel before any session exists"
+  level: L4
+  cell: {part: question-generation, question-origin: design-doc-patch-notes-store-page-derived, moment-in-journey: game-onboarding-day-0, granularity: tutorial-step, user-segment: game-designer, reuse-scope-of-extraction: game-specific}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "A new game is onboarded; the designer has a 9-step tutorial document with expected durations but the ontology has no idea what step 3 is"
+  consequence: "Ontology-generated questions name generic entities; without the designer's step list the extraction cannot label 'crafting_menu_open' as step 3, and the first cohort is extracted against the wrong vocabulary"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'pruned by the game target'; A-frame assumption: 'per-game hand-written questions do not scale'"
+  proposed: "A 9-row form: step_id, name, expected_seconds, required_action (free text), success_screen_cue (free text), hint_text (exact string for OCR); the model turns each row into the classifier prompt and 4 generated questions (reached, duration, stalled, wrong action)"
+  shallow: false
+  mechanism: "Question generation takes the step list as the entity list for the tutorial branch of the ontology; expected_seconds becomes the threshold for 'overran' (3x expected)"
+  example: "Row 'step 3, Craft a pickaxe, 60 s, open crafting menu and select pickaxe, pickaxe appears in hotbar, hint: Press C to craft' yields 'share of players who exceeded 180 s on step 3' with no further writing"
+  cost: XS
+  depends_on: "nothing"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "10 minutes of typing replaces per-game MCQ authoring and gives the expected-vs-actual comparison the fixed table never had"
+
+- id: designer-7
+  title: "Wrong-action observation per step: what the player did instead of the required action (opened inventory, walked away, pressed the wrong key), closed category plus free text"
+  level: L4
+  cell: {part: ingestion-extraction, question-type: counterfactual-why-not, modality: screen-state-classifier, granularity: tutorial-step, representation: timestamped-observation-log, mechanism-type: precompute-more}
+  object: "memo.md item 1: 'step on screen, action, utterance'"
+  situation: "Designer asks 'what do players try before they find the crafting menu on step 3'"
+  consequence: "'action' in the observation log records what happened, but not that it was not the required action for the current step; the designer's most useful question ('what did they try instead') has no field"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md item 1 lists 'action' without reference to the required action"
+  proposed: "wrong_action(session_id, step_id, t, category in {opened_other_menu, moved_away, repeated_prior_action, pressed_unbound_key, idle, interacted_wrong_object}, free_text, screen_state_before, screen_state_after)"
+  shallow: false
+  mechanism: "At ingestion the model receives the step's required_action (designer-6) plus the screen-state sequence inside the step, and labels each non-progress action window; stored as rows, counted per (step, category) in a view"
+  example: "'Step 3: 212 wrong actions over 500 players; 44% opened_other_menu (inventory), 23% moved_away (left the workbench area), 12% pressed_unbound_key (E)'; 5 clips of the inventory case"
+  cost: M
+  depends_on: "designer-6 required_action per step; screen-state classifier"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The MCQ 'did the player find the crafting menu' cannot say what they tried instead, which is the thing the designer changes"
+
+- id: designer-8
+  title: "Hint visibility timing from OCR: seconds the tutorial hint text was on screen before the required action, flagging 'acted before reading' (<1 s) and 'ignored' (>20 s)"
+  level: L4
+  cell: {part: frame-pipeline, modality: on-screen-text-ocr, granularity: tutorial-step, question-type: why, representation: time-series-signals-affect-pace-silence, subject-domain: onboarding-tutorial}
+  object: "memo.md item 1: 'Video frames add screen state and on-screen text, because speech alone cannot answer \"where did they click\"'"
+  situation: "Designer suspects the step-3 hint 'Press C to craft' is not being read and wants to know if players saw it"
+  consequence: "Without hint on-screen timing the designer cannot tell whether to make the hint bigger (not seen) or clearer (seen, not understood)"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'on-screen text'"
+  proposed: "hint_exposure(session_id, step_id, hint_text, first_seen_t, last_seen_t, seconds_visible, action_t, class in {acted_before_reading, read_then_acted, ignored, never_shown})"
+  shallow: false
+  mechanism: "OCR at 1 fps over frames; exact-match the hint_text from the step list (designer-6); compute visible span and compare with the step's required-action timestamp"
+  example: "'Step 3 hint shown to 487/500; 31% ignored (>20 s visible, no craft); 9% never_shown (hint suppressed by the open inventory); median read-to-act 6 s'"
+  cost: M
+  depends_on: "frame access at 1 fps; hint_text strings from designer-6"
+  part: frame-pipeline
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The transcript-only MCQ cannot see whether a hint was on screen at all; this separates 'not shown' from 'shown and ignored'"
+
+- id: designer-9
+  title: "Overrun alert: when >=20% of the latest 50-player cohort exceed 3x expected_seconds on any step, push a Slack message with step, rate and 3 clips, with no question asked"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, mechanism-type: push-instead-of-pull, delivery-surface: alert, latency-tier: push-no-query, question-type: what-to-fix-first-prioritised, extraction-trigger: on-cohort-size-threshold}
+  object: "spec.md constraint: 'Their questions are not known in advance'"
+  situation: "A new cohort is ingested overnight; the designer has not logged in and does not know step 5 broke in build 1.4"
+  consequence: "A chatbot that waits for a question misses the week where the designer did not think to ask; the fixed table is only read when queried"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'Their questions are not known in advance'; memo.md describes only pull (planner) paths"
+  proposed: "Rule evaluated after every 50 ingested sessions per build: for each step, overrun_rate = n(duration > 3 x expected_seconds)/n(reached); fire when >=0.20 and n(reached) >= 30"
+  shallow: false
+  mechanism: "Post-ingestion job over the step aggregate view (designer-1) with thresholds from the step list (designer-6); message carries rate, n, delta vs previous cohort, and 3 clip links (designer-3)"
+  example: "Slack: 'Build 1.4, step 5 (first combat): 34% of 50 players exceeded 180 s (prev cohort 11%). 3 clips attached.'"
+  cost: S
+  depends_on: "designer-1, designer-6, designer-3"
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table answers only what is asked; the alert surfaces the step nobody asked about"
+
+- id: designer-10
+  title: "Regression edges in the step state machine: count of returns to an already-completed step per player, answering 'how many players went back to step 2 after reaching step 4'"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, question-type: how-many, granularity: player, query-path: sql-over-closed-fields, subject-domain: onboarding-tutorial}
+  object: "memo.md item 1: 'step on screen'"
+  situation: "Designer asks whether players loop back to the gathering step because they ran out of wood during crafting"
+  consequence: "A linear 'reached step N' MCQ records the furthest step; a player who went 2 -> 3 -> 2 -> 3 looks identical to one who went 2 -> 3, and the loop that signals a resource-balance problem is invisible"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md names 'step on screen' as an observation but no transition type"
+  proposed: "step_transitions.exit_type includes regressed; view regressions(step_from, step_to, n_players, n_events, median_seconds_in_regressed_step)"
+  shallow: false
+  mechanism: "The state machine (designer-1) allows backward transitions; each is a row; aggregated per (from, to) pair"
+  example: "'3 -> 2 regressions: 87 players (17%), median 52 s back in step 2, 61 of them said a word in {wood, logs, more}'"
+  cost: S
+  depends_on: "designer-1"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Furthest-step MCQ cannot represent a loop; the transition table can"
+
+- id: designer-11
+  title: "Quote-at-stall: the utterance within +/-10 s of each stall is attached to the stall row, then clustered into topics so 'what do players say when stuck on step 3' returns 5 topics with counts and timestamped quotes"
+  level: L4
+  cell: {part: query-path, question-type: what-said, question-origin: emergent-topic-clustering-of-player-speech, evidence-form: quote-with-timestamp, modality: speech-transcript, query-path: retrieval-then-llm}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "Designer asks 'what are players saying when they stall on step 3' over 500 players"
+  consequence: "Retrieval over all utterances returns speech from anywhere in the session; without the stall join the designer reads 400 quotes, most about unrelated moments"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'the model reads only those'"
+  proposed: "stall.quote populated at ingestion; query path: filter stall rows by step, embed quotes, k-means into 5 clusters, label each with the model, return count, 3 example quotes with video_id and t"
+  shallow: false
+  mechanism: "Join replaces retrieval: the stall row already holds the quote, so the model reads at most n_stalls quotes (142 for step 3), not the transcript"
+  example: "'Step 3 stalls: cannot find crafting menu 38%, do not have enough wood 24%, hotkey C not working 11%, ...; e.g. P-0412 video 2 08:14 \"where is the wood\"'"
+  cost: S
+  depends_on: "designer-2"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Open-ended speech at the stall moment, grouped, instead of a pre-written 'player expressed confusion (yes/no)'"
+
+- id: designer-12
+  title: "REFUSED: per-session summary paragraph as the main representation, because 'where did players stall' cannot be answered to a step and a timestamp from prose"
+  level: L3
+  cell: {part: store, representation: per-session-summary, granularity: session, question-type: when, user-segment: game-designer, evidence-form: none}
+  object: "memo.md item 1: 'a session-level observation log, not answers'"
+  situation: "A proposal replaces the fixed table with one 300-word model summary per session, searched by the chatbot"
+  consequence: "Designer refuses: a summary says 'the player struggled with crafting' with no step_id, no timestamp, no duration; aggregating 500 summaries gives counts that change with wording, and a clip cannot be cut from a paragraph. Low willingness; keep summaries only as a display layer over rows"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md argues for 'timestamped atomic observations' rather than summaries"
+  proposed: "If summaries are built, generate them from the observation rows and keep the row ids as citations"
+  shallow: false
+  mechanism: "Store one free-text summary per session; chatbot embeds and retrieves summaries, then the model counts"
+  example: "'How many stalled on step 3' -> model reads 500 summaries and says 'roughly 100'; re-run gives 'about 120'; no clip"
+  cost: S
+  depends_on: "nothing"
+  part: store
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Nothing for the designer; it loses the step and the timestamp that the fixed table at least pins to a video"
+
+- id: designer-13
+  title: "REFUSED for the weekly tuning loop: map-reduce over raw transcripts at query time, because a 3-minute wait and a number that moves between runs cannot drive a build decision"
+  level: L3
+  cell: {part: query-path, query-path: map-reduce-over-raw, representation: raw-transcript-only, latency-tier: minutes, question-type: how-many, uncertainty-policy: always-answer}
+  object: "spec.md stage 4: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists'"
+  situation: "A proposal drops the store and sends 500 transcripts through a long-context model for every question"
+  consequence: "Designer refuses as the default path: a 'how many stalled on step 3' answer that takes 3 minutes and returns 98 today and 112 tomorrow is not usable in a tuning meeting. Acceptable only as the backfill path for a brand-new field (designer-19), with the result cached"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow'"
+  proposed: "Allow map-reduce only when it writes a new closed field; never for a repeat question"
+  shallow: false
+  mechanism: "Query time: shard 500 transcripts, one model call each, reduce counts"
+  example: "'Step 3 stalls?' -> 3 min, 98; same question next day -> 112; designer stops trusting both"
+  cost: S
+  depends_on: "nothing"
+  part: query-path
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "Answers questions the table never had, but not fast and not reproducibly; the designer would not use it live"
+
+- id: designer-14
+  title: "Automatic contrast on the step funnel: for tutorial quitters vs completers, rank every per-step metric (duration, stalls, wrong actions, hint ignored, regressions) by difference and show the top 5"
+  level: L4
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, question-type: who-are-the-churners-segment-discovery, mechanism-type: auto-discover-without-question, scope: cohort, evidence-form: contrast-vs-baseline}
+  object: "spec.md stage 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Designer asks 'what is different about players who quit in the tutorial' with no hypothesis"
+  consequence: "The fixed table has churn as one column but no mechanism to compare the other columns between churners and the rest; the designer guesses a step and asks one question at a time"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial'"
+  proposed: "contrast(group_a = quit before step 9, group_b = completed) over all numeric per-step fields; output sorted by absolute standardised difference with n per group"
+  shallow: false
+  mechanism: "SQL over the step aggregate and observation counts per player; no model call; the model only phrases the top 5 rows"
+  example: "'Quitters (n=140) vs completers (n=360): step 3 wrong_action opened_other_menu 61% vs 19%; step 5 fail_screen count 3.2 vs 1.1; step 2 duration no difference'"
+  cost: S
+  depends_on: "designer-1, designer-2, designer-7"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Finds the step that explains churn without the designer naming it"
+
+- id: designer-15
+  title: "Fail-screen spotting per frame: classifier recognises the game's death/retry/you-lost screen, counts fails per step per player"
+  level: L4
+  cell: {part: frame-pipeline, modality: screen-state-classifier, granularity: frame, question-type: how-many, subject-domain: progression-difficulty, extraction-trigger: at-ingestion}
+  object: "spec.md known problem: 'Transcript loses visual information'"
+  situation: "Designer asks 'how many times do players die in the first combat step (step 5) before they pass it'"
+  consequence: "Players rarely say 'I died'; the transcript-based MCQ undercounts fails, and the designer cannot tune enemy health from a count that is wrong"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'what is on screen is largely lost'"
+  proposed: "fail_event(session_id, step_id, t, screen_state=fail_screen, seconds_to_retry); classifier trained from 20 designer-labelled frames of the fail screen at onboarding"
+  shallow: false
+  mechanism: "Frames sampled at 2 fps; a per-game image classifier flags fail_screen; debounced to one event per 3 s; joined to the current step"
+  example: "'Step 5: median 2 fails, p90 6, 500 reached; 44 players with >=5 fails, of whom 29 quit; 5 clips of fail 5+'"
+  cost: M
+  depends_on: "frame access; 20 labelled frames per game"
+  part: frame-pipeline
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "A count that comes from the screen, not from whether the player narrated the death"
+
+- id: designer-16
+  title: "Cursor or crosshair position sampled from frames at 2 fps, aggregated into a per-step heatmap across the cohort, answering 'where are players looking for the craft button'"
+  level: L4
+  cell: {part: frame-pipeline, modality: controller-or-touch-heatmap, granularity: tutorial-step, scope: cohort, evidence-form: chart, question-type: why}
+  object: "memo.md item 1: 'speech alone cannot answer \"where did they click\"'"
+  situation: "Designer asks where players hover during step 3 before finding the crafting menu"
+  consequence: "The memo promises 'where did they click' but a screen-state label gives the menu, not the position; the designer cannot see that 40% hover over the inventory icon"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "memo.md: 'where did they click'"
+  proposed: "cursor_sample(session_id, step_id, t, x_norm, y_norm) at 2 fps from a cursor detector; heatmap per (game, build, step) as a 64x36 grid"
+  shallow: false
+  mechanism: "Cursor/crosshair detector on frames (template match on the game's cursor sprite), normalised coordinates, binned per step; rendered as an overlay on a reference screenshot"
+  example: "'Step 3 heatmap: 41% of hover time on inventory icon (top-left), 12% on the crafting icon (bottom-right); clip of 5 players circling the inventory'"
+  cost: L
+  depends_on: "frame access at 2 fps; cursor sprite per game; PC/mouse games only"
+  part: frame-pipeline
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "Spatial evidence no transcript question can produce"
+
+- id: designer-17
+  title: "Issue card per step with frequency (stalled/reached) and severity (quit rate among the stalled), sorted, as the first screen the designer sees"
+  level: L4
+  cell: {part: chatbot-ui, representation: issue-list-with-severity-frequency, question-type: what-to-fix-first-prioritised, evidence-form: severity-frequency-matrix, delivery-surface: dashboard-standard-report, user-segment: game-designer}
+  object: "memo.md item 2: 'The chatbot runs a query planner'"
+  situation: "Designer opens the tool on Monday with 500 new sessions and does not know what to ask"
+  consequence: "A chatbot with an empty box makes the designer guess; the fixed table has no ranking of steps by harm"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "memo.md describes a chatbot; no standing report is named"
+  proposed: "issue_card(step_id, reached_n, stalled_n, frequency = stalled_n/reached_n, severity = quit_n/stalled_n, top_wrong_action, top_quote_topic, 5 clip links), sorted by frequency x severity"
+  shallow: false
+  mechanism: "View over designer-1, designer-2, designer-7, designer-11; no model call except topic labels cached at ingestion"
+  example: "'1. Step 3 Craft pickaxe: 28% stall, 43% of stalled quit, top cause inventory opened instead; 2. Step 5 First combat: 19% stall, 61% quit; ...'"
+  cost: S
+  depends_on: "designer-1, designer-2, designer-7, designer-11"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Converts the table into a ranked to-do list; the designer reads it in 30 s and asks follow-ups from it"
+
+- id: designer-18
+  title: "Genre step template library: a survival-crafting tutorial template (move, gather, craft, build, fight) that pre-fills the step list and its 4 questions per step before the designer types anything"
+  level: L4
+  cell: {part: question-generation, question-origin: genre-template-library, reuse-scope-of-extraction: genre-shared, moment-in-journey: game-onboarding-day-0, mechanism-type: transfer-across-games, granularity: tutorial-step}
+  object: "A-frame assumption: 'studios are many and each game differs, so per-game hand-written questions do not scale'"
+  situation: "A 2-person studio with a survival game onboards and has no written tutorial doc"
+  consequence: "Ontology-generated questions start from entity x dimension; without a genre template the first cohort is extracted with generic steps and the designer sees 'step 1..N' with no names"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "A-frame.yaml assumptions; memo.md 'pruned by the game target'"
+  proposed: "templates/survival_crafting.yaml with 6 steps, typical expected_seconds, typical screen cues, typical wrong actions; designer edits rather than writes; templates for 8 genres"
+  shallow: false
+  mechanism: "Template rows feed designer-6; designer-7's wrong_action categories inherit the genre's list"
+  example: "Survival template applied; designer renames 'craft' to 'Craft a pickaxe', sets 60 s; day-0 question bank has 24 step questions"
+  cost: S
+  depends_on: "designer-6"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Zero per-game question writing for the common case"
+
+- id: designer-19
+  title: "Designer-typed tracker at runtime ('players who opened the map during step 3') compiled into a rule over screen-state rows, backfilled overnight across all sessions, stored as a new boolean field"
+  level: L4
+  cell: {part: query-path, query-path: lazy-backfill-extraction, extraction-trigger: on-studio-tracker-defined, question-origin: studio-written-at-runtime, schema-evolution: append-only-versioned-fields, latency-tier: overnight}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Designer asks something no field covers; they are willing to wait until tomorrow but want it to stay answered"
+  consequence: "The memo names backfill but not who defines the field or what it looks like; without a designer-facing definition step, each backfill is a one-off prompt that nobody can re-run after the next build"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'cached as a new field'"
+  proposed: "tracker(name, definition_text, compiled_rule_or_prompt, created_by, created_at, applies_to_steps[]); result column tracker_<id> on step_transitions; re-run automatically on new sessions"
+  shallow: false
+  mechanism: "If the definition compiles to screen-state and step predicates, run SQL; otherwise a model pass over the step's observation rows per player; either way the answer is written back and the next question is under 2 s"
+  example: "'opened_map_in_step_3' backfilled over 500 sessions overnight: 23%; next morning 'did they quit more' answers in 1 s: 31% vs 14%"
+  cost: M
+  depends_on: "observation log with screen states; append-only field support"
+  part: query-path
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The question set grows from the designer's own questions and persists across builds"
+
+- id: designer-20
+  title: "Seconds-since-last-progress time series per player, sampled every 5 s, so 'which players had >120 s without progress inside step 2' is a range scan"
+  level: L4
+  cell: {part: store, representation: time-series-signals-affect-pace-silence, granularity: player, question-type: find-players-who, query-path: sql-over-closed-fields, latency-tier: under-2s}
+  object: "memo.md item 1: 'timestamped atomic observations'"
+  situation: "Designer wants a stall threshold different from the ingestion default (120 s instead of 45 s) without re-extracting"
+  consequence: "A stall row fixed at 45 s at ingestion cannot be re-thresholded; the designer's threshold changes per step and per build"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md describes atomic observations but no continuous signal"
+  proposed: "progress_signal(session_id, t_bucket_5s, step_id, seconds_since_progress, speaking bool, screen_state); 2160 rows per 3-hour session"
+  shallow: false
+  mechanism: "Derived at ingestion from step transitions and screen-state changes; stored columnar; stall at any threshold is a WHERE clause"
+  example: "'>120 s without progress in step 2: 37 players (7.4%)'; same query at 60 s: 112 players; both under 1 s"
+  cost: S
+  depends_on: "designer-1; screen-state timeline"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The threshold is the designer's to choose at query time"
+
+- id: designer-21
+  title: "Step state carried across 15-minute video boundaries: a step entered in video 3 and exited in video 4 gets one row, one duration; videos ordered by on-screen clock or recording start"
+  level: L4
+  cell: {part: session-stitching, granularity: session, representation: step-funnel-state-machine-per-player, question-type: how-long, modality: build-version-metadata, extraction-trigger: at-ingestion}
+  object: "spec.md stage 1: 'each video is capped at 15 minutes, so one session is many videos'; Unspecified: 'how videos of one session are linked'"
+  situation: "Step 3 starts at 13:50 in video 2 and ends at 02:10 in video 3"
+  consequence: "Per-video extraction records 'step 3 in progress' twice and no duration; 1 in 7 steps of 60 s or longer straddle a boundary at 15-minute cuts, so per-step medians are biased short"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'how videos of one session are linked' unspecified"
+  proposed: "video(session_id, seq, start_offset_s) derived from file timestamps and verified by OCR of the in-game clock on the last and first frame; step machine runs over the concatenated timeline"
+  shallow: false
+  mechanism: "Session stitching precedes extraction; extraction prompts receive the previous video's final state as context"
+  example: "P-0412 step 3: 13:50 (v2) to 02:10 (v3) = 200 s, one row, quote at 15:14 session time"
+  cost: S
+  depends_on: "nothing"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The per-video table cannot hold a duration that crosses a cut"
+
+- id: designer-22
+  title: "Compare-steps answer: per-step table of p50/p90 duration, ratio to expected, reach, abandonment, sorted by ratio to expected"
+  level: L4
+  cell: {part: query-path, question-type: compare-steps, query-path: precomputed-aggregate, evidence-form: count-with-denominator, granularity: tutorial-step, latency-tier: under-2s}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Designer asks 'which step takes the longest relative to what I expected'"
+  consequence: "Without expected_seconds the chatbot can rank by raw duration, which always names the combat step; the designer wants the step most out of line with intent"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "memo.md: 'aggregate queries'"
+  proposed: "step_stats view: step_id, expected_s, p50_s, p90_s, ratio_p50 = p50/expected, reached_n, abandoned_n, abandon_rate"
+  shallow: false
+  mechanism: "View over designer-1 joined to designer-6; planner maps compare-steps questions to it"
+  example: "'Step 3 p50 94 s vs 60 expected (1.6x); step 5 p50 210 s vs 180 (1.2x); step 1 0.9x'"
+  cost: XS
+  depends_on: "designer-1, designer-6"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "One table answers the comparison for all steps; the fixed table needs a question per step"
+
+- id: designer-23
+  title: "Weekly clip reel to Slack: the 5 longest stalls per top-3 issue step from the week's cohort, each 20 s with the quote burned in as a subtitle"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: scheduled-digest, evidence-form: clip-montage-n-examples, latency-tier: push-no-query, moment-in-journey: steady-state-weekly, mechanism-type: push-instead-of-pull}
+  object: "spec.md stage 4: 'A chatbot for the gaming studio'"
+  situation: "Designer wants the team to watch failures in the Monday stand-up without anyone querying"
+  consequence: "Clips that must be requested are not watched; the team argues about numbers instead of looking at the 5 players who could not find the craft button"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md and spec.md describe only question-driven access"
+  proposed: "Job every Monday 07:00: take issue cards (designer-17) top 3, select 5 stalls each by duration, cut clips (designer-3), subtitle with stall.quote, post to #tutorial-playtests"
+  shallow: false
+  mechanism: "Scheduled job over existing rows; no model call"
+  example: "Monday post: 'Step 3: 5 clips (median stall 140 s); Step 5: 5 clips; Step 7: 5 clips' with a link to the step strip"
+  cost: S
+  depends_on: "designer-17, designer-3"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Evidence arrives without a question; the table only ever answers"
+
+- id: designer-24
+  title: "Coverage gate: a step reached by fewer than 20 players returns the count and 'too few to compare', never a percentage"
+  level: L4
+  cell: {part: chatbot-ui, uncertainty-policy: abstain-below-coverage, evidence-form: coverage-statement-n-of-m-players, question-type: compare-versions, user-segment: game-designer, scope: build-version-pair}
+  object: "memo.md item 2: 'aggregate queries over all players (instant)'"
+  situation: "Designer asks 'is step 8 better in 1.4' when only 9 players of the 1.4 cohort reached step 8"
+  consequence: "'Stall rate 11% vs 33%' from 9 players sends the designer to change step 8; the number is 1 player"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md names no sample-size rule"
+  proposed: "If n(reached) < 20 on either side, answer: '9 of 95 reached step 8 in 1.4 (3 stalled); not enough to compare with 1.3 (180 reached)'; offer 'notify me when n >= 20'"
+  shallow: false
+  mechanism: "Threshold check in the answer template; the notify option creates an on-cohort-size-threshold trigger"
+  example: "'Step 8 in 1.4: 9 reached, 3 stalled; too few to compare. Notify when 20 reached?'"
+  cost: XS
+  depends_on: "designer-1"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table happily yields 33% from 3/9; the gate stops a wrong tuning decision"
+
+- id: designer-25
+  title: "Confusion episode object with variable length: starts at the first wrong action or negative utterance, ends at the next progress event, with duration, step, trigger cue and resolution"
+  level: L4
+  cell: {part: ingestion-extraction, granularity: variable-length-moment-or-episode, representation: hierarchical-temporal-summary-tree, question-type: what-happened, modality: speech-transcript, evidence-form: clip}
+  object: "memo.md item 1: 'timestamped atomic observations'"
+  situation: "Designer asks 'what happens in the 2 minutes before a player quits on step 3'"
+  consequence: "Atomic rows (one action, one utterance) force the model to re-assemble the episode at query time for each player; the designer wants the episode as the unit"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'atomic observations'"
+  proposed: "episode(session_id, step_id, t_start, t_end, trigger in {wrong_action, negative_utterance, fail_screen, silence}, n_wrong_actions, n_fails, quotes[], resolution in {progressed, hint, regressed, quit}, summary_40_words); atomic rows keep an episode_id"
+  shallow: false
+  mechanism: "Second ingestion pass groups atomic rows into episodes; tree: session > step > episode > atomic row"
+  example: "'Quit episodes on step 3 (n=61): median 118 s, 2.4 wrong actions, 71% contain a negative utterance; 5 clips of full episodes'"
+  cost: M
+  depends_on: "designer-2, designer-7"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The lead-up to a quit becomes a countable, clippable object instead of a yes/no column"
+
+- id: designer-26
+  title: "REFUSED: re-authoring hand-written per-game MCQs on every build; accepted only if the step list is auto-diffed from patch notes and unchanged steps keep their fields"
+  level: L3
+  cell: {part: schema-evolution, question-origin: hand-written-per-game, extraction-trigger: on-game-update, moment-in-journey: new-build-version, schema-evolution: deprecate-and-migrate, user-segment: game-designer}
+  object: "spec.md stage 3: 'a fixed set of questions with options, written per game target'"
+  situation: "Build 1.4 splits step 3 into 3a (open menu) and 3b (select pickaxe); the current process asks the designer to rewrite the question set"
+  consequence: "Designer refuses to rewrite 40 questions per patch, which is why question sets stay small (spec.md problem 1). Willing only if: patch notes are parsed into step list edits, untouched steps keep fields and history, and 3 maps to 3a+3b in version comparisons"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  proposed: "step_list_version per build; mapping table old_step -> new_steps[]; compare-versions queries roll 3a+3b up to 3 when comparing with 1.3"
+  shallow: false
+  mechanism: "Patch notes pasted at build registration; model proposes step list diff; designer approves"
+  example: "1.4 registered with 'split crafting into open menu / choose item'; funnel shows 3a and 3b; 'did step 3 improve' compares 1.3 step 3 with 1.4 (3a+3b)"
+  cost: M
+  depends_on: "designer-6, designer-4"
+  part: schema-evolution
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The question set survives a patch; today a patch resets it"
+
+- id: designer-27
+  title: "Unknown-unknowns per step: cluster the free-text wrong_action and quote fields and surface the top 3 clusters that match no designer-defined category"
+  level: L4
+  cell: {part: question-generation, question-type: what-surprised-unknown-unknowns, mechanism-type: auto-discover-without-question, question-origin: induced-from-data, granularity: tutorial-step, extraction-trigger: scheduled-batch}
+  object: "spec.md known problem: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  situation: "Players on step 4 keep trying to place the workbench on water; no category or question covers it"
+  consequence: "Closed categories only count what was anticipated; the thing the designer did not anticipate stays in the free-text field nobody reads"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'most of what is in the video and transcript is never captured'"
+  proposed: "Nightly: embed free_text of wrong_action and stall.quote per step, cluster, drop clusters matching an existing category, show the top 3 by player count with 3 clips each; one click promotes a cluster to a category (new field, backfilled)"
+  shallow: false
+  mechanism: "Batch job; model labels clusters; promotion creates a tracker (designer-19)"
+  example: "'Step 4 new: placing workbench on water (34 players), rotating with wrong key (21)' -> designer promotes the first"
+  cost: M
+  depends_on: "designer-7, designer-11, designer-19"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The question set grows from what players did, not from what was written"
+
+- id: designer-28
+  title: "One-tap in-game micro-prompt at each tutorial step end ('that step was: clear / confusing') joined to the step row as a labelled field"
+  level: L4
+  cell: {part: collection-protocol, modality: survey-or-in-game-prompt-response, mechanism-type: change-data-at-source, granularity: tutorial-step, question-type: how-felt, evidence-form: count-with-denominator}
+  object: "spec.md stage 1: 'A player's gameplay session is captured as video'"
+  situation: "Designer wants the player's own rating of step 3, not the model's inference from speech, for silent players"
+  consequence: "Silent players give no affect signal; a model-inferred 'confused' label on 500 players has unknown precision; a one-tap prompt gives a ground-truth column and a label set for the inferred field"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'What a transcript contains (speech only, ...)'"
+  proposed: "Playtest build shows a 2-button overlay at each step exit; response captured by OCR of the on-screen choice (no SDK needed) or by telemetry if available; step_transitions.self_rating in {clear, confusing, null}"
+  shallow: false
+  mechanism: "Protocol change plus an OCR rule on the overlay frame; stored like any closed field"
+  example: "'Step 3: 38% confusing (n=490 answered); model-inferred confusion agrees on 81%'"
+  cost: S
+  depends_on: "studio willing to add the overlay to the playtest build"
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A player-stated answer per step, for silent players too, and a calibration set for the inferred fields"
+
+- id: designer-29
+  title: "Step-boundary accuracy as the ingestion metric: designer labels step entry/exit for 20 sessions; a boundary counts as correct within +/-5 s; release gate at 90%"
+  level: L4
+  cell: {part: evaluation, granularity: tutorial-step, evidence-form: extraction-provenance-model-and-schema-version, extraction-trigger: on-model-upgrade, user-segment: game-designer, question-type: how-long}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: "A new extraction model or prompt is rolled out; the designer's step-3 median moves from 94 s to 71 s"
+  consequence: "Without a boundary metric the designer cannot tell a real change from an extraction change, and every number since the model upgrade is suspect"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'accuracy against hand-labelled sessions'"
+  proposed: "golden_steps(session_id, step_id, entered_at, exited_at) for 20 sessions per game; metric: share of boundaries within 5 s; every aggregate answer shows extraction_version and its boundary accuracy"
+  shallow: false
+  mechanism: "Labelling UI on the step strip (designer-5): drag boundaries; evaluation job runs on each extraction version"
+  example: "'Step 3 median 94 s (extraction v7, boundary accuracy 93% on 20 sessions)'"
+  cost: S
+  depends_on: "designer-5"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The designer knows how much to trust a duration; the fixed table reports none of this"
+
+- id: designer-30
+  title: "Versioned step definitions: renaming or splitting a step in build 1.4 keeps old sessions on the old step_id with a mapping, so comparisons across builds still run"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: append-only-versioned-fields, question-type: compare-versions, granularity: build-version, scope: build-version-pair, moment-in-journey: new-build-version}
+  object: "memo.md item 2: 'the question set grows from real use'"
+  situation: "Step 3 becomes 3a and 3b in 1.4; 1.3 sessions were extracted with step 3"
+  consequence: "If step ids are overwritten, 1.3 history is either re-extracted (cost, and a changed number) or lost from comparisons; the designer loses the baseline the fix was meant to beat"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "memo.md names growth of fields but not renaming or splitting"
+  proposed: "step_def(game, step_list_version, step_id, name, expected_s); step_map(old_version, old_step_id, new_version, new_step_ids[]); aggregates use the map when build versions differ"
+  shallow: false
+  mechanism: "Append-only step definitions; the compare path rolls children up to the parent"
+  example: "'1.3 step 3 (94 s median) vs 1.4 step 3a+3b (41 s + 30 s = 71 s)'"
+  cost: S
+  depends_on: "designer-6, designer-26"
+  part: schema-evolution
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The baseline survives a redesign of the tutorial"

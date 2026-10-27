@@ -1,0 +1,480 @@
+- id: percep-1
+  title: "Colour-only tutorial gate (green = open, red = locked) with a colour-blind player saying 'where do I go?' is stored as 'instructions unclear'; the colour cue never reaches the table"
+  level: L4
+  cell: {stage: per-video-answers, question-shape: perceptual-cause-not-verbalised, correctness-failure: perceptual-cause-attributed-to-verbal-option, data-element: screen-state, speech-shape: continuous-think-aloud, studio-question-type: cohort-why}
+  object: "churn question in the 'fixed set of questions with options, written per game target'; per-video answers table row"
+  situation: "Tutorial door is distinguished only by hue (green vs red, no icon, no label); a deuteranopic player (about 1 in 12 men) wanders 90 s saying 'where do I go? which one?' and quits"
+  consequence: "Extractor picks the closest verbal option ('instructions unclear' or 'lost interest'); the studio rewrites instruction copy; the 8% of players who could not see the gate still quit after the fix"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "the transcript alone is not enough; what is on screen is largely lost."
+  proposed: "Assert: for a known colour-only step, option 'could not perceive the cue (visual)' exists and is selected when the transcript has 'where/which' with no content words about the instruction; store answer_source=audio-only on every visual-dependence question"
+  shallow: false
+- id: percep-2
+  title: "Low-contrast tutorial text (under 3:1 on a busy background) produces 40 s of silence then a quit; the silence is read as 'lost interest'"
+  level: L3
+  cell: {stage: per-video-answers, speech-shape: silent-player, question-shape: unknowable-from-audio, correctness-failure: confident-no-evidence, data-element: null-vs-no}
+  object: "quit-reason question; transcript of the last tutorial video (spec item 2)"
+  situation: "Hint text rendered at 2.4:1 contrast over animated background; player squints, says nothing for 40 s, then closes the app"
+  consequence: "Row stores 'lost interest' with no evidence span; aggregate for 500 players counts a readability defect as boredom; no column records the 40 s silence that preceded the quit"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "If the quit-reason evidence span is empty or is more than 30 s before the quit, store null plus trailing_silence_seconds; never store a reason option from silence"
+  shallow: false
+- id: percep-3
+  title: "No metadata column for the player's accessibility settings (colour-blind mode, font scale, reduced motion, subtitles) so 'stuck at colour gate' cannot be segmented by who could see it"
+  level: L3
+  cell: {stage: build-and-metadata-tagging, data-element: device-platform, studio-question-type: "segment-by-metadata (device, country, build)", scale: 500-players, correctness-failure: wrong-denominator}
+  object: "session metadata (spec 'Unspecified': 'how videos of one session are linked'; no settings listed anywhere)"
+  situation: "Studio asks 'how many players with colour-blind mode on got stuck at the gate vs off'"
+  consequence: "Chatbot either refuses or answers over all 500 with the wrong denominator; a 3x difference between the two groups (the fix signal) is invisible"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Unspecified ... who at the studio asks and what they ask"
+  proposed: "Capture at session start: colourblind_mode (none/protan/deutan/tritan), ui_font_scale (1.0-2.0), reduced_motion (bool), subtitles (bool), game_audio_muted (bool); expose as filterable columns"
+  shallow: false
+- id: percep-4
+  title: "Player in colour-blind mode names colours the palette remaps ('the blue one') while the option text says 'tapped the red exit'; extractor matches on colour word and picks the wrong option"
+  level: L4
+  cell: {stage: extraction-prompt, data-element: option, speech-shape: continuous-think-aloud, question-shape: fits-two-options, correctness-failure: hallucinated-answer}
+  object: "option text of a tutorial-step question (spec item 3, 'fixed set of questions with options'); extraction prompt"
+  situation: "Game's deutan palette turns the red exit orange-blue; player says 'I'll take the blue door'; options are 'tapped the red exit' and 'tapped the blue decoy'"
+  consequence: "Answer 'tapped the blue decoy' with high confidence; a correct path is counted as a mis-tap in the cohort"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "The transcript loses visual information."
+  proposed: "Ban colour words from option text in the question-set registry (lint rule); name elements by function ('exit door') and keep a per-build mapping of displayed colour per mode"
+  shallow: false
+- id: percep-5
+  title: "Black-screen capture (GPU overlay or permission failure) with a full audio track flows through transcription and extraction as 'complete'; no stage checks that the video has picture"
+  level: L3
+  cell: {stage: video-capture, capture-integrity: video-black-or-frozen, processing-status: complete, question-shape: answer-needs-visuals, batch-failure-mix: all-succeed}
+  object: "video (spec item 1: 'captured as video'); processing status of the session"
+  situation: "Capture tool records the audio device but the game window is protected content or a second GPU; all 12 videos are solid black with normal speech"
+  consequence: "Transcript is normal, answers table is full, session reads complete; evidence clips are black; nobody learns that the pipeline would have given identical answers with the screen off"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Per video, sample 1 frame per 10 s; if mean luminance under 5/255 for over 90% of samples, set capture_status=black and null every answer to a visual-dependence question"
+  shallow: false
+- id: percep-6
+  title: "Frozen frame (encoder stalled, last good frame repeated for 14 of 15 minutes) is indistinguishable from a paused game in every stored field"
+  level: L4
+  cell: {stage: upload-and-ingest, capture-integrity: video-black-or-frozen, data-element: video, session-shape: 5-20-videos, processing-status: transcribed}
+  object: "15-minute video file; per-video row"
+  situation: "Capture encoder stalls at 00:48 of video 3 of 9; the file is valid, full length, audio continues, every later frame equals the frame at 00:48"
+  consequence: "Answers for video 3 and evidence clips show the same frame; an analyst asking 'show me where they got stuck' sees a static screen and cannot tell stall from pause"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes, so one session is many videos"
+  proposed: "Compute frame-difference over 10 s windows; if under 0.1% changed pixels for over 120 consecutive seconds while speech is present, flag frozen_from=timestamp and show it on the evidence clip"
+  shallow: false
+- id: percep-7
+  title: "Wrong window captured (desktop, Discord, browser) for a whole session while the player talks about the game; the transcript and answers describe a game the video never shows"
+  level: L3
+  cell: {stage: video-capture, capture-integrity: wrong-window-captured, studio-question-type: quote-me-evidence, data-element: evidence-span, answer-afterlife: disputed-by-studio}
+  object: "evidence clip (spec item 4 chatbot answer); video of the session"
+  situation: "Window-capture mode locked to the launcher; the game runs full-screen on another window; audio is the game plus mic"
+  consequence: "Chatbot answers 'player stuck at step 3' and the evidence clip shows the launcher; the studio disputes the whole cohort number because the first clip they open is wrong"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "At ingest, classify 3 sampled frames per video against the game's title screenshot set; store window_match (0-1); block evidence clips under 0.5 and show 'capture did not show the game'"
+  shallow: false
+- id: percep-8
+  title: "HDR-to-SDR tone mapping in the recording makes the tutorial cue darker than the player saw it; an analyst reviewing the clip wrongly concludes the cue was invisible"
+  level: L3
+  cell: {stage: video-capture, data-element: screen-state, capture-integrity: audio-and-video-ok, studio-question-type: show-me-raw-transcript-or-clip, answer-afterlife: acted-on-tutorial-changed}
+  object: "video file; evidence clip in the studio UI"
+  situation: "Player plays on an HDR display; capture records SDR with clipped highlights; the pulsing cue at 20% brightness sits in crushed blacks in the recording"
+  consequence: "Analyst 'watches the evidence' and ships a brightness change for a cue that 500 players saw fine; the recording, not the game, was dark"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "what is on screen is largely lost"
+  proposed: "Record display mode (HDR/SDR), capture colour space and peak nits in session metadata; show a 'recording may be darker than the player's display' banner on clips from HDR sessions"
+  shallow: false
+- id: percep-9
+  title: "Recording downscaled for storage (1080p to 480p) makes 12 px tutorial text illegible in the evidence clip; the analyst cannot verify any 'read the instruction' answer"
+  level: L4
+  cell: {stage: evidence-display, data-element: evidence-span, studio-question-type: show-me-raw-transcript-or-clip, scale: 50000-videos, latency: under-2s}
+  object: "evidence clip served from the stored video; question 'did the player read the instruction'"
+  situation: "Storage policy keeps 480p proxies for 50,000 videos; the tutorial hint renders at 12 px on the player's phone, 5 px in the proxy"
+  consequence: "Clip loads in under 2 s but the text is a smear; the analyst can only trust the extractor, which never saw the screen either"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "Keep source resolution for tutorial-window videos (first 30 minutes of a session); test: smallest UI text in the game's style guide must be legible at the stored resolution (x-height at least 8 px)"
+  shallow: false
+- id: percep-10
+  title: "Evidence clip plays audio with no captions or aligned transcript; a Deaf or hard-of-hearing analyst cannot verify a speech-derived answer"
+  level: L3
+  cell: {stage: evidence-display, data-element: utterance, studio-question-type: quote-me-evidence, answer-afterlife: read-once-in-chat, tenancy: one-studio-one-game}
+  object: "evidence clip and the transcript it was extracted from"
+  situation: "Studio analyst with hearing loss opens the clip behind 'player said the map was confusing'"
+  consequence: "The only verification path is audio; the analyst has to take the chatbot's word, which is the failure the clip exists to prevent"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Render the transcript span as timed captions over the clip (the timestamps already exist) and show the quoted utterance text next to the player"
+  shallow: false
+- id: percep-11
+  title: "Chatbot's compare-two-versions chart encodes v1.2 vs v1.3 as red vs green with no labels; a red-green colour-blind analyst reads the comparison backwards"
+  level: L4
+  cell: {stage: chatbot-answer, studio-question-type: compare-two-versions, data-element: game-version, answer-afterlife: copied-into-deck, chatbot-response-behaviour: answers-correctly}
+  object: "chatbot answer rendering (spec item 4); game-version pair"
+  situation: "Bars for two builds differ only by hue; legend swatches are 10 px squares"
+  consequence: "Correct data, wrong reading: the 'worse' build is pasted into a deck as the better one; no numbers appear on the bars to catch it"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions"
+  proposed: "Every series gets a direct label and a numeric value on the mark; palette passes deutan/protan simulation with a lightness difference of at least 20 L* between series"
+  shallow: false
+- id: percep-12
+  title: "Low-confidence marker on a chatbot number is grey text at under 4.5:1 or an amber dot; a low-vision analyst copies '47 of 500' into a deck without the caveat"
+  level: L4
+  cell: {stage: studio-ui, data-element: answer-confidence, answer-afterlife: copied-into-deck, studio-question-type: cohort-count, chatbot-response-behaviour: answers-correctly}
+  object: "chatbot answer text and its confidence indicator; cohort count"
+  situation: "Confidence 'low (based on 23 complete sessions)' rendered as #9a9a9a on white or as a colour-only dot"
+  consequence: "The caveat is missed by anyone with 20/70 vision or in a bright room; the number travels into a review as a certainty"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Answering a studio's question must be fast."
+  proposed: "Caveats are inline text at body contrast (4.5:1 minimum) and are copied with the number when the answer is selected or exported"
+  shallow: false
+- id: percep-13
+  title: "Chatbot table answer is a visual grid without header associations; a screen-reader user hears 'cell, cell, cell' and cannot tell counts from percentages"
+  level: L3
+  cell: {stage: studio-ui, studio-question-type: distribution-not-count, data-element: cohort, chatbot-response-behaviour: answers-correctly, scale: 500-players}
+  object: "chatbot answer table in the studio UI"
+  situation: "Answer is a 6-row distribution (option x count x percent) rendered as styled divs"
+  consequence: "A blind analyst or an analyst using read-aloud cannot use the product's main output; nothing in the spec says the output is text-accessible"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Emit answers as real HTML tables with th/scope and a one-sentence text summary ('6 options; largest: lost interest, 41%, 205 of 500') before the table"
+  shallow: false
+- id: percep-14
+  title: "Photosensitive player turns away from a flashing effect, says 'ugh, my eyes', and quits; extractor maps the utterance to 'frustrated by difficulty'"
+  level: L3
+  cell: {stage: answer-options, question-shape: fits-no-option, speech-shape: "emotional-nonverbal-only (sighs, laughs, swearing-masked)", correctness-failure: forced-choice-bias, data-element: option}
+  object: "quit-reason options; transcript utterance 'ugh my eyes'"
+  situation: "Tutorial level-up effect flashes white 4 times in 1 s; player looks away, misses the next instruction, quits 30 s later"
+  consequence: "Row stores 'frustrated by difficulty'; a photosensitivity defect (a legal exposure in several markets) is counted as a balance problem"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "Add option 'physical discomfort (visual effect, motion sickness)' to every quit-reason question; run a flash-frequency check (over 3 flashes/s) on tutorial videos and store flash_events per video"
+  shallow: false
+- id: percep-15
+  title: "Tutorial cue is a 0.5 s animated pulse that the game suppresses under 'reduced motion'; players with the setting on never see it and no option says 'cue not shown'"
+  level: L3
+  cell: {stage: fixed-question-set, question-shape: negation-player-never-did-x, data-element: tutorial-step, correctness-failure: null-treated-as-no}
+  object: "question 'did the player notice the pulse cue'; tutorial-step"
+  situation: "OS reduced-motion is on (about 10-15% of iOS users); the game drops the animation and shows a static icon that 1 in 3 players miss"
+  consequence: "Answer 'did not notice' is stored for a cue that was never rendered; the designer tunes the animation for players who never had it"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "written per game target"
+  proposed: "Per-step option set must include 'cue not presented (setting/build)' and the extraction prompt receives the session's reduced_motion flag as context"
+  shallow: false
+- id: percep-16
+  title: "Game's built-in narrator or text-to-speech reads the tutorial instruction aloud; transcription attributes it to the player and extractor answers 'player read the instructions'"
+  level: L4
+  cell: {stage: transcription, transcription-subsystem: game-lyrics-or-npc-voice-transcribed-as-player, speech-shape: player-reading-chat-or-overlay-aloud, correctness-failure: transcription-hallucination-propagated, data-element: utterance}
+  object: "transcript (spec item 2); question 'did the player read the instructions'"
+  situation: "Game has screen-reader narration enabled (accessibility mode); every hint is spoken by a synthetic voice at the same level as the mic"
+  consequence: "Transcript shows the exact instruction text as a player utterance; answer 'read and understood' for a player who may have skipped it; a blind player's session is mis-scored in the opposite direction"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "what a transcript contains (speech only, on-screen text, events)"
+  proposed: "Diarise and tag synthetic-voice segments (TTS has flat pitch and zero breath noise); test: an utterance that exactly matches a known hint string is labelled source=game"
+  shallow: false
+- id: percep-17
+  title: "Audio-only tutorial cue (a chime) and a hard-of-hearing or muted-phone player: the 'noticed the cue' answer cannot separate 'did not hear' from 'heard and ignored'"
+  level: L3
+  cell: {stage: per-video-answers, data-element: null-vs-no, speech-shape: silent-player, question-shape: unknowable-from-audio, capture-integrity: stereo-channel-only-game-audio}
+  object: "question 'did the player react to the cue'; per-video row"
+  situation: "Cue is a 0.3 s chime with no visual; player plays muted (common on mobile) or has hearing loss; says nothing"
+  consequence: "Stored No; the aggregate 'ignored the cue' includes every player for whom the cue did not exist; the recording may even contain the chime from the game channel while the player heard nothing"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Transcript loses visual information."
+  proposed: "Store game_audio_muted from device metadata and mark audio-only cues in the step registry; when muted, write null with reason=cue-not-delivered"
+  shallow: false
+- id: percep-18
+  title: "Player with a speech impairment (dysarthria, stutter) gets a 40%+ word error rate against a 10% baseline; the garbled transcript pushes every answer to 'other' or to a hallucinated option"
+  level: L3
+  cell: {stage: transcription, speech-shape: inaudible-segments, correctness-failure: other-option-overused, data-element: transcription-model-version, question-shape: fits-no-option}
+  object: "transcript; per-video answers for that player"
+  situation: "One of 500 players has dysarthric speech; the vendor transcribes fragments and invents words"
+  consequence: "That player's 8 videos produce answers with no relation to what was said; no per-player transcription quality score exists to exclude or flag them"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Unspecified ... languages"
+  proposed: "Store per-video mean word confidence; if under 0.6, mark the session transcript_quality=low, null the answers and show the count of excluded sessions in every cohort answer"
+  shallow: false
+- id: percep-19
+  title: "OS-level screen magnifier: the capture records the full screen while the player sees a 2x viewport; the cue is on the recording and off the player's screen"
+  level: L3
+  cell: {stage: video-capture, capture-integrity: audio-and-video-ok, data-element: screen-state, question-shape: answer-needs-visuals, studio-question-type: one-player-what-happened}
+  object: "video; evidence clip; question 'was the cue visible'"
+  situation: "Low-vision player uses magnifier at 200%; the tutorial arrow sits in the quadrant outside the magnified region"
+  consequence: "An analyst watching the clip sees the arrow plainly and scores the player as ignoring it; the capture does not represent what was perceived"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Record OS magnification level and viewport rectangle per session; overlay the viewport on the evidence clip when magnification is over 1.0"
+  shallow: false
+- id: percep-20
+  title: "Instruction delivered by spoken game dialogue with subtitles off and the phone muted: the player never received it, and the transcript has no trace that it was not delivered"
+  level: L3
+  cell: {stage: per-video-answers, question-shape: unknowable-from-audio, data-element: tutorial-step, speech-shape: silent-player, correctness-failure: confident-no-evidence}
+  object: "question 'did the player follow the instruction at step 2'; tutorial-step 2"
+  situation: "Step 2's only instruction is a voice line; the player has subtitles off and game audio muted; player wanders for 2 minutes"
+  consequence: "Stored 'did not follow'; the cohort rate for step 2 blends players who heard it and players who could not; the fix (always show subtitles in the tutorial) is never surfaced"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "Step registry records delivery channel (visual, audio, both); when channel=audio and game_audio_muted or subtitles=off, store null reason=instruction-not-delivered"
+  shallow: false
+- id: percep-21
+  title: "System font scale at 150-200% reflows the tutorial UI and truncates hint text with an ellipsis; 'instructions unclear' rate differs by font scale and no column records it"
+  level: L4
+  cell: {stage: build-and-metadata-tagging, data-element: device-platform, studio-question-type: "segment-by-metadata (device, country, build)", correctness-failure: wrong-denominator, scale: 500-players}
+  object: "session metadata; 'instructions unclear' option"
+  situation: "On Android with font scale 1.7, the hint 'Drag the crystal to the altar' renders as 'Drag the crys...'; players say 'drag it where?'"
+  consequence: "Chatbot reports 'instructions unclear: 18%' with no split; the real figure is 4% at scale 1.0 and 61% at scale 1.5+, which the designer cannot see"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "Capture ui_font_scale per session; assert the chatbot can group any option count by it; capture one screenshot of the first hint per session for a truncation check"
+  shallow: false
+- id: percep-22
+  title: "Question-set registry has no 'visual-dependence' flag, so questions that need the screen run over audio-only transcripts with the same confidence as speech questions"
+  level: L3
+  cell: {stage: question-set-registry, question-shape: answer-needs-visuals, data-element: answer-confidence, correctness-failure: confident-no-evidence, question-set-version-state: single-version}
+  object: "question set written per game target (spec item 3); per-question metadata"
+  situation: "Of a 12-question set, 5 ask about what the player saw or tapped; all 12 are answered from the same transcript"
+  consequence: "The table cannot be filtered to 'answers the transcript could support'; the chatbot cites visual answers with the same authority as verbal ones"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "the transcript alone is not enough; what is on screen is largely lost."
+  proposed: "Add evidence_channel per question (speech, screen, both); extraction prompt lowers the confidence ceiling to 0.5 for screen questions until a vision model is in the loop; chatbot prefixes such answers with 'from speech only'"
+  shallow: false
+- id: percep-23
+  title: "Capture at 5-10 fps or with dropped frames misses a 300 ms tutorial flash; the evidence clip contradicts the player saying 'I saw it flash'"
+  level: L4
+  cell: {stage: video-capture, capture-integrity: audio-and-video-ok, data-element: evidence-span, answer-afterlife: disputed-by-studio, studio-question-type: quote-me-evidence}
+  object: "video frame rate; evidence clip for the flash cue"
+  situation: "Mobile capture drops to 6 fps under load; a 300 ms flash falls between frames"
+  consequence: "Analyst watches the clip, sees no flash, and marks the extractor wrong when the extractor was right; trust in the whole table drops after one such dispute"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Store effective fps and dropped-frame count per video; show 'recorded at 6 fps; cues under 170 ms may be absent' on the clip"
+  shallow: false
+- id: percep-24
+  title: "15-minute split falls between a visual cue (14:59.5 of video k) and the reaction ('oh, there' at 00:02 of k+1); video k+1 gets 'noticed cue' with no cue in it"
+  level: L4
+  cell: {stage: 15-minute-split, session-shape: 5-20-videos, question-shape: answer-depends-on-prior-video, transcription-subsystem: sentence-cut-at-15min-boundary, correctness-failure: answer-attached-to-wrong-video-index}
+  object: "video boundary at 15:00; per-video answer for 'noticed the cue' on videos k and k+1"
+  situation: "Cue animation spans the cut; player's reaction is the first utterance of the next file"
+  consequence: "Video k stores 'did not notice' (no reaction inside it), video k+1 stores 'noticed'; a timeline-of-one-player answer shows the player noticing a cue that, per the table, never appeared"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "each video is capped at 15 minutes, so one session is many videos"
+  proposed: "Extract with a 60 s overlap of transcript from the previous video and attribute each answer to the timestamp of its evidence span, not the file it was read in"
+  shallow: false
+- id: percep-25
+  title: "A black-screen detector cannot tell capture failure from the game's own 3-8 s fades, loading screens and cutscenes; the threshold and the allowed black duration are unspecified"
+  level: L4
+  cell: {stage: upload-and-ingest, capture-integrity: video-black-or-frozen, data-element: video, processing-status: uploaded-partial, batch-failure-mix: all-succeed}
+  object: "video ingest check (if added per percep-5); video file"
+  situation: "Game fades to black for 6 s at every scene change and shows a black loading screen for 20 s at tutorial start"
+  consequence: "A naive luminance check either rejects valid sessions (false positive on the 20 s load) or passes a 15-minute black file; no rule says which, so the behaviour is whatever the first engineer picked"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Rule: flag black only when over 90% of sampled frames in a video are under 5/255 mean luminance AND speech is present; log a per-game allowed-black baseline from 20 known-good sessions"
+  shallow: false
+- id: percep-26
+  title: "Evidence clip autoplays with no pause control and may contain the game's flashing effects; a photosensitive analyst is exposed in the studio UI"
+  level: L3
+  cell: {stage: evidence-display, studio-question-type: show-me-raw-transcript-or-clip, data-element: evidence-span, answer-afterlife: shared-link, tenancy: one-studio-many-games}
+  object: "evidence clip player in the studio UI"
+  situation: "Clip for 'quit after level-up' includes the 4-flashes-per-second effect from percep-14"
+  consequence: "The UI that reviews a photosensitivity defect triggers it; a shared link opens the clip with autoplay for every recipient"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions"
+  proposed: "Clips never autoplay; show a poster frame and a 'contains flashing' badge when flash_events per video is over 0"
+  shallow: false
+- id: percep-27
+  title: "Chatbot marks Yes/No in its answer table with green check and red cross glyphs only; colour-blind readers and CSV exports both lose the distinction"
+  level: L4
+  cell: {stage: chatbot-answer, answer-afterlife: exported-csv, data-element: answer, studio-question-type: find-players-who, chatbot-response-behaviour: answers-correctly}
+  object: "chatbot answer table for 'find players who skipped the tutorial'; export"
+  situation: "Answer lists 40 players with a coloured glyph per question; analyst exports to CSV"
+  consequence: "On screen the two glyphs differ mainly by colour; in CSV they become identical boxes or empty cells; the 'who' list is unusable"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Cells carry the literal option label ('skipped' / 'completed' / 'unknown'); glyphs are decoration only and never the sole carrier"
+  shallow: false
+- id: percep-28
+  title: "'I can't read this' maps to 'instructions unclear' (content) because no option says 'instructions unreadable' (presentation); the studio rewrites copy instead of enlarging text"
+  level: L3
+  cell: {stage: answer-options, question-shape: fits-no-option, answer-afterlife: acted-on-tutorial-changed, studio-question-type: recommendation-what-should-we-change, data-element: option}
+  object: "'instructions unclear' option in the churn question; chatbot recommendation"
+  situation: "Players say 'what does that say?', 'too small', 'can't read it' at the first hint; 60 of 500 say one of these"
+  consequence: "Chatbot recommends 'simplify the wording of step 1'; the studio ships new copy at the same 11 px; the next cohort shows the same 12%"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "Split the option into 'unclear (meaning)' and 'unreadable (size/contrast/duration)'; extraction prompt lists trigger phrases for each"
+  shallow: false
+- id: percep-29
+  title: "Cohort 'why did they leave' distribution sums to 100% over verbal causes only, so the chatbot reports 0% for visibility causes and the absence reads as evidence"
+  level: L4
+  cell: {stage: session-level-aggregation, studio-question-type: cohort-why, correctness-failure: wrong-denominator, scale: 500-players, question-shape: perceptual-cause-not-verbalised}
+  object: "aggregate over the per-video answers table; churn reason distribution"
+  situation: "Studio asks 'why do players leave the tutorial'; the option set has 5 verbal reasons and no visual one"
+  consequence: "Answer: 'lost interest 41%, too hard 30%, unclear 18%, bug 7%, other 4%'; the studio reads 'no visibility problems' from a table that could not have recorded one"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "Every cohort-why answer states which cause classes the question set can observe; percentages are shown over 'reasons observable from speech', with 'not observable from speech' as an explicit row"
+  shallow: false
+- id: percep-30
+  title: "At 200% browser zoom the studio UI's answer table overflows and hides columns 5-8 behind horizontal scroll; the analyst never sees the 'sessions excluded' column"
+  level: L4
+  cell: {stage: studio-ui, chatbot-response-behaviour: silently-truncates-rows, data-element: cohort, scale: many-concurrent-studio-users, answer-afterlife: read-once-in-chat}
+  object: "chatbot answer table in the studio UI; 'sessions excluded' column"
+  situation: "Low-vision analyst runs the browser at 200%; table is fixed-width 8 columns"
+  consequence: "Caveat columns are off-screen; the visible 4 columns read as the whole answer"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "Answering a studio's question must be fast."
+  proposed: "Test at 320 px effective width (WCAG reflow): caveat and denominator columns are visible without horizontal scroll, or the table stacks"
+  shallow: false
+- id: percep-31
+  title: "Stream overlay or Discord window covers the hint region for the player; recording shows the hint covered too, but the extractor reads only 'where is it?' and picks 'instructions unclear'"
+  level: L3
+  cell: {stage: video-capture, capture-integrity: wrong-window-captured, speech-shape: player-reading-chat-or-overlay-aloud, question-shape: perceptual-cause-not-verbalised, correctness-failure: perceptual-cause-attributed-to-verbal-option}
+  object: "video with overlay; per-video answer for the hint step"
+  situation: "A 300x200 px chat overlay sits over the bottom-right corner where the tutorial hint renders; player reads chat aloud and asks 'where is it?'"
+  consequence: "Visible in the recording to any human, invisible to the pipeline; answer attributes the confusion to the game's wording"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "The transcript loses visual information."
+  proposed: "Detect static overlay regions (unchanged pixels over 5 minutes while the game moves) and store overlay_rect per video; join with the step registry's hint_rect to flag occluded hints"
+  shallow: false
+- id: percep-32
+  title: "Colour-matching tutorial puzzle and a colour-blind player saying 'they all look the same' is stored as 'difficulty too high'; the designer is told to make the puzzle easier"
+  level: L3
+  cell: {stage: per-video-answers, question-shape: two-options-both-partly-true, correctness-failure: forced-choice-bias, studio-question-type: recommendation-what-should-we-change, data-element: tutorial-step}
+  object: "difficulty question for the match-3 tutorial step; 'difficulty too high' option"
+  situation: "Step 4 requires matching red and green gems; protan player says 'they all look the same, this is impossible' and quits after 3 minutes"
+  consequence: "Both 'too hard' and 'could not perceive' are partly true; only one can be stored; the recommendation is a difficulty nerf for the 92% who could see the gems"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "Allow a secondary cause per answer; add trigger phrases 'look the same', 'same colour', 'which is which' to a perceptual option"
+  shallow: false
+- id: percep-33
+  title: "Evidence thumbnail taken from the first frame of a black or frozen video reads as 'no data' in the studio UI, so the analyst skips the session that most needed a human look"
+  level: L3
+  cell: {stage: evidence-display, capture-integrity: video-black-or-frozen, data-element: video, studio-question-type: timeline-of-one-player, processing-status: complete}
+  object: "evidence thumbnails in the one-player timeline view"
+  situation: "Video 2 of 6 is black for capture reasons; thumbnail is black; the other 5 show gameplay"
+  consequence: "The timeline looks like a gap; the analyst assumes a missing video rather than a bad capture with valid audio and valid answers"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "one session is many videos"
+  proposed: "Thumbnail picks the frame with the highest luminance variance; if none exceeds the threshold, show a 'no picture (audio ok)' tile rather than a black one"
+  shallow: false
+- id: percep-34
+  title: "Moderator points at the screen ('that one, the glowing one') with a gesture that is not in the audio; the player's success is credited to understanding the cue"
+  level: L3
+  cell: {stage: per-video-answers, speech-shape: moderator-speaking-or-leading, correctness-failure: moderator-words-attributed-to-player, data-element: moderator, question-shape: fits-an-option}
+  object: "question 'did the player find the cue unaided'; transcript utterances from the moderator"
+  situation: "Moderator leans in and taps the screen; the audio holds only 'that one'; the player says 'oh, okay'"
+  consequence: "Answer 'found the cue' for a player who was physically shown it; the cohort's success rate for the step is inflated by every moderated session"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Unspecified ... who at the studio asks and what they ask"
+  proposed: "Diarise the moderator; any step whose evidence span contains a moderator utterance within 10 s is stored as 'assisted' rather than the success option"
+  shallow: false
+- id: percep-35
+  title: "Question author writes 'tapped the red exit' after watching a normal-vision playthrough; the option text bakes in a perception the cohort does not share"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: option, time-and-change: first-game-onboarded, question-set-version-state: per-game-fork, question-shape: fits-two-options}
+  object: "option text of a step question in the per-game question set (spec item 3, 'written per game target')"
+  situation: "PM authors 12 questions from one playthrough on a calibrated monitor; 3 options name colours, 2 name 'the flashing icon'"
+  consequence: "For colour-blind or reduced-motion players the options describe things they never saw; the extractor still forces a choice among them"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "written per game target"
+  proposed: "Question-set lint: reject option text containing colour names or motion words unless the step registry marks the cue as having a non-colour, non-motion equivalent"
+  shallow: false
+- id: percep-36
+  title: "Answer distribution on black-screen videos is indistinguishable from normal videos; no test exists that would reveal the pipeline never looks at the picture"
+  level: L4
+  cell: {stage: job-orchestration-and-status, capture-integrity: video-black-or-frozen, question-shape: answer-needs-visuals, scale: 500-players, batch-failure-mix: all-succeed}
+  object: "per-video answers table; visual-dependence questions across the cohort"
+  situation: "Take the 20 sessions with capture_status=black (if ever computed) and the 480 without"
+  consequence: "For the 5 visual questions, the option distributions match within 2 points; nothing in the system is sensitive to whether the screen was recorded, which no one has measured"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "what is on screen is largely lost"
+  proposed: "Regression test: for visual-dependence questions, black-screen videos must yield null on 100% of rows; publish the distribution gap as a pipeline health metric"
+  shallow: false
+- id: percep-37
+  title: "Studio UI dark mode renders the evidence transcript highlight as yellow on dark grey at under 3:1; the quoted span is unreadable to many analysts"
+  level: L4
+  cell: {stage: studio-ui, data-element: evidence-span, studio-question-type: quote-me-evidence, answer-afterlife: read-once-in-chat, latency: under-2s}
+  object: "highlighted evidence span in the transcript panel"
+  situation: "Analyst's OS is in dark mode; the highlight colour was chosen for light mode"
+  consequence: "The one line the chatbot cites is the least legible text on the screen"
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "Highlight uses a theme token with 4.5:1 text contrast in both themes plus an underline, verified in an automated contrast check"
+  shallow: false
+- id: percep-38
+  title: "Evidence timestamp is 3-6 s off the cue because transcript timestamps reset per video and the encoder dropped frames; the analyst opens the clip, sees nothing, and disputes a correct answer"
+  level: L4
+  cell: {stage: evidence-display, transcription-subsystem: timestamps-reset-per-video, capture-integrity: clock-drift-between-videos, answer-afterlife: disputed-by-studio, data-element: timestamp}
+  object: "evidence clip start time; transcript timestamp; video 7 of 12"
+  situation: "Video 7's audio-to-video drift reaches 4 s by minute 12; the clip opens at the transcript time and shows the screen 4 s before the cue"
+  consequence: "The clip appears to show the player reacting to nothing; the studio marks the answer wrong and the number is removed from the deck"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "one session is many videos"
+  proposed: "Open clips 5 s before the span and 5 s after; store per-video measured drift and shift the clip by it"
+  shallow: false
+- id: percep-39
+  title: "Analyst asks 'how many players could not see the arrow'; the chatbot substitutes 'how many players did not follow the arrow' without saying so"
+  level: L4
+  cell: {stage: chatbot-query-planning, studio-question-type: question-about-a-step-the-set-never-asked, chatbot-response-behaviour: substitutes-nearest-fixed-question, question-shape: question-not-in-set, data-element: question}
+  object: "chatbot query planner; fixed question 'did the player follow the arrow'"
+  situation: "Question set has a behaviour question about the arrow but no perception question"
+  consequence: "Answer '31% did not' is read as '31% could not see it'; the substitution is invisible in the reply"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Their questions are not known in advance."
+  proposed: "Reply must name the fixed question actually used ('closest stored question: did the player follow the arrow') and state that perception was not measured"
+  shallow: false
+- id: percep-40
+  title: "Game update adds icons to a colour-only gate (accessibility patch) but build-id metadata has no changelog tag; 'stuck at gate' is aggregated across both builds"
+  level: L3
+  cell: {stage: session-level-aggregation, time-and-change: game-update-changes-tutorial, correctness-failure: mixed-version-aggregation, data-element: build-id, studio-question-type: compare-two-versions}
+  object: "build-id on the session; cohort count for 'stuck at gate'"
+  situation: "Build 1.4 ships shape icons on the gate; 220 sessions are pre-1.4, 280 post"
+  consequence: "Chatbot reports 'stuck at gate: 9%' across 500; the real split is 18% vs 2%, which is the proof the patch worked and the reason the studio paid"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "a question over, say, 500 players is fast"
+  proposed: "Every cohort number is grouped by build-id by default when the cohort spans more than one build; the studio can attach a note per build ('1.4: gate icons added')"
+  shallow: false
