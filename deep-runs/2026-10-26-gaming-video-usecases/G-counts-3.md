@@ -11,7 +11,7 @@ Buyer roles in bucket: ux-research, trust-safety, accessibility-compliance, comp
 | Contested (positive options with contested_by) | 4 (citing 4 refusals) |
 | Refusals kept (refusal: true) | 32 |
 | Surviving | 173 |
-| Leaves with cell values added in normalisation | 140 (367 values) |
+| Leaves with cell values added in normalisation | 136 (339 values) |
 | Uncategorised | 0 |
 
 ## Rejected
@@ -112,7 +112,6 @@ Two refusals were rejected for a missing example (compintel-28 rival-footage ad 
 | ux-research | 41 | 8 |
 | localisation | 26 | 4 |
 | accessibility-compliance | 37 | 8 |
-| certification-release | 1 | 0 |
 | analytics-bi | 1 | 0 |
 | esports-team-or-league | 2 | 0 |
 | publishing-scout-bd | 1 | 0 |
@@ -120,7 +119,7 @@ Two refusals were rejected for a missing example (compintel-28 rival-footage ad 
 | data-buyer-market-intel | 1 | 0 |
 | outsourced-qa-vendor | 7 | 0 |
 
-Zero in this bucket: rating-and-consumer-compliance, engineering-performance, community-and-creator-marketing, ad-network-ops, brand-advertiser, investor, white-label-vendor
+Zero in this bucket: rating-and-consumer-compliance, certification-release, engineering-performance, community-and-creator-marketing, ad-network-ops, brand-advertiser, investor, white-label-vendor
 
 ## video-source
 
@@ -178,7 +177,7 @@ Zero in this bucket: ad-verification-and-fraud, automated-test-generation, creat
 | dashboard | 21 | 4 |
 | alert-or-slack | 13 | 0 |
 | per-cohort-report | 41 | 5 |
-| api-or-sdk | 8 | 1 |
+| api-or-sdk | 6 | 1 |
 | clip-reel | 2 | 0 |
 | in-tool-annotation | 7 | 1 |
 | managed-service-with-analyst | 3 | 2 |
@@ -186,11 +185,11 @@ Zero in this bucket: ad-verification-and-fraud, automated-test-generation, creat
 | warehouse-table-export | 7 | 0 |
 | issue-tracker-ticket | 25 | 4 |
 | engine-editor-plugin | 1 | 0 |
-| ask-question-agent-chat | 9 | 1 |
-| enforcement-or-cert-evidence-pack | 19 | 4 |
+| ask-question-agent-chat | 7 | 1 |
+| enforcement-or-cert-evidence-pack | 18 | 3 |
 | white-label-embed | 1 | 0 |
 | weekly-digest-email | 9 | 1 |
-| (none) | 18 | 8 |
+| (none) | 19 | 9 |
 
 Zero in this bucket: generated-creative-files
 
@@ -200,18 +199,18 @@ Zero in this bucket: generated-creative-files
 |---|---|---|
 | per-session | 9 | 3 |
 | per-month-seat | 10 | 1 |
-| per-game | 11 | 1 |
+| per-game | 9 | 1 |
 | per-mau | 5 | 2 |
 | managed-project | 5 | 2 |
 | free-with-platform | 1 | 1 |
 | per-hour-of-video | 7 | 2 |
-| per-build-or-release | 13 | 1 |
+| per-build-or-release | 11 | 1 |
 | outcome-based-per-bug-or-uplift | 4 | 1 |
 | annual-enterprise-licence | 5 | 0 |
 | data-licence-per-hour | 1 | 1 |
 | freemium-self-serve | 3 | 2 |
 | per-audit-or-certification | 13 | 4 |
-| (none) | 89 | 13 |
+| (none) | 92 | 13 |
 
 Zero in this bucket: revenue-share, oem-royalty-or-white-label, cpm-or-per-impression-verified
 
@@ -219,7 +218,7 @@ Zero in this bucket: revenue-share, oem-royalty-or-white-label, cpm-or-per-impre
 
 | Value | All survivors | Of which refusals |
 |---|---|---|
-| replace-labour-hours | 31 | 3 |
+| replace-labour-hours | 30 | 3 |
 | increase-coverage-from-sample-to-all | 17 | 1 |
 | cut-time-to-insight | 9 | 2 |
 | create-data-that-did-not-exist | 7 | 0 |
@@ -228,14 +227,14 @@ Zero in this bucket: revenue-share, oem-royalty-or-white-label, cpm-or-per-impre
 | produce-a-sellable-asset | 1 | 0 |
 | reduce-cost-per-incident | 13 | 2 |
 | enable-automated-action | 5 | 3 |
-| (none) | 85 | 21 |
+| (none) | 86 | 21 |
 
 ## buyer-org-type
 
 | Value | All survivors | Of which refusals |
 |---|---|---|
 | indie-studio | 8 | 2 |
-| mid-size-studio | 24 | 5 |
+| mid-size-studio | 23 | 5 |
 | aaa-studio | 9 | 2 |
 | publisher | 50 | 5 |
 | platform-or-store | 8 | 1 |
