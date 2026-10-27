@@ -1,0 +1,564 @@
+# Stage G merged leaves, bucket 6 (15-minute-split / export-and-share / studio-ui). Gaps run; no ranking applied.
+- id: ds-29
+  perspective: ds
+  title: Event counts per video are summed across 15-minute boundaries, double-counting or losing events that straddle the
+    cut
+  level: L4
+  cell:
+    stage: 15-minute-split
+    question-shape: answer-is-a-count
+    transcription-subsystem: sentence-cut-at-15min-boundary
+    session-shape: 10-plus-hour-session
+    correctness-failure: duplicate-counted
+    data-element: video
+    scale: 1-player-10-hour-session
+  object: 'Step 1: "each video is capped at 15 minutes"'
+  situation: Question 'How many times did the player say they were lost?' summed over 40 videos of a 10-hour session; a statement
+    spanning minute 15:00 is heard in half in each file
+  consequence: Up to 39 boundaries per session where a single event can be counted twice or zero times; counts are also bounded
+    by per-video LLM counting accuracy, which degrades above about 5 events
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"each video is capped at 15 minutes"'
+  proposed: Overlap splits by 10 seconds and de-duplicate events by timestamp, or avoid per-video counts and ask presence-per-video,
+    then count videos
+  shallow: false
+  variants_of:
+  - pipe-1
+- id: design-4
+  perspective: design
+  title: The final video of a quitter is where the churn reason lives, but a quit inside the last 40 seconds yields an empty
+    transcript
+  level: L3
+  cell:
+    stage: 15-minute-split
+    session-shape: last-video-under-1-minute
+    data-element: video
+    transcription-subsystem: empty-transcript-for-non-empty-video
+    correctness-failure: hallucinated-answer
+    question-shape: answer-is-a-why
+    processing-status: transcript-empty
+  object: last video of a session shorter than 1 minute
+  situation: Player says 'ugh forget it' and quits 40 seconds after the 15-minute split; the 40 s video has 6 words or nothing.
+  consequence: The 'why did the player quit' question gets answered from 6 words or from nothing; the extractor picks 'lost
+    interest' or 'other', and the one video the designer cares most about is the weakest evidence.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: each video is capped at 15 minutes, so one session is many videos.
+  proposed: Merge a final video under 60 s into the previous video's transcript context for the quit-reason question.
+  shallow: false
+  also_from:
+  - skeptic
+  absorbed:
+  - skeptic-36
+- id: design-34
+  perspective: design
+  title: Churn just after the tutorial gets no questions when the tutorial ends at minute 20 and videos cut at 15
+  level: L3
+  cell:
+    stage: 15-minute-split
+    time-and-change: game-target-changes-beyond-tutorial
+    session-shape: 2-4-videos
+    data-element: game-target
+    question-shape: answer-depends-on-prior-video
+  object: 'spec.md line 6: ''churn in the tutorial and just after it'''
+  situation: Tutorial ends at 20:00; video 2 (15:00-30:00) mixes tutorial end and first post-tutorial play; 'just after' has
+    no stated length (5 minutes? first session?).
+  consequence: Question applied to video 2 either reads the whole video as tutorial or as post-tutorial; the boundary is not
+    a stored field, so post-tutorial churn is inconsistent across players whose tutorial ended at 14:50 vs 20:00.
+  p_typical: 0.07
+  grounded: quote
+  evidence: churn in the tutorial and just after it
+  proposed: Store a tutorial_end offset per session and run phase-specific questions only on the matching span.
+  shallow: false
+- id: percep-24
+  perspective: percep
+  title: 15-minute split falls between a visual cue (14:59.5 of video k) and the reaction ('oh, there' at 00:02 of k+1); video
+    k+1 gets 'noticed cue' with no cue in it
+  level: L4
+  cell:
+    stage: 15-minute-split
+    session-shape: 5-20-videos
+    question-shape: answer-depends-on-prior-video
+    transcription-subsystem: sentence-cut-at-15min-boundary
+    correctness-failure: answer-attached-to-wrong-video-index
+    studio-question-type: timeline-of-one-player
+    data-element: video
+  object: video boundary at 15:00; per-video answer for 'noticed the cue' on videos k and k+1
+  situation: Cue animation spans the cut; player's reaction is the first utterance of the next file
+  consequence: Video k stores 'did not notice' (no reaction inside it), video k+1 stores 'noticed'; a timeline-of-one-player
+    answer shows the player noticing a cue that, per the table, never appeared
+  p_typical: 0.05
+  grounded: quote
+  evidence: each video is capped at 15 minutes, so one session is many videos
+  proposed: Extract with a 60 s overlap of transcript from the previous video and attribute each answer to the timestamp of
+    its evidence span, not the file it was read in
+  shallow: false
+  variants_of:
+  - pipe-1
+- id: pipe-1
+  perspective: pipe
+  title: A sentence straddling the 15-minute cut is split into two half-utterances, and neither video's answer to a 'why'
+    question sees the whole reason
+  level: L4
+  cell:
+    stage: 15-minute-split
+    transcription-subsystem: sentence-cut-at-15min-boundary
+    session-shape: session-ends-mid-sentence
+    question-shape: answer-is-a-why
+    data-element: utterance
+    correctness-failure: other-option-overused
+  object: 'spec.md step 1: ''each video is capped at 15 minutes, so one session is many videos''; step 3: answers form ''a
+    structured table per video'''
+  situation: Player says 'I quit because the second tutorial popup never told me where to tap' with the cut at 14:58; video
+    1 ends at 'I quit because the second', video 2 starts at 'tutorial popup never told me...'
+  consequence: 'Video 1''s churn-reason question gets no reason (answers ''other/unclear''), video 2''s gets a reason with
+    no churn context; the table holds two weak answers where one strong one existed. Test: feed a transcript pair split mid-sentence
+    and assert the reason is recovered in one row.'
+  p_typical: 0.25
+  grounded: inferred
+  evidence: each video is capped at 15 minutes, so one session is many videos
+  proposed: Split with a 15-30 s overlap and dedupe by timestamp, or run extraction on a sliding window that includes the
+    previous video's last 60 s of transcript.
+  shallow: false
+  also_from:
+  - speech
+  absorbed:
+  - speech-4
+- id: stitch-7
+  perspective: stitch
+  title: A sentence cut at the 15:00 boundary is answered on half its meaning in each video ('I'm going to quit' | 'the tutorial
+    if this doesn't load')
+  level: L3
+  cell:
+    stage: 15-minute-split
+    transcription-subsystem: sentence-cut-at-15min-boundary
+    session-shape: 5-20-videos
+    question-shape: answer-spans-videos
+    correctness-failure: hallucinated-answer
+    data-element: utterance
+  object: Fixed question 'Did the player express intent to quit?' run per video
+  situation: Video 3 ends at 'I'm going to quit-'; video 4 starts 'the tutorial if this doesn't load, it's fine now'.
+  consequence: 'Video 3 row: Yes, quit intent; video 4 row: No. Rollup ''any video Yes'' marks a player who continued 2 more
+    hours as a quit-intent case.'
+  p_typical: 0.15
+  grounded: inferred
+  evidence: Each video is converted to a transcript.
+  proposed: Transcribe each video with the previous video's final 60 s as context and attach the boundary-straddling utterance
+    to both, flagged 'boundary'.
+  shallow: false
+  also_from:
+  - extract
+  absorbed:
+  - extract-27
+  variants_of:
+  - pipe-1
+- id: uxr-17
+  perspective: uxr
+  title: Failed attempts at one obstacle, split across two 15-minute videos, are counted as 'multiple' and 'once' in different
+    rows
+  level: L4
+  cell:
+    question-shape: answer-is-a-count
+    session-shape: 2-4-videos
+    stage: 15-minute-split
+    correctness-failure: inconsistent-across-videos
+    data-element: video
+    studio-question-type: cohort-count
+  object: count-type option ranges ('0 / 1-2 / 3+'); 15-minute video cap
+  situation: Player fails the tutorial jump 2 times at 14:20-14:59 of video 1 and 2 more times at 00:00-00:40 of video 2
+  consequence: 'Observable: each video answers ''1-2'', the session never reaches ''3+''; ''how many players failed the jump
+    3+ times'' under-counts'
+  p_typical: 0.08
+  grounded: quote
+  evidence: each video is capped at 15 minutes, so one session is many videos.
+  proposed: Store raw integer counts per video and sum at session level; never bucket before aggregation
+  shallow: false
+- id: auditor-9
+  perspective: auditor
+  title: A shared link to a chatbot conversation re-renders against the live table, so the recipient sees a different number
+    than the sender
+  level: L4
+  cell:
+    stage: export-and-share
+    answer-afterlife: shared-link
+    fast-path-dependency: cache-stale-after-rerun
+    data-element: chatbot-conversation-log
+    latency: fast-but-stale
+    processing-status: superseded-by-rerun
+    chatbot-response-behaviour: differs-on-re-ask
+  object: shared link to a chatbot conversation (export-and-share stage, unspecified in the spec)
+  situation: PM shares a link on Monday showing 38%; a rerun happens Tuesday; the exec opens the link Thursday and the conversation
+    shows 44% because the answer is recomputed, or shows 38% with no indication it is stale
+  consequence: Two people in the same thread argue over which number is real; neither can tell whether the link is a snapshot
+    or a live view
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: Shared links are immutable snapshots with the snapshot id in the URL and a banner 'table has been re-extracted
+    since; re-run this question' when the live snapshot differs
+  shallow: false
+- id: auditor-10
+  perspective: auditor
+  title: CSV export has no version or run columns, so two exports taken 3 weeks apart get merged into one analysis with mixed
+    prompt versions
+  level: L4
+  cell:
+    stage: export-and-share
+    answer-afterlife: exported-csv
+    data-element: prompt-version
+    correctness-failure: mixed-version-aggregation
+    time-and-change: question-set-revised
+    question-set-version-state: option-added
+    scale: 500-players
+  object: exported CSV of the answers table (columns unspecified in the spec)
+  situation: PM exports rows for 250 players in week 1 and the remaining 250 in week 4; question-set v2 replaced v1 in week
+    2; the two files have identical headers and are concatenated in a spreadsheet
+  consequence: The spreadsheet pivot shows option 'paused' at 0% for the first 250 players because the option did not exist
+    for them; PM reports 'paused' doubled after the change
+  p_typical: 0.07
+  grounded: inferred
+  evidence: The answers form a structured table per video.
+  proposed: Every export row includes question_set_version, prompt_version, extraction_run_id, extraction_model_version, snapshot_id
+    and exported_at; the file name carries the snapshot id
+  shallow: false
+- id: l10n-30
+  perspective: l10n
+  title: CSV export of option labels and evidence in UTF-8 without BOM opens as mojibake in Excel on Windows for Japanese
+    and Korean studios
+  level: L4
+  cell:
+    stage: export-and-share
+    answer-afterlife: exported-csv
+    speech-shape: non-english
+    data-element: evidence-span
+    studio-question-type: quote-me-evidence
+  object: Any export of Step 3's 'structured table per video' or Step 4's answer to CSV
+  situation: A Tokyo analyst exports 500 rows with evidence quotes; Excel 2019 on Windows reads the file as Shift-JIS
+  consequence: Every quote and localised label shows as '繧ｳ繝ｳ' sequences; the analyst re-types labels by hand or uses the
+    English fork, and the deck carries the wrong option names
+  p_typical: 0.03
+  grounded: inferred
+  evidence: none
+  proposed: Export UTF-8 with BOM, or XLSX; include option id next to every label column
+  shallow: false
+- id: privacy-16
+  perspective: privacy
+  title: Exported answers CSV carries player ids, device, country and build, so a recipient can re-identify individuals
+  level: L3
+  cell:
+    stage: export-and-share
+    answer-afterlife: exported-csv
+    data-element: player
+    studio-question-type: find-players-who
+  object: Answers table per video with player and build tagging (stage build-and-metadata-tagging)
+  situation: An analyst asks 'find players who quit at step 3 on Android in Brazil' and exports 7 rows with player id, device
+    model, country, session timestamps and answers.
+  consequence: The CSV leaves tenant controls; with 7 rows the combination of device, country and time points to named testers
+    and can be matched to the studio's own accounts.
+  p_typical: 0.1
+  grounded: inferred
+  evidence: none
+  proposed: Replace player id with a per-export pseudonym, bucket country and device, and refuse exports under a minimum of
+    10 rows.
+  shallow: false
+- id: privacy-18
+  perspective: privacy
+  title: Shared evidence link is world-readable and does not expire
+  level: L3
+  cell:
+    stage: export-and-share
+    answer-afterlife: shared-link
+    data-element: evidence-span
+    tenancy: one-studio-many-games
+    time-and-change: player-deletion-request
+    studio-question-type: show-me-raw-transcript-or-clip
+  object: Evidence clip or transcript span shown beside a chatbot answer (stage evidence-display)
+  situation: An analyst copies the URL of a 20-second clip with the player's voice into a deck; the URL carries a token, no
+    login, no expiry.
+  consequence: Anyone with the deck, including contractors and other game teams, can play the clip months later, after the
+    player's deletion request.
+  p_typical: 0.1
+  grounded: speculative
+  evidence: none
+  proposed: Require studio login for clip links, expire tokens after 7 days, and have deletion revoke every token for that
+    player.
+  shallow: false
+- id: player-3
+  perspective: player
+  title: A studio's CSV export of 500 players' answers cannot be recalled when one player deletes
+  level: L3
+  cell:
+    stage: export-and-share
+    data-element: answer
+    answer-afterlife: exported-csv
+    time-and-change: player-deletion-request
+    tenancy: one-studio-one-game
+    scale: 500-players
+    recovery-action: delete-and-propagate
+  object: studio export of the answers table
+  situation: The studio exported 500 rows to its own drive on day 10; player 212 asks for deletion on day 40.
+  consequence: A copy of the player's answers (and any quote column) lives outside the pipeline with no way to find or delete
+    it; the player was promised deletion.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Exports carry a pseudonymous id only, are logged per studio, and the studio contract obliges a deletion notice
+    to be forwarded to every studio that exported that player.
+  shallow: false
+- id: sec-14
+  perspective: sec
+  title: Global player_id in CSV exports lets two studios join exports and learn that a panel player tested a competitor's
+    unreleased game
+  level: L3
+  cell:
+    stage: export-and-share
+    data-element: player
+    answer-afterlife: exported-csv
+    tenancy: many-studios-shared-infra
+    session-shape: same-player-multiple-sessions
+  object: Answers table rows keyed on player (step 3/4)
+  situation: The same recruited playtester plays games for two studios; player_id is identical in both tenants
+  consequence: Cross-tenant linkage of a person's playtest history; reveals existence and timing of a competitor's playtest
+  p_typical: 0.03
+  grounded: speculative
+  evidence: a question over, say, 500 players is fast.
+  proposed: Per-tenant pseudonymous id = HMAC(tenant_secret, panel_player_id); mapping held only in the panel service
+  shallow: false
+  variants_of:
+  - privacy-16
+- id: exec-8
+  perspective: exec
+  title: CSV export of the answers table drops confidence, null-vs-No distinction and version columns
+  level: L3
+  cell:
+    stage: export-and-share
+    answer-afterlife: exported-csv
+    data-element: answer-confidence
+    correctness-failure: null-treated-as-no
+    scale: 500-players
+  object: export of per-video answers rows
+  situation: Exec's analyst exports 500 players x 12 questions; a question that was not answerable in a video is exported
+    as empty and read in Excel as 0 or No
+  consequence: Pivot table treats 'not asked or not answerable' as 'No', inflating no-rates; exec decks built on it cannot
+    be traced back
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: Export carries answered / not-observed / not-processed as separate values plus version columns
+  shallow: false
+  variants_of:
+  - auditor-10
+- id: exec-9
+  perspective: exec
+  title: Shared chatbot link keeps working after the studio is offboarded
+  level: L3
+  cell:
+    stage: export-and-share
+    answer-afterlife: shared-link
+    tenancy: studio-offboarded
+    time-and-change: studio-offboarded
+    data-element: chatbot-conversation-log
+    studio-question-type: quote-me-evidence
+  object: a shared link to a chatbot answer that quotes player speech
+  situation: Exec shared a conversation link with an agency in month 3; studio contract ends in month 9; the link and the
+    quoted transcripts are still reachable on day 300
+  consequence: Player speech stays readable by third parties after the contract that allowed it ended
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: Shared links expire at 30 days or at studio offboarding, whichever first
+  shallow: false
+  variants_of:
+  - privacy-18
+- id: l10n-12
+  perspective: l10n
+  title: Right-to-left transcripts (Arabic, Hebrew) mixed with Latin option labels and timestamps render in the wrong order
+    in the studio UI
+  level: L4
+  cell:
+    stage: studio-ui
+    speech-shape: non-english
+    data-element: timestamp
+    studio-question-type: show-me-raw-transcript-or-clip
+    answer-afterlife: shared-link
+  object: Step 4 chatbot answer with evidence spans in the studio UI
+  situation: An Arabic utterance at 03:15 is displayed with '[03:15]' and the option label 'instructions unclear' inline;
+    bidi rules render the timestamp and label on the wrong side of the sentence
+  consequence: The analyst reads the timestamp as belonging to the previous line and the clip link opens 40 seconds early;
+    a shared link to the answer shows different ordering in different browsers
+  p_typical: 0.02
+  grounded: inferred
+  evidence: none
+  proposed: Wrap each utterance in a bidi isolate (dir=auto) and keep timestamp and option label in their own LTR cells, not
+    inline
+  shallow: false
+- id: percep-12
+  perspective: percep
+  title: Low-confidence marker on a chatbot number is grey text at under 4.5:1 or an amber dot; a low-vision analyst copies
+    '47 of 500' into a deck without the caveat
+  level: L4
+  cell:
+    stage: studio-ui
+    data-element: answer-confidence
+    answer-afterlife: copied-into-deck
+    studio-question-type: cohort-count
+    chatbot-response-behaviour: answers-correctly
+    scale: 500-players
+  object: chatbot answer text and its confidence indicator; cohort count
+  situation: 'Confidence ''low (based on 23 complete sessions)'' rendered as #9a9a9a on white or as a colour-only dot'
+  consequence: The caveat is missed by anyone with 20/70 vision or in a bright room; the number travels into a review as a
+    certainty
+  p_typical: 0.04
+  grounded: inferred
+  evidence: Answering a studio's question must be fast.
+  proposed: Caveats are inline text at body contrast (4.5:1 minimum) and are copied with the number when the answer is selected
+    or exported
+  shallow: false
+- id: percep-13
+  perspective: percep
+  title: Chatbot table answer is a visual grid without header associations; a screen-reader user hears 'cell, cell, cell'
+    and cannot tell counts from percentages
+  level: L3
+  cell:
+    stage: studio-ui
+    studio-question-type: distribution-not-count
+    data-element: cohort
+    chatbot-response-behaviour: answers-correctly
+    scale: 500-players
+    answer-afterlife: read-once-in-chat
+  object: chatbot answer table in the studio UI
+  situation: Answer is a 6-row distribution (option x count x percent) rendered as styled divs
+  consequence: A blind analyst or an analyst using read-aloud cannot use the product's main output; nothing in the spec says
+    the output is text-accessible
+  p_typical: 0.03
+  grounded: inferred
+  evidence: The answers form a structured table per video.
+  proposed: 'Emit answers as real HTML tables with th/scope and a one-sentence text summary (''6 options; largest: lost interest,
+    41%, 205 of 500'') before the table'
+  shallow: false
+- id: percep-30
+  perspective: percep
+  title: At 200% browser zoom the studio UI's answer table overflows and hides columns 5-8 behind horizontal scroll; the analyst
+    never sees the 'sessions excluded' column
+  level: L4
+  cell:
+    stage: studio-ui
+    chatbot-response-behaviour: silently-truncates-rows
+    data-element: cohort
+    scale: many-concurrent-studio-users
+    answer-afterlife: read-once-in-chat
+  object: chatbot answer table in the studio UI; 'sessions excluded' column
+  situation: Low-vision analyst runs the browser at 200%; table is fixed-width 8 columns
+  consequence: Caveat columns are off-screen; the visible 4 columns read as the whole answer
+  p_typical: 0.02
+  grounded: inferred
+  evidence: Answering a studio's question must be fast.
+  proposed: 'Test at 320 px effective width (WCAG reflow): caveat and denominator columns are visible without horizontal scroll,
+    or the table stacks'
+  shallow: false
+- id: percep-37
+  perspective: percep
+  title: Studio UI dark mode renders the evidence transcript highlight as yellow on dark grey at under 3:1; the quoted span
+    is unreadable to many analysts
+  level: L4
+  cell:
+    stage: studio-ui
+    data-element: evidence-span
+    studio-question-type: quote-me-evidence
+    answer-afterlife: read-once-in-chat
+    latency: under-2s
+  object: highlighted evidence span in the transcript panel
+  situation: Analyst's OS is in dark mode; the highlight colour was chosen for light mode
+  consequence: The one line the chatbot cites is the least legible text on the screen
+  p_typical: 0.02
+  grounded: inferred
+  evidence: A chatbot for the gaming studio answers the studio's questions from that table
+  proposed: Highlight uses a theme token with 4.5:1 text contrast in both themes plus an underline, verified in an automated
+    contrast check
+  shallow: false
+  variants_of:
+  - percep-12
+- id: privacy-34
+  perspective: privacy
+  title: Chatbot says nothing about what data it holds when a player asks the studio what is stored about them
+  level: L3
+  cell:
+    stage: studio-ui
+    studio-question-type: what-can-you-answer
+    data-element: player
+    chatbot-response-behaviour: says-no-data-correctly
+    tenancy: one-studio-one-game
+    scale: 1-player
+  object: Studio chatbot, no access-request path in the spec
+  situation: A tester emails the studio asking for a copy of their transcript and answers; the studio's analyst asks the chatbot
+    'what do we have on player P-0412?' and gets a partial list.
+  consequence: The vendor and studio cannot assemble a full access response within 30 days because videos, transcripts, answers,
+    logs and exports are indexed in different places.
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: Build a per-player data inventory query across video, transcript, answers, caches, logs and exports and test it
+    on a seeded player.
+  shallow: false
+- id: player-15
+  perspective: player
+  title: Verbatim quote with profanity is shown with the player's id in a studio deck
+  level: L3
+  cell:
+    stage: studio-ui
+    studio-question-type: quote-me-evidence
+    answer-afterlife: copied-into-deck
+    speech-shape: profanity-or-slang
+    data-element: evidence-span
+  object: evidence span returned by the chatbot
+  situation: An analyst pastes 'this tutorial is f***ing garbage, I'm out' with player id P-0417 and device model into a deck
+    presented to 80 people.
+  consequence: A player's rage is circulated under an identifying username; the player agreed to a research session, not a
+    presentation.
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: Quotes appear with a pseudonymous label only, no device model or username; evidence display marks consent scope
+    and carries a no-redistribution notice.
+  shallow: false
+  variants_of:
+  - privacy-16
+- id: analyst-6
+  perspective: analyst
+  title: Analyst cannot ask the bot what it can answer; the question catalog is not exposed
+  level: L3
+  cell:
+    stage: studio-ui
+    studio-question-type: what-can-you-answer
+    data-element: question-set-version
+    chatbot-response-behaviour: refuses-answerable-question
+  object: fixed question set per game target (not visible to the studio)
+  situation: Analyst types 'What can you tell me about this playtest?' or phrases a covered question in different words ('drop-off
+    at onboarding' for 'tutorial churn')
+  consequence: Bot either lists generic abilities or says 'I don't have that data' for a question the table covers under other
+    wording; analyst guesses phrasing for 20 minutes
+  p_typical: 0.12
+  grounded: inferred
+  evidence: who at the studio asks and what they ask ... (Unspecified)
+  proposed: Studio UI shows the active question set (id, text, options, version, cohort coverage) and the bot answers 'what
+    can you answer' from that list
+  shallow: false
+- id: analyst-21
+  perspective: analyst
+  title: find-players-who list shows 20 ids and drops the rest without 'showing 20 of 73'
+  level: L4
+  cell:
+    studio-question-type: find-players-who
+    chatbot-response-behaviour: silently-truncates-rows
+    scale: 500-players
+    stage: studio-ui
+    data-element: player
+  object: chatbot answer to a player list query
+  situation: Analyst asks 'Which players quit after the first boss?'; 73 match; reply renders 20 ids inline
+  consequence: Analyst copies 20 ids into a recontact list believing it is complete; 53 players never contacted
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: List answers print total count and offer full CSV export of all 73 ids
+  shallow: false
