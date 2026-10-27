@@ -1,0 +1,692 @@
+- id: tar-1
+  title: "Elusion test on every find-players-who answer: draw 385 sessions at random from the null set (sessions the retrieval did not return), code them against the same protocol, and report recall with a 95% CI next to the player list"
+  level: L4
+  cell: {part: evaluation, query-path: retrieval-then-llm, question-type: find-players-who, evidence-form: recall-estimate, uncertainty-policy: answer-with-ci-and-n, scope: all-players, latency-tier: minutes}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "Studio asks 'find all players who rage-quit during the tutorial'; retrieval returns 62 of 500 players; the other 438 are never read and nobody knows how many positives sit in them"
+  consequence: "Without the test the chatbot ships 62 as the answer; an elusion sample of 385 of the 438 that finds 9 positives implies about 10 missed players, recall about 86% (95% CI 78 to 92); the studio sees that number instead of a bare list"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  proposed: "After the retrieval pass, sample 385 null-set sessions (gives +/-5pp at 95%), run the same extraction prompt over their observation rows, count positives, compute recall = found / (found + estimated_missed) with a Wilson interval; render 'Recall 86% (78 to 92), n=385 sampled of 438'"
+  mechanism: "Changes evaluation and the answer record: every per-player-list answer gets {n_returned, n_null, n_sampled, positives_in_sample, recall_point, recall_ci_low, recall_ci_high, protocol_id}; the sampled rows are cached so a re-ask costs nothing"
+  example: "'Which players abandoned the tutorial at the crafting step?' returns 62 players; elusion sample finds 9 of 385 null sessions positive; answer shows '62 players (estimated 72 total, recall 86%, CI 78 to 92)'"
+  cost: M
+  depends_on: "observation log rows per session (memo.md item 1) and a per-question coding protocol (tar-9)"
+  part: evaluation
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The fixed table has no recall concept at all; a wrong count is invisible. The elusion number is defensible to a producer who is about to cut a tutorial step on it"
+  shallow: false
+
+- id: tar-2
+  title: "Continuous active learning (CAL) loop for find-players-who: seed from the first retrieval hits, train a per-question ranker over all 500 sessions, review the top 50 per round, retrain, stop when 3 consecutive rounds yield under 2 new positives"
+  level: L3
+  cell: {part: query-path, query-path: progressive-answer-then-refine, question-type: find-players-who, mechanism-type: approximate-then-refine, latency-tier: progressive-streaming, evidence-form: per-player-list, effort: M-one-quarter}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "A new question with prevalence around 10% over 500 sessions; a flat batch extraction reads all 500 session logs before the first answer appears"
+  consequence: "CAL reads about 150 to 200 session logs (rounds of 50) to reach stabilisation at 10% prevalence instead of 500, and the studio sees a growing player list after round 1 (about 20 seconds) rather than after the full batch"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  proposed: "Ranker = logistic regression over TF-IDF of observation text plus closed-field one-hots per session; round r: score all unreviewed sessions, LLM-code top 50 against the protocol, add labels, retrain; emit the positive list after each round; stop rule: 3 rounds with under 2 new positives, then run tar-1 on the remainder"
+  mechanism: "Changes the query path for per-player-list questions: {question, protocol} produces a stream of {round, n_reviewed, n_positive, players[]} records and a final recall estimate, instead of one batch job"
+  example: "'Find players who never discovered the dodge button in the tutorial': round 1 seeds from 11 retrieval hits, round 4 has 48 positives after 200 sessions coded, rounds 5 to 7 add 1, 0, 1; stop; elusion on the 300 unread confirms recall 91%"
+  cost: M
+  depends_on: "observation log rows per session (memo.md item 1); an LLM coder that returns a binary code per session for a protocol"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "A new question that is not in the table costs one ranked pass of 150 to 200 reads with a recall number, not a 500-read batch with none"
+  shallow: false
+
+- id: tar-3
+  title: "Seed set from studio-supplied example clips: the studio marks 5 positive and 5 negative 30-second clips in the review UI, and those become the labelled seed for the CAL ranker and the written protocol's examples"
+  level: L3
+  cell: {part: question-generation, question-origin: few-shot-tracker-from-examples, query-path: query-by-example-clip, delivery-surface: chatbot, granularity: variable-length-moment-or-episode, user-segment: ux-researcher}
+  object: "spec.md constraint: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  situation: "A UX researcher cannot phrase 'that thing where players spin the camera looking for the exit' as a closed question, but can point at 5 clips where it happens"
+  consequence: "A text-only question for this behaviour retrieves 14 rows, mostly wrong; a 5-positive, 5-negative seed gives the ranker a 0.8 precision at the top 50 in the first round in comparable TAR matters"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'Their questions are not known in advance.' and memo.md item 1 'quote with timestamp as evidence'"
+  proposed: "Chatbot offers 'show me examples' mode; the user tags clips as positive or negative; each tag stores {session_id, t_start, t_end, label, tagger, protocol_draft}; seed labels feed tar-2 and the 10 clips are pasted into the protocol as the coding examples"
+  mechanism: "Changes question-generation: a question can be born as a labelled seed set plus a one-line description, not as text alone; the seed is versioned with the field"
+  example: "Researcher tags 5 clips of 'camera spinning at tutorial exit door' and 5 of normal navigation; CAL finds 37 of 500 players; the protocol file shows the 10 clips so a colleague codes the elusion sample the same way"
+  cost: M
+  depends_on: "clip lookup by session_id and time range; CAL loop (tar-2)"
+  part: question-generation
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Table questions must be written as text with options before anyone has seen the behaviour; a seed set captures behaviour a question-writer never anticipated"
+  shallow: false
+
+- id: tar-4
+  title: "Richness (prevalence) estimate before any backfill: code a fixed 200-session random control sample against the new field first, and show the studio the expected positive count and CI before the full extraction runs"
+  level: L4
+  cell: {part: cost-governance, extraction-trigger: on-first-question, query-path: sampled-map-reduce-with-ci, uncertainty-policy: give-range-then-refine, mechanism-type: approximate-then-refine, latency-tier: under-30s}
+  object: "memo.md item 2: 'a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Studio asks 'how many players read the crafting tooltip aloud'; prevalence is 0.5%, so the full answer is 2 or 3 players; a 500-session batch runs for that"
+  consequence: "Control-sample first gives '0 to 3 of 200, under 2% of players' in 20 seconds; the studio can decide the full extraction is not worth it; prevalence under 1% also means a later elusion sample of 385 will likely find 0 positives and the recall CI will be uninformative, which the studio is told up front"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  proposed: "Pin a control sample of 200 session_ids per game at onboarding (stratified by build-version); every new field is coded on these first; return {positives, n=200, ci_low, ci_high, projected_total_for_population}; button 'run on all 500'"
+  mechanism: "Changes cost-governance and the extraction trigger: new fields go control-sample first, population second; the control sample doubles as the precision/recall validation set for the field later"
+  example: "'How many players quit during the tutorial because of a crash?' control sample: 7 of 200 (3.5%, CI 1.4 to 7.1); projected 18 of 500; studio clicks run-on-all and gets 16"
+  cost: S
+  depends_on: "a fixed random sample of session_ids per game, stored with the game record"
+  part: cost-governance
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table answers only pre-chosen questions; this answers any new question approximately in 20 seconds and tells the studio whether the exact answer is worth computing"
+  shallow: false
+
+- id: tar-5
+  title: "REFUSE: top-k retrieval-then-LLM as the final answer to any find-players-who or how-many question without a recall estimate attached"
+  level: L3
+  cell: {part: query-path, query-path: retrieval-then-llm, question-type: find-players-who, uncertainty-policy: always-answer, evidence-form: per-player-list, user-segment: producer-exec}
+  object: "memo.md item 2: 'retrieve matching observation rows across players and the model reads only those'"
+  situation: "Retrieval returns 200 rows for 'players who complained the tutorial was too long'; the model reads 200 rows and lists 41 players; the index has 48,000 rows and the retriever's recall for this phrasing was never measured"
+  consequence: "Low willingness. Keyword-style retrieval in the Blair and Maron study found 20% of relevant documents while the searchers believed 75%; a producer who cuts a tutorial step on a 41-player list that is really 90 players has acted on a number nobody can defend; the persona would not ship it"
+  p_typical: 0.1
+  grounded: inferred
+  evidence: "memo.md item 2 describes retrieval as the open-field path with no validation step"
+  proposed: "Hard rule in the planner: per-player-list and how-many answers from the retrieval path must carry either an elusion estimate (tar-1) or a control-sample estimate (tar-4); if neither can run in budget, the answer is labelled 'examples only, not a count' and shows no number"
+  mechanism: "Changes the query path output contract: answer_kind is one of {count_with_recall, examples_only}; the chatbot cannot emit a bare count from top-k retrieval"
+  example: "'How many players found the tutorial too long?' with no validation budget returns '12 example quotes; count not estimated, click to run a 200-session sample'"
+  cost: S
+  depends_on: "tar-1 or tar-4"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table at least reads every video; unvalidated retrieval is strictly worse than the table on recall and this rule stops it from pretending otherwise"
+  shallow: false
+
+- id: tar-6
+  title: "REFUSE: semantic-cache reuse of a prior answer for a new find-players-who phrasing unless the cache key includes the protocol id and the prior answer's recall estimate is above the target"
+  level: L3
+  cell: {part: query-path, query-path: semantic-cache-similar-question, question-type: find-players-who, mechanism-type: reuse-or-cache-prior-work, latency-tier: sub-200ms-cached, uncertainty-policy: abstain-below-coverage}
+  object: "memo.md item 2: 'whose result is cached as a new field, so the question set grows from real use'"
+  situation: "'Players who got lost in the tutorial' was answered last week; this week a designer asks 'players who could not find the objective marker'; cosine similarity 0.87 returns the cached list"
+  consequence: "Low willingness. The two protocols differ (lost includes backtracking without a marker complaint); the cached list of 54 is served in 150 ms with a recall number that was computed for a different question; the persona treats that as coding one matter with another matter's classifier"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'whose result is cached as a new field, so the question set grows from real use'"
+  proposed: "Cache hit requires: same protocol_id, or the new question's text matched by an LLM judge as 'same coding rule' with 3 of the 10 protocol examples re-coded identically; cached answers with recall_ci_low under 0.70 are never served as counts; otherwise the chatbot says 'a similar question exists, here is its protocol, confirm or edit'"
+  mechanism: "Changes the semantic cache: key = (game, protocol_id, schema_version) and the hit path returns the protocol for confirmation, not the list"
+  example: "Designer confirms the 'lost' protocol does not cover 'marker', edits it; the CAL loop reuses the 54 as seed labels and adds 19 more players"
+  cost: S
+  depends_on: "protocol objects per field (tar-9); recall estimates stored with answers (tar-1)"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table never conflates two questions because each is a column; this keeps that property while still letting prior work seed the new question"
+  shallow: false
+
+- id: tar-7
+  title: "Redaction layer at ingestion, before indexing: player real names, voice-chat of third parties, and on-screen friend lists or chat overlays are redacted in transcript and OCR fields, and a redaction log records each span"
+  level: L3
+  cell: {part: tenancy-access-control, extraction-trigger: at-ingestion, modality: on-screen-text-ocr, representation: timestamped-observation-log, tenancy-and-deployment: logically-isolated-per-studio, user-segment: jev-internal-ops}
+  object: "memo.md item 1: 'Video frames add screen state and on-screen text' and spec.md unspecified 'What a transcript contains'"
+  situation: "A player's Steam overlay shows a friend list with 14 real names; OCR puts them into the observation log; a studio analyst later asks 'what did players read on screen' and the names come back as a quote"
+  consequence: "Privilege review in e-discovery happens before production, never after; here the quote-with-timestamp evidence path (memo.md item 1) would produce third-party names to the studio with no way to recall them"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "memo.md: 'Video frames add screen state and on-screen text, because speech alone cannot answer where did they click'"
+  proposed: "Ingestion pass: NER over transcript and OCR for PERSON and HANDLE, overlay-region classifier for chat and friend-list panes, replace spans with [NAME_1], [HANDLE_3] tokens; write redaction_log {session_id, field, t, span_start, span_end, reason}; indexing reads only the redacted fields; the raw field is stored encrypted and only re-readable by jev-internal-ops on ticket"
+  mechanism: "Changes ingestion and the store: two column families per text field (raw_encrypted, redacted_indexed); the chatbot and export touch only redacted"
+  example: "'What did players say about the tutorial?' returns 'I told [NAME_1] this tutorial is endless' with timestamp; the redaction log shows 1 span redacted, reason PERSON"
+  cost: M
+  depends_on: "OCR and transcript fields in the observation log"
+  part: tenancy-access-control
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table only stores option letters so it leaks nothing; a quote-bearing observation log needs this to keep that property while adding evidence"
+  shallow: false
+
+- id: tar-8
+  title: "Confidentiality term list per studio: unannounced feature and character names supplied at onboarding are tokenised in every field that could leave the tenant (cross-game ontology, shared cache, benchmark aggregates, model-vendor prompts)"
+  level: L3
+  cell: {part: tenancy-access-control, tenancy-and-deployment: shared-multi-tenant, reuse-scope-of-extraction: genre-shared, moment-in-journey: game-onboarding-day-0, question-origin: onboarding-interview-with-studio, extraction-trigger: on-new-game-onboarding}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes)'"
+  situation: "Ontology learns entity 'Ember Forge' from Studio A's sessions; an induced question 'did the player open the Ember Forge menu' is proposed to Studio B six months before Studio A's announcement"
+  consequence: "Cross-studio leakage via a shared ontology is the vendor-risk reviewer's objection; a per-studio confidentiality list applied like a privilege screen makes the induced question read 'did the player open the [FEATURE_7] menu' outside tenant A, which is useless to B and safe to A"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  proposed: "Onboarding form: list of confidential terms (expected 20 to 200 per pre-release title); a term-screen runs before any write to a shared structure (ontology entity table, semantic cache, benchmark tables, third-party model calls flagged non-private); tokens are stable per studio; a monthly report lists how many spans were screened"
+  mechanism: "Changes tenancy-access-control: a screen function sits between tenant store and every shared artefact, with a log"
+  example: "'Do players stall at the Ember Forge tutorial step?' answers normally inside Studio A; the genre-shared question library stores the pattern as 'stall at [crafting-station] step' only"
+  cost: S
+  depends_on: "an ontology or any shared cross-studio structure (memo.md item 3)"
+  part: tenancy-access-control
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Per-game hand-written tables never share anything; this lets the question library be shared without sharing the studio's secrets"
+  shallow: false
+
+- id: tar-9
+  title: "A written coding protocol per field: one-paragraph definition, 3 positive and 3 negative examples with session_id and timestamp, the decision rule for borderline cases, and a version number; the LLM coder, the human QC coder and the elusion sampler all read the same file"
+  level: L3
+  cell: {part: question-generation, question-origin: ontology-generated, evidence-form: extraction-provenance-model-and-schema-version, schema-evolution: append-only-versioned-fields, user-segment: ux-researcher, effort: S-weeks}
+  object: "memo.md item 3: 'each with an answer type and an evidence requirement'"
+  situation: "Field 'tutorial_frustration' is coded by model version 3 at ingestion and by a human on the elusion sample; the human counts sighing as frustration, the prompt did not say"
+  consequence: "Without a shared protocol the recall estimate measures disagreement between two definitions, not recall; TAR validation is only accepted when reviewers and the classifier work from one coding manual"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'each with an answer type and an evidence requirement, and judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  proposed: "Protocol object {field_id, version, definition_text, positives[3]{session_id,t,why}, negatives[3], borderline_rule, answer_type, evidence_requirement}; the extraction prompt is rendered from it; the QC UI shows it beside the clip; every answer cites protocol version"
+  mechanism: "Changes question-generation output: a generated question is not shipped until its protocol has 6 examples drawn from real sessions; examples are checked to still exist after re-ingestion"
+  example: "Protocol tutorial_frustration v2 adds 'audible sigh with no words counts as positive'; the control sample re-coded under v2 moves prevalence from 18% to 23%, and both numbers are kept with their version"
+  cost: S
+  depends_on: "clip lookup by session_id and timestamp"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A table question with options is a protocol with zero examples; adding 6 examples is what makes the field auditable by someone other than its author"
+  shallow: false
+
+- id: tar-10
+  title: "Two-coder disagreement QC: a second extraction pass with a different model (or temperature) over the 200-session control sample; rows where the two codes differ go to a human review queue; a field with an overturn rate above 20% is sent back to protocol editing"
+  level: L4
+  cell: {part: evaluation, extraction-trigger: on-low-confidence-or-disagreement, mechanism-type: human-in-the-loop, evidence-form: confidence-score, uncertainty-policy: escalate-to-human-analyst, scope: cohort}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: "Field 'quit_reason' has 6 options; model A and model B agree on 61% of the control sample; the studio dashboard reports quit_reason shares to one decimal place"
+  consequence: "An overturn rate of 39% on a six-way code means the dashboard shares are noise; in review QC a second-pass overturn above 20% halts the review and the protocol is rewritten; here the field would be flagged 'not for counts' until the rate drops"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  proposed: "Per field: run coder B on the control sample at field creation and at every model upgrade; store agreement, Cohen's kappa; disagreements (expected 20 to 80 rows) queue to a human with the protocol and the clip; kappa under 0.6 sets field.status = examples_only"
+  mechanism: "Changes evaluation: every field carries {kappa, overturn_rate, n_adjudicated, status}; the planner refuses count answers on examples_only fields"
+  example: "quit_reason kappa 0.48; the human adjudicates 78 rows, finds 'got bored' and 'too long' were being used interchangeably; the options are merged, kappa rises to 0.74 and counts are re-enabled"
+  cost: M
+  depends_on: "control sample (tar-4) and protocols (tar-9)"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table's accuracy is unknown per question; this gives each column a kappa and turns off the ones that cannot support a count"
+  shallow: false
+
+- id: tar-11
+  title: "Keyword search results on 'players who mention X' are expanded with a synonym and misspelling set and always reported with a sampled recall figure; bare keyword hit lists are labelled 'keyword cull, recall unknown'"
+  level: L4
+  cell: {part: query-path, query-path: full-text-keyword-search, question-type: what-said, representation: inverted-full-text-index, evidence-form: recall-estimate, user-segment: live-ops-community}
+  object: "memo.md item 1: 'utterance ... quote with timestamp as evidence'"
+  situation: "Community manager types 'players who said the tutorial is boring'; the index matches 'boring' in 23 utterances; players also said 'snooze', 'yawn', 'get on with it', 'zzz' and the ASR wrote 'boaring' twice"
+  consequence: "Blair and Maron (1985) measured 20% recall for keyword search where the searchers estimated 75%; a 23-player list for 'boring' is likely a third of the true set; the live-ops person posts a patch note built on it"
+  p_typical: 0.14
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "Keyword path: LLM generates 10 to 20 synonyms and 3 ASR-style misspellings per term, union the hits, then sample 100 non-hit utterances tagged with the same sentiment field and code them; show 'keyword set: boring, snooze, yawn ... 41 players; sampled recall 70% (CI 60 to 79)'"
+  mechanism: "Changes the keyword query path: query expansion is logged with the answer and a 100-row elusion sample runs automatically on sentiment-bearing rows"
+  example: "'Boring' alone: 23 players; expanded: 41; elusion sample on 100 negative-sentiment rows outside the hit set finds 12 more, so the answer states 41 found, about 58 estimated"
+  cost: S
+  depends_on: "inverted index over utterance_text with a sentiment field per row"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table cannot search free text at all; this adds free text search with the one number that keeps it from being misleading"
+  shallow: false
+
+- id: tar-12
+  title: "Family-level responsiveness: a hit in any video of a session marks the whole session as a candidate, and coding, sampling and recall are all computed at session (player) granularity, never at video granularity"
+  level: L3
+  cell: {part: session-stitching, granularity: session, question-type: find-players-who, representation: timestamped-observation-log, scope: all-players, evidence-form: coverage-statement-n-of-m-players}
+  object: "spec.md item 3: 'The answers form a structured table per video' and item 1 'one session is many videos'"
+  situation: "A player's session has 9 videos; the quit is in video 9 and the complaint in video 4; a per-video classifier codes 8 videos negative and 1 positive; an elusion sample drawn over videos oversamples long sessions"
+  consequence: "E-discovery codes families (email plus attachments) as a unit because a responsive attachment makes the family responsive; a per-video unit here means a 500-player question is really a 4,000-video question and the recall denominator is wrong by the session length distribution"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "spec.md: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos.' and 'The answers form a structured table per video'"
+  proposed: "Stitcher assigns session_id to every video; coding unit = session; the LLM coder reads the session's observation rows in order with video boundaries marked; sampling frames are session lists; answers report 'n of m players' with m = players with at least one ingested video"
+  mechanism: "Changes session-stitching and every evaluation computation: unit of coding, sampling and reporting is the session; videos are evidence locations within it"
+  example: "'Players who complained before quitting the tutorial': 500 sessions, 4,100 videos; session-level coding finds 71; a per-video count would have reported 94 positive videos from 71 players"
+  cost: S
+  depends_on: "a session_id linking videos (spec.md names this as unspecified)"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The per-video table double-counts players and loses cross-video evidence; session-level coding counts players once"
+  shallow: false
+
+- id: tar-13
+  title: "Near-duplicate collapsing of repeated tutorial-step attempts into one attempt-thread per player, with attempt_count and first/last timestamps, so review and sampling do not re-read the same loop 7 times"
+  level: L3
+  cell: {part: ingestion-extraction, representation: step-funnel-state-machine-per-player, granularity: tutorial-step, subject-domain: onboarding-tutorial, mechanism-type: precompute-more, extraction-trigger: at-ingestion}
+  object: "memo.md item 1: 'step on screen, action, utterance, friction signal'"
+  situation: "A player retries the crafting step 7 times in 11 minutes; the observation log has 7 near-identical blocks of 'step 3 entered, inventory opened, step 3 failed'"
+  consequence: "Email threading and near-dupe detection cut review volume by 30 to 50% in TAR matters; here a reviewer or LLM coder reads the same failure 7 times and retrieval returns 7 rows from one player for a 'players who' question, which inflates apparent prevalence"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session (step on screen, action, utterance, friction signal, sentiment ...)'"
+  proposed: "Ingestion groups consecutive observations with the same step_id into an attempt; consecutive attempts of the same step with Jaccard similarity of action sequences above 0.8 collapse into one thread row {player_id, step_id, attempt_count, t_first, t_last, distinct_utterances[]}; retrieval and coding read thread rows; the originals stay for clip lookup"
+  mechanism: "Changes ingestion-extraction and the store: a derived attempt_thread table beside the observation log; coding unit for step questions is the thread"
+  example: "'Why do players fail the crafting step?' reads 212 thread rows for 500 players instead of 1,540 attempt blocks; the 7-attempt player appears once with attempt_count 7"
+  cost: M
+  depends_on: "step transitions from the screen-state classifier"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table has one row per video, so a 7-attempt loop spread over 2 videos is 2 rows with no attempt count; the thread row carries the count"
+  shallow: false
+
+- id: tar-14
+  title: "Metadata culling before any model reads: build-version, capture date range, platform and player segment filters are applied as closed-field SQL first, and the answer states the culled population size as its denominator"
+  level: L4
+  cell: {part: query-path, query-path: sql-over-closed-fields, scope: query-time-defined-cohort, modality: build-version-metadata, evidence-form: count-with-denominator, latency-tier: under-2s}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Studio asks 'did players stall at step 3 after the 1.2 patch'; the retrieval path reads rows from all 500 players including 310 who played 1.1"
+  consequence: "Custodian and date-range culling in e-discovery is the first step and the one that cuts volume most; here it cuts 500 to 190 sessions and makes the elusion sample 190, not 500, and the reported denominator correct"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "memo.md: 'closed-field questions become aggregate queries over all players (instant)'"
+  proposed: "Planner step 0: parse the question for build, date, platform, segment; emit SQL filter over the session table; the rest of the plan runs over the resulting session_id list; answer prefix: 'Population: 190 sessions on build 1.2, captured 2026-09-01 to 2026-09-30'"
+  mechanism: "Changes the query path: a mandatory cull step before retrieval or extraction, with the population size carried into every count and recall record"
+  example: "'Stall at step 3 after 1.2': population 190; 44 stalled (23%); pre-patch population 310, 98 stalled (32%)"
+  cost: S
+  depends_on: "session table with build_version, captured_at, platform columns (spec.md lists build and telemetry joins as unspecified)"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table per video has no build or date columns in the spec; a culled population turns 'how many' into a share with a stated denominator"
+  shallow: false
+
+- id: tar-15
+  title: "Bates-style immutable observation ids with provenance: every observation row has a stable id (game, session, seq) plus model_version, prompt_hash, schema_version, and a quote cited in a studio report can be re-found after re-extraction"
+  level: L3
+  cell: {part: store, evidence-form: extraction-provenance-model-and-schema-version, schema-evolution: model-upgrade-reextract, representation: timestamped-observation-log, user-segment: studio-data-engineer, extraction-trigger: on-model-upgrade}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "A producer's slide cites observation 'player 217 at 00:41:12 said the tutorial is endless'; two weeks later ingestion re-runs with a new model, timestamps shift by 1 to 3 seconds and the row is re-segmented"
+  consequence: "A production number that cannot be re-found is a defensibility failure; here the studio's cited evidence no longer resolves, and nobody can tell whether the quote changed or the model did"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "obs_id = {game_id}-{session_id}-{seq:06d} assigned once and never reassigned; re-extraction writes new rows with new ids and a supersedes link; each row stores model_version, prompt_hash, schema_version, extracted_at; the chatbot cites obs_id in every quote; a lookup endpoint resolves any old obs_id to the row and its successors"
+  mechanism: "Changes the store: append-only observation rows with supersedes chains; no update-in-place on re-extraction"
+  example: "Slide cites JEV-A1-0217-004112; after re-ingestion the lookup returns the original row (model v3) and its successor (model v4, timestamp 00:41:10, same text)"
+  cost: S
+  depends_on: "observation log (memo.md item 1)"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Table cells carry no provenance; a cited quote with a permanent id survives model upgrades and schema changes"
+  shallow: false
+
+- id: tar-16
+  title: "Validation report attached to every count or list answer: n_population, n_culled, method (closed-field, CAL, retrieval), n_sampled, recall point and CI, precision point and CI, protocol version, coder model; exportable as one page"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: dashboard-standard-report, evidence-form: recall-estimate, uncertainty-policy: answer-with-ci-and-n, user-segment: producer-exec, question-type: how-many}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "A producer takes '31% of players stall at step 3' into a greenlight meeting and is asked 'how do you know'"
+  consequence: "TAR productions ship with a validation protocol document; a chatbot number with no such page is the 'trust collapse after one wrong number' failure; one page per answer lets the number be challenged and defended"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "spec.md: 'A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast'"
+  proposed: "Answer object gets validation {population, culled, method, n_sampled, recall, recall_ci, precision, precision_ci, protocol_id, protocol_version, coder_model, computed_at}; UI shows a 'how was this computed' link that renders it; export to PDF"
+  mechanism: "Changes chatbot-ui and the answer schema: a validation block is mandatory on count and list answers and optional on quote answers"
+  example: "'31% stall at step 3 (155 of 500; closed field step3_dwell_s over 120; field kappa 0.81 on 200-session control; protocol v2; coder gpt-x-2026-08)'"
+  cost: S
+  depends_on: "tar-1, tar-4, tar-10 producing the numbers"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table's numbers have no validation page; this gives every number one"
+  shallow: false
+
+- id: tar-17
+  title: "Proportionality gate: before a full-population extraction the chatbot shows the estimated number of session reads, the prevalence from the control sample and the CI the studio will get, and the studio picks 'sample answer' or 'full answer'"
+  level: L4
+  cell: {part: cost-governance, mechanism-type: narrow-or-clarify-the-question, uncertainty-policy: give-range-then-refine, latency-tier: minutes, user-segment: indie-solo-dev, build-or-buy: build-in-house}
+  object: "spec.md constraint: 'Ingestion time and cost are not a concern. Answering a studio's question must be fast.'"
+  situation: "An indie dev asks a one-off question with 0.5% prevalence over 500 sessions; the full extraction takes 4 minutes and finds 2 players; a 200-session sample would have said '0 to 3' in 20 seconds"
+  consequence: "Proportionality in discovery means review cost is weighed against the value of what is likely found; the gate stops 4-minute runs for a 2-player answer and tells the asker up front that a recall estimate will be uninformative at that prevalence"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'Answering a studio's question must be fast.'"
+  proposed: "After tar-4: show {prevalence_sample, projected_positives, full_run_reads, full_run_seconds, expected_ci_width_full, expected_ci_width_sample}; two buttons; the choice is logged in the query log with the question"
+  mechanism: "Changes cost-governance and chatbot-ui: a decision card between the sample answer and the full run"
+  example: "'Players who crashed during the tutorial': sample 1 of 200; card says 'about 2 to 3 of 500; full run 500 reads, about 4 min'; the dev takes the sample answer"
+  cost: S
+  depends_on: "tar-4"
+  part: cost-governance
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table cannot answer the question at all; this answers it approximately and lets the asker buy precision only when it is worth it"
+  shallow: false
+
+- id: tar-18
+  title: "Prevalence-of-quoted-sentiment by stratified random sample with CI: 'how many players said the tutorial was too long' is answered by coding a 300-session stratified sample (by step reached), not by retrieving matching quotes"
+  level: L3
+  cell: {part: query-path, question-type: prevalence-of-quoted-sentiment, query-path: sampled-map-reduce-with-ci, uncertainty-policy: answer-with-ci-and-n, scope: all-players, evidence-form: count-with-denominator}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players'"
+  situation: "A designer wants the share of players who voiced 'tutorial too long'; retrieval returns quotes from 38 players but says nothing about the share"
+  consequence: "Retrieval gives examples; a stratified sample of 300 coded sessions gives 'about 14% (CI 10 to 18)' in under 30 seconds, and the estimate is unbiased unlike 'count of retrieval hits over 500'"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  proposed: "Planner routes prevalence questions to a sampler: strata = furthest tutorial step reached (6 strata), allocate 300 sessions proportionally, LLM-code each session's utterance rows against the protocol, weighted estimate with Wilson CI; show 3 example quotes from positives"
+  mechanism: "Changes the query path: a distinct 'prevalence' plan whose output is {estimate, ci, n, strata_table, examples[3]}"
+  example: "'What share of players said the tutorial is too long?': 42 of 300 sampled, weighted 14.3% (CI 10.5 to 18.6); players who quit at step 2 are 31%, players who finished are 6%"
+  cost: S
+  depends_on: "observation log with utterance rows and a step-reached closed field"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The table answers only pre-written sentiment options; this answers any sentiment phrasing with a share and a CI"
+  shallow: false
+
+- id: tar-19
+  title: "Hot-document escalation: for a find-players-who answer that the asker tags 'will drive a design change', the top 25 positives go to a human analyst queue for confirmation before the list is released"
+  level: L3
+  cell: {part: feedback-loop-from-query-log, query-path: human-analyst-escalation, uncertainty-policy: escalate-to-human-analyst, mechanism-type: human-in-the-loop, user-segment: game-designer, latency-tier: overnight}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction'"
+  situation: "A designer is about to remove the crafting tutorial step on the strength of '71 players abandoned at it'; 25 of the 71 are LLM-coded positives that no human has watched"
+  consequence: "Hot documents in a review are second-passed by a senior reviewer before anything is produced; here 25 clips at 30 seconds each is 15 minutes of human time to catch a coder that counted 'opened crafting menu and left' as abandonment"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  proposed: "Chatbot asks 'is this driving a decision?'; yes queues the top 25 by coder confidence (lowest 10 and highest 15) to a review UI with clip, transcript, protocol; human codes; precision on the 25 is appended; the list is released with 'human-checked 25 of 71, 23 confirmed'"
+  mechanism: "Changes the feedback loop: human confirmations become labels for the field's control set and for retraining the CAL ranker"
+  example: "Designer confirms; the human overturns 2 of 25; the answer shows precision 92% on the checked subset and the two overturned players drop from the list"
+  cost: S
+  depends_on: "a review UI with clip playback (tar-23)"
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Table answers are never checked by anyone; this checks the ones that matter at a cost of 15 minutes"
+  shallow: false
+
+- id: tar-20
+  title: "Load-file style export: Parquet drop of observation rows plus per-field coding tables with code, confidence, protocol_version, coder_model and review_status columns, keyed by the studio's player id, so the studio can re-review in its own warehouse"
+  level: L3
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, tenancy-and-deployment: export-only-no-hosting, user-segment: studio-data-engineer, evidence-form: extraction-provenance-model-and-schema-version, effort: S-weeks}
+  object: "spec.md unspecified: 'whether game telemetry is joined'"
+  situation: "A studio data team wants to join JEV codes to its own telemetry and run its own QC; the chatbot cannot show them the confidence column or which rows a human has checked"
+  consequence: "E-discovery productions ship with a load file listing every field and its coding history; without the equivalent the studio's own reviewer cannot tell a human-confirmed positive from a 0.51-confidence LLM code"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'Unspecified ... whether game telemetry is joined, who at the studio asks and what they ask'"
+  proposed: "Nightly Parquet: observations(obs_id, session_id, studio_player_id, t, type, redacted fields...), codes(obs_or_session_id, field_id, code, confidence, protocol_version, coder_model, review_status in {llm, human_confirmed, human_overturned}, superseded_by); schema file with field versions; redacted fields only"
+  mechanism: "Changes export-integration: the export is the coding record, not just answers"
+  example: "Studio joins codes where field_id = tutorial_abandon and review_status = human_confirmed to its own retention table and finds 2 of 23 confirmed abandoners came back 3 days later"
+  cost: S
+  depends_on: "observation log, coding tables, redaction (tar-7)"
+  part: export-integration
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table exports answers without confidence or review state; this exports enough for a second party to audit the coding"
+  shallow: false
+
+- id: tar-21
+  title: "Recall and precision targets per question-type stored in the planner: find-players-who requires recall CI lower bound at or above 0.70; how-many requires CI half-width at or below 5 points; otherwise the answer is labelled 'preliminary' and the UI offers to extend the sample"
+  level: L4
+  cell: {part: query-path, question-type: find-players-who, uncertainty-policy: abstain-below-coverage, evidence-form: recall-estimate, mechanism-type: narrow-or-clarify-the-question, user-segment: studio-analyst}
+  object: "memo.md item 2: the query planner with three tiers"
+  situation: "A CAL run stops at 150 sessions; the elusion sample is 100 rows and finds 4 positives; recall point 0.80 but CI 0.62 to 0.91"
+  consequence: "Courts have accepted 75% recall with a defensible estimate as reasonable; a lower CI bound of 0.62 does not meet it; the planner labels the answer preliminary and offers 200 more elusion rows (about 40 seconds) rather than shipping 0.80 as if it were settled"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md: 'The chatbot runs a query planner: closed-field questions become aggregate queries ... open-field questions retrieve ... genuinely new questions trigger a one-time batch extraction'"
+  proposed: "Config table {question_type, metric, threshold}; the planner compares after validation; below threshold: status = preliminary, button 'extend sample by N' with projected CI; above: status = validated"
+  mechanism: "Changes the query path: a validation gate with per-question-type thresholds, and a loop to extend sampling"
+  example: "'Players who skipped the tutorial entirely': preliminary at recall CI 0.62 to 0.91; extended by 200 rows, CI 0.74 to 0.88, validated"
+  cost: S
+  depends_on: "tar-1 and tar-2"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The table has no notion of a threshold; this makes 'fast' and 'correct' explicit per question-type"
+  shallow: false
+
+- id: tar-22
+  title: "Exhaustive null-set read when the null set is small: if fewer than 400 sessions were not returned by retrieval, read all of them with the coder instead of sampling, since ingestion-side compute is free by the spec"
+  level: L3
+  cell: {part: query-path, query-path: map-reduce-over-raw, mechanism-type: defer-to-query-time, latency-tier: minutes, scope: all-players, question-type: find-players-who}
+  object: "spec.md constraint: 'Ingestion time and cost are not a concern.'"
+  situation: "Retrieval returns 120 of 500 sessions; the null set is 380; a 385-sample would read nearly all of them anyway"
+  consequence: "Sampling 385 of 380 is pointless; reading all 380 observation logs (about 2 to 3 minutes in parallel) gives exact recall and a complete list, and the result is cached as a field so the next ask is instant"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern. Answering a studio's question must be fast.'"
+  proposed: "Planner rule: if n_null under 400, run the coder over every null session in parallel (batch of 50), merge, write the field for all 500, and report exact recall of the retrieval step for the query log; stream the retrieval-hit answer first (progressive)"
+  mechanism: "Changes the query path: a size-based switch between sampled elusion and exhaustive null read; the exhaustive branch materialises the field"
+  example: "'Players who muted the tutorial narrator': retrieval 120, null 380 read in 2.5 minutes, 17 more found, retrieval recall was 88%, field materialised"
+  cost: S
+  depends_on: "parallel coder over observation logs"
+  part: query-path
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "Equals the table's exhaustiveness for a new question in minutes and leaves a new column behind"
+  shallow: false
+
+- id: tar-23
+  title: "Review-platform style coding UI: queue of 30-second clips with transcript and protocol panel, one-key coding (responsive, non-responsive, skip), 200 clips per hour per reviewer, with inter-reviewer kappa shown live"
+  level: L3
+  cell: {part: chatbot-ui, delivery-surface: clip-reel, mechanism-type: human-in-the-loop, evidence-form: clip, user-segment: jev-internal-ops, build-or-buy: build-in-house}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "Elusion samples (tar-1), disagreement queues (tar-10) and hot-doc checks (tar-19) all need a human to code clips; today the only UI is a chatbot"
+  consequence: "TAR review platforms get 150 to 300 decisions per reviewer-hour with keyboard coding; a chatbot-only product means a 385-clip elusion sample is a 4-hour chore and never gets done, so no recall estimates exist"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "Queue model {queue_id, field_id, protocol_version, items[{session_id, t_start, t_end, obs_ids, prior_code, confidence}]}; UI: video clip, scrolling transcript, protocol with its 6 examples, keys 1/2/3; writes {item, code, reviewer, seconds_spent}; kappa against prior LLM code updates per 20 items"
+  mechanism: "Changes chatbot-ui: a second surface for coding work, whose output feeds control sets, kappa and recall"
+  example: "Elusion sample for 'abandoned at crafting step': 385 clips, 2 reviewers, 1.9 hours; 9 positives; kappa with LLM 0.77"
+  cost: M
+  depends_on: "clip lookup by session_id and time range"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table has no path for a human to check any cell; this makes checking cheap enough to happen"
+  shallow: false
+
+- id: tar-24
+  title: "REFUSE: a genre-shared classifier or question bank applied to a new game without a 200-session per-game validation sample; recall from game A is not evidence for game B"
+  level: L3
+  cell: {part: evaluation, reuse-scope-of-extraction: genre-shared, mechanism-type: transfer-across-games, moment-in-journey: first-cohort-ingested, question-origin: genre-template-library, uncertainty-policy: abstain-below-coverage}
+  object: "A-frame.yaml assumption: 'studios are many and each game differs, so per-game hand-written questions do not scale'"
+  situation: "A 'tutorial_abandon' field validated at kappa 0.81 on an RPG is applied to a rhythm game whose tutorial has no steps on screen"
+  consequence: "Low willingness. TAR classifiers are matter-specific and are re-validated per matter; the persona refuses to report counts on a transferred field until the new game's control sample shows kappa at or above 0.6 and a recall estimate; until then the field is examples_only for that game"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "A-frame.yaml: 'studios are many and each game differs, so per-game hand-written questions do not scale'"
+  proposed: "On first-cohort-ingested: pin the 200-session control sample, run two coders on every transferred field, compute kappa, run elusion on one retrieval; fields pass or stay examples_only; a per-game validation page lists field, kappa, recall, status"
+  mechanism: "Changes evaluation at onboarding: transfer is allowed, counting on transferred fields is gated per game"
+  example: "Rhythm game: tutorial_abandon kappa 0.41 (the coder confuses song restarts with abandonment); field stays examples_only; the studio writes a protocol edit and it passes at 0.72"
+  cost: S
+  depends_on: "control sample (tar-4), two-coder QC (tar-10)"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Per-game tables are implicitly validated by their author; a shared bank needs an explicit per-game check or it is worse than the table"
+  shallow: false
+
+- id: tar-25
+  title: "Re-validate on game update: when build-version changes, the control sample is re-drawn from the new build's sessions and every validated field's kappa and recall are recomputed; fields that drop below threshold are flagged on the dashboard"
+  level: L4
+  cell: {part: schema-evolution, extraction-trigger: on-game-update, moment-in-journey: new-build-version, question-type: did-the-fix-work-pre-post, scope: build-version-pair, evidence-form: contrast-vs-baseline}
+  object: "memo.md item 2: the cached field 'whose result is cached as a new field'"
+  situation: "Patch 1.3 moves the crafting tutorial to step 5 and renames the menu; the step3_stall field keeps counting a step that is now something else"
+  consequence: "A classifier trained on one document population drifts when the population changes; a pre/post comparison on a drifted field attributes the drift to the fix; the re-validation catches that step3_stall's kappa fell from 0.81 to 0.33 on build 1.3"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'whose result is cached as a new field, so the question set grows from real use'"
+  proposed: "Trigger on new build_version with at least 100 sessions: draw 200-session control sample from the new build, rerun two-coder QC per field, store {field, build, kappa, recall}; dashboard row turns red under threshold; pre/post answers refuse to compare a field whose post-build status is not validated"
+  mechanism: "Changes schema-evolution: field validity is per (field, build_version), not global"
+  example: "'Did the 1.3 fix reduce step-3 stalls?' answers 'step3_stall is not validated on 1.3 (kappa 0.33); protocol needs updating for the moved step' instead of a misleading drop from 31% to 4%"
+  cost: M
+  depends_on: "build_version on sessions; tar-4 and tar-10"
+  part: schema-evolution
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The per-game table silently keeps answering old questions on new builds; this detects when a column stopped meaning what it meant"
+  shallow: false
+
+- id: tar-26
+  title: "Coverage denominator excludes players with no usable evidence for the modality asked: what-said answers report 'n of m players with at least 60 seconds of speech', and silent players are listed as not-coverable rather than negative"
+  level: L4
+  cell: {part: evaluation, modality: silence-or-absence-of-speech, evidence-form: coverage-statement-n-of-m-players, question-type: what-said, uncertainty-policy: answer-with-ci-and-n, collection-protocol: true}
+  object: "spec.md item 2: 'Each video is converted to a transcript'"
+  situation: "140 of 500 players said under 60 seconds in total; the question 'how many players complained about the tutorial' codes them all negative and reports 14%"
+  consequence: "A custodian whose mailbox was never collected is reported as 'not collected', not as 'no responsive documents'; coding silent players negative understates complaint prevalence among speaking players (14% of 500 is 19% of 360) and the studio does not know the question could not be asked of 28% of players"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'Each video is converted to a transcript. The owner's view: the transcript alone is not enough'"
+  proposed: "Per session: speech_seconds, ocr_frames, telemetry_present; the planner maps question modality to a coverage predicate; answer shows '68 of 360 speaking players (19%); 140 players had under 60 s of speech and are not coded'"
+  mechanism: "Changes evaluation: a coverage predicate per modality and a three-valued code (positive, negative, not-coverable)"
+  example: "'Players who said the tutorial was confusing': 68 of 360 speaking (19%, CI 15 to 23); 140 silent players excluded; offers 'ask the same of screen-state instead'"
+  cost: S
+  depends_on: "speech_seconds per session from the transcript stage"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table codes a silent player's video with option 'no complaint' and cannot distinguish silence from satisfaction"
+  shallow: false
+
+- id: tar-27
+  title: "Search-term-report style query log: every find-players-who and how-many question logs its expansion terms, hit counts, sample sizes and recall; a weekly report ranks questions by low recall or high overturn and feeds them to question-generation as fields to formalise"
+  level: L3
+  cell: {part: feedback-loop-from-query-log, question-origin: failed-query-log, delivery-surface: scheduled-digest, moment-in-journey: steady-state-weekly, mechanism-type: reuse-or-cache-prior-work, user-segment: jev-internal-ops}
+  object: "memo.md item 2: 'the question set grows from real use'"
+  situation: "Over a month a studio asks 11 variants of 'players stuck at the crafting step'; each runs its own retrieval with recall between 0.6 and 0.9; none becomes a validated closed field"
+  consequence: "Search-term reports in discovery show which terms are over- or under-inclusive and drive term negotiation; here the weekly report shows the 11 variants, their recall spread, and proposes one protocol 'crafting_step_stuck' with a control sample already partly coded from the elusion samples"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'so the question set grows from real use'"
+  proposed: "query_log row {question_text, protocol_id or null, expansion_terms[], n_hits, n_sampled, recall, recall_ci, overturn_rate, decision_tag}; weekly job clusters questions without protocol by embedding (threshold 0.85), ranks clusters by asks times (1 minus recall_low); emits candidate protocols to the question-generation queue"
+  mechanism: "Changes the feedback loop: the query log carries validation metrics and is the input to field promotion"
+  example: "Cluster of 11 'crafting stuck' asks, mean recall 0.74; promoted to protocol v1 with 23 human-coded rows reused as the seed; next ask is a closed-field query in 1 second"
+  cost: S
+  depends_on: "validation metrics on answers (tar-1, tar-16)"
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table grows only when someone writes a question; this grows it from the questions whose answers were weakest"
+  shallow: false
+
+- id: tar-28
+  title: "Studio-supplied known-churner seed set: at onboarding the studio hands over 10 to 20 player ids it knows churned and 10 to 20 it knows retained, and the discriminative question generator trains the first ranker on that labelled seed"
+  level: L3
+  cell: {part: question-generation, question-origin: discriminative-contrast-churn-vs-retain, question-type: who-are-the-churners-segment-discovery, moment-in-journey: game-onboarding-day-0, mechanism-type: auto-discover-without-question, scope: cohort}
+  object: "spec.md item 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Day 0: no questions, no usage log, but the studio's telemetry already knows which playtesters did not return on day 2"
+  consequence: "A seed set is how a TAR matter starts when no one can write the search terms; here 20 churned and 20 retained sessions let a ranker over observation rows surface the observations that separate them (for example, 'opened settings during tutorial' in 70% of churners vs 15% of retained), which become candidate protocols"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  proposed: "Onboarding upload: {player_id, label in {churned, retained}, label_source}; train a sparse linear model over observation-type counts per session; list top 15 features with lift and prevalence in each class; each feature becomes a draft protocol with its top-lift sessions as the 3 positive examples"
+  mechanism: "Changes question-generation at day 0: labels come from the studio's outcome data, questions come from what discriminates"
+  example: "Top feature 'tutorial narrator skipped within 5 s' lift 3.9; drafted protocol 'narrator_skip'; control sample prevalence 22%; the studio had never asked about it"
+  cost: M
+  depends_on: "observation log; a studio-provided churn label for at least 20 plus 20 players"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table's churn questions are guessed by a writer; these are the observations that in fact separate churners in this game"
+  shallow: false
+
+- id: tar-29
+  title: "Precision check on the positive list: sample 100 of the returned players (or all if fewer), code them against the protocol, and report precision with CI alongside recall; overturned players are removed and the overturn reasons are appended to the protocol's borderline rule"
+  level: L4
+  cell: {part: evaluation, evidence-form: recall-estimate, question-type: find-players-who, uncertainty-policy: answer-with-ci-and-n, mechanism-type: human-in-the-loop, latency-tier: minutes}
+  object: "memo.md item 2: 'the model reads only those'"
+  situation: "CAL returns 71 players; 100% of them are LLM-coded; the elusion test (tar-1) says recall is 86% but says nothing about how many of the 71 are wrong"
+  consequence: "Recall without precision lets a classifier that says yes to everything pass; a 100-row precision sample at 92% means about 6 of the 71 are false positives, and the designer sees '65 to 71 players' rather than 71"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'retrieve matching observation rows across players and the model reads only those'"
+  proposed: "Second coder (model B or human via tar-23) codes min(100, n_returned) positives; precision with Wilson CI; overturned rows get a reason text; reasons are clustered and the top 2 are proposed as borderline-rule edits"
+  mechanism: "Changes evaluation: every per-player-list answer carries precision as well as recall, and overturns edit the protocol"
+  example: "71 returned, 71 checked by model B, 66 confirmed (93%, CI 85 to 97); 5 overturned for 'menu opened but tutorial completed'; protocol v2 adds that exclusion"
+  cost: S
+  depends_on: "protocols (tar-9), a second coder"
+  part: evaluation
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The table's cells have no precision figure; this attaches one to every list"
+  shallow: false
+
+- id: tar-30
+  title: "REFUSE: always-answer as the chatbot's uncertainty policy; a count whose validation cannot run within the query budget returns examples and a 'run validation' button, never a number"
+  level: L3
+  cell: {part: chatbot-ui, uncertainty-policy: always-answer, question-type: how-many, delivery-surface: chatbot, latency-tier: under-2s, user-segment: producer-exec}
+  object: "spec.md constraint: 'Answering a studio's question must be fast.'"
+  situation: "A 2-second latency target with a 500-session population; a new how-many question cannot be sampled and coded in 2 seconds"
+  consequence: "Low willingness. Fast and wrong destroys trust faster than slow and right; the persona would rather return '8 example quotes, count pending (about 40 s)' than a 2-second number from top-k retrieval; a wrong number in a greenlight deck is not recoverable"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "spec.md: 'Answering a studio's question must be fast.'"
+  proposed: "Policy table in the planner: how-many and find-players-who never resolve via always-answer; under-2s tier serves closed fields and cached validated answers only; everything else streams examples first and the validated number when ready"
+  mechanism: "Changes chatbot-ui and the planner's policy: a number is a validated artefact, an example is not"
+  example: "'How many players quit at the crafting step?' on an unvalidated field: 8 quotes in 1.5 s, then '72 players (CI 64 to 81)' at 38 s"
+  cost: S
+  depends_on: "tar-4, tar-18"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table is fast because it is pre-chosen; this keeps fast for what is validated and refuses to fake it for what is not"
+  shallow: false
+
+- id: tar-31
+  title: "Chain of custody for sessions: hash of each video file, capture device id, upload time and stitching decision are recorded, and an answer can show that all 9 videos of a cited session were present and in order when the extraction ran"
+  level: L3
+  cell: {part: session-stitching, collection-protocol: true, evidence-form: extraction-provenance-model-and-schema-version, modality: build-version-metadata, granularity: video, user-segment: studio-security-reviewer}
+  object: "spec.md unspecified: 'how videos of one session are linked'"
+  situation: "A cited 'abandoned at 01:52:10' sits in video 8; video 7 failed to upload and was re-sent two days later; the stitcher built the session without it the first time"
+  consequence: "Evidence in a matter travels with a custody record; here the first extraction coded the player as abandoning at a point that was really a 15-minute gap, and nothing records that video 7 was missing at the time"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "spec.md: 'Unspecified ... how videos of one session are linked'"
+  proposed: "Ingestion manifest per session {video_id, sha256, captured_at, uploaded_at, duration_s, sequence_no, gap_before_s}; stitching writes {session_id, manifest_version, n_videos, total_gap_s, complete flag}; extractions record manifest_version; an answer citing a session with complete = false shows a warning"
+  mechanism: "Changes session-stitching and the store: a versioned manifest per session, referenced by every extraction"
+  example: "'Players who abandoned the tutorial': 71 players; 3 flagged 'session incomplete at extraction time (1 video missing)'; re-extraction after the manifest completed moves 1 of them to not-abandoned"
+  cost: S
+  depends_on: "video upload metadata"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The per-video table never knows a video is missing from a session; the manifest does"
+  shallow: false
+
+- id: tar-32
+  title: "Stabilisation-based stop for ontology question materialisation: generated fields are materialised over all history only when the control sample shows prevalence at or above 2% and kappa at or above 0.6; the rest stay as lazy protocols"
+  level: L4
+  cell: {part: question-generation, question-origin: ontology-generated, schema-evolution: lazy-backfill-on-demand, extraction-trigger: on-cohort-size-threshold, mechanism-type: precompute-more, effort: S-weeks}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "The ontology yields 1,400 candidate questions for a game; materialising all of them over 500 sessions is 700,000 session-field codes, most with prevalence near zero"
+  consequence: "Pruning by richness is what keeps a review proportionate; 1,400 fields where 1,100 have under 2% prevalence or kappa under 0.6 would fill the store with noise columns that the planner would then route counts to"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target, each with an answer type and an evidence requirement'"
+  proposed: "Every generated question runs tar-4 and tar-10 on the 200-session control sample (280,000 codes once, cheap at ingestion); pass gate: prevalence at or above 2% and kappa at or above 0.6; passed fields are materialised over all sessions; failed ones are stored as protocols with their sample stats and backfilled only on first question"
+  mechanism: "Changes question-generation and schema-evolution: materialisation is gated by sample statistics, not by ontology membership"
+  example: "1,400 generated; 310 pass; 'tutorial narrator skipped' passes at 22% and kappa 0.79; 'player praised the font' fails at 0.5% and stays lazy; a later question about fonts backfills it in 3 minutes"
+  cost: M
+  depends_on: "ontology generator (memo.md item 3), tar-4, tar-10"
+  part: question-generation
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "The table is small because a human chose; this is large where the data supports it and lazy where it does not, with the numbers to show why"
+  shallow: false
+
+- id: tar-33
+  title: "Deposition-style per-player timeline export for one cited player: all observations in session order with obs_ids, redaction markers and clip links, so a studio can review one player end to end before quoting them"
+  level: L3
+  cell: {part: export-integration, scope: one-player, question-type: timeline, granularity: session, evidence-form: quote-with-timestamp, delivery-surface: dashboard-standard-report}
+  object: "memo.md item 1: 'timestamped atomic observations across all videos of a session'"
+  situation: "A producer wants to show player 217's whole tutorial in a review meeting; the chatbot returns one quote at a time"
+  consequence: "A single quote out of a 3-hour session is the e-discovery 'document out of context' problem; a one-player timeline with 9 video links and all 340 observations lets the reviewer see that the 'endless' complaint came 2 minutes after a crash"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session (step on screen, action, utterance, friction signal, sentiment, quote with timestamp as evidence)'"
+  proposed: "Endpoint timeline(session_id) returns ordered rows {obs_id, video_id, t_session, type, step_id, text_redacted, confidence, clip_url}; rendered as a scrollable page with step bands and a crash marker; printable"
+  mechanism: "Changes export-integration: a per-session document view over the observation log"
+  example: "Player 217: 340 observations, crash at 00:39:05, 'this tutorial is endless' at 00:41:12, abandon at 00:44:30; the producer reclassifies the complaint as crash-related"
+  cost: S
+  depends_on: "observation log with session ordering (tar-12)"
+  part: export-integration
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table shows option letters per video; the timeline shows what the player did"
+  shallow: false
