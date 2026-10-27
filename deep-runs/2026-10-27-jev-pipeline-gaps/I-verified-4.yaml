@@ -1,0 +1,3302 @@
+- id: cost-8
+  title: Table growth over a year turns a full-scan chatbot query from sub-second into tens of seconds with no index on game
+    target and version
+  level: L3
+  perspective: cost
+  cell:
+    stage: answers-table
+    data-element: game-version
+    time-and-change: a-year-of-data
+    fast-path-dependency:
+    - index-on-game-target-and-version
+    - table-growth-over-a-year
+    latency:
+    - under-2s
+    - under-30s
+    scale: 500-players
+  object: Step 3 'The answers form a structured table per video'
+  situation: 'Table holds 240,000 rows per 500-player cohort per question-set version. After 12 monthly cohorts and 3 games:
+    about 8.6 million rows. Queries filter by game-version and question id.'
+  consequence: Without a composite index on (game-target, game-version, question-id, session-id) each count scans all rows;
+    the studio sees seconds where the spec promised 'fast'.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Answering a studio''s question must be fast." - but the per-video table has no named key or index, so query cost grows with row count'
+  already_specified: false
+  proposed: Name the table key and add a composite index; test count query latency at 10 million rows.
+  shallow: false
+- id: ds-1
+  title: Answers table has no way to distinguish a missing answer from the option 'No', so cohort percentages use an undefined
+    denominator
+  level: L4
+  perspective: ds
+  cell:
+    stage: answers-table
+    data-element: null-vs-no
+    correctness-failure:
+    - null-treated-as-no
+    - wrong-denominator
+    processing-status: extraction-partial-some-questions
+    studio-question-type: cohort-count
+    batch-failure-mix: some-questions-failed-in-one-video
+    chatbot-response-behaviour: mixes-null-with-no
+    scale: 500-players
+  object: 'Step 3: "The answers form a structured table per video."'
+  situation: 500 players, 40 videos have extraction-partial-some-questions (question 7 failed) and the row stores empty; the
+    studio asks how many players were confused at step 2
+  consequence: Empty cells are counted as 'No' (or dropped) silently, so the confused share is reported as e.g. 31% of 500
+    when the valid denominator is 460 (33.7%); the chatbot cannot say which
+  p_typical: 0.15
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no coding is given for a missing or failed answer'
+  already_specified: false
+  proposed: Add an explicit status column per (video, question) with values answered / failed / not-applicable and make every
+    aggregate report n_answered next to n_total
+  shallow: false
+  also_from:
+  - cost
+  absorbed:
+  - cost-21
+  variants_of:
+  - ops-2
+- id: ds-7
+  title: Different question-set versions are pooled in one cohort count with no version column to stratify by
+  level: L4
+  perspective: ds
+  cell:
+    stage:
+    - answers-table
+    - question-set-registry
+    data-element: question-set-version
+    question-set-version-state: question-reworded-same-id
+    correctness-failure: mixed-version-aggregation
+    scale:
+    - 500-players-x-3-question-set-versions
+    - 500-players
+    studio-question-type:
+    - compare-two-versions
+    - cohort-count
+    answer-afterlife: copied-into-deck
+    time-and-change: question-set-revised
+  object: 'Step 3: "a fixed set of questions with options, written per game target"'
+  situation: Question q4 reworded from 'Did the player understand the jump tutorial?' to 'Did the player complete the jump
+    tutorial unaided?' after player 200; same id q4, 3 versions across the 500 players
+  consequence: Pooled 'yes' rate (e.g. 58%) mixes two constructs; version-to-version comparison shows an effect that is the
+    rewording
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"a fixed set of questions with options" - is described as fixed, with no version recorded when it changes'
+  already_specified: false
+  proposed: Make (question_id, question_set_version, prompt_version) part of the row key and block pooling across versions
+    unless the registry marks them equivalent
+  shallow: false
+  also_from:
+  - qauthor
+  absorbed:
+  - qauthor-7
+- id: ds-8
+  title: Model upgrade creates a step change in a year-long trend that is read as player behaviour
+  level: L4
+  perspective: ds
+  cell:
+    stage: answers-table
+    data-element: extraction-model-version
+    time-and-change:
+    - model-upgraded
+    - a-year-of-data
+    studio-question-type: trend-over-time
+    scale: 5000-players
+    correctness-failure: mixed-version-aggregation
+    latency: ingest-to-queryable (hours or days after session)
+    recovery-action: backfill-after-model-upgrade
+    answer-afterlife: acted-on-tutorial-changed
+  object: Step 3 "answered once per video by an LLM" (frame assumption) with no model version in the table description
+  situation: Extraction model swapped in month 7; monthly 'confused at step 2' share goes 24% to 31% between months 6 and
+    7 with no game update
+  consequence: Studio attributes the 7-point rise to a tutorial change and rolls it back; extractor-version drift is not recorded
+    so it cannot be ruled out
+  p_typical: 0.1
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store extraction_model_version on every row and have the chatbot annotate trend answers with version change points;
+    run a bridge sample of 200 videos through old and new models at each upgrade
+  shallow: false
+  variants_of:
+  - pipe-25
+- id: auditor-22
+  title: '''Has churn improved since January'' cannot be answered because the table has no stated session date or ingest date
+    column'
+  level: L3
+  perspective: auditor
+  cell:
+    stage: answers-table
+    time-and-change: a-year-of-data
+    data-element: timestamp
+    studio-question-type: trend-over-time
+    fast-path-dependency: table-growth-over-a-year
+    latency: ingest-to-queryable (hours or days after session)
+  object: answers table per video (spec names no date field)
+  situation: PM asks for churn by month over 14 months; the only time the pipeline has is upload time, which lags session
+    time by 1 to 40 days for sessions recorded offline at events
+  consequence: A January event cohort appears in February's number; the PM's monthly chart is shifted by a month for 20% of
+    players
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no session date or ingest date column is listed'
+  already_specified: false
+  proposed: Store session_recorded_at and ingested_at on every session; trend answers default to recorded_at and say which
+    they used
+  shallow: false
+- id: design-2
+  title: No within-video timestamp on answer rows, so timeline-of-one-player cannot be built
+  level: L3
+  perspective: design
+  cell:
+    stage: answers-table
+    data-element:
+    - timestamp
+    - evidence-span
+    studio-question-type:
+    - timeline-of-one-player
+    - distribution-not-count
+    question-shape: answer-is-a-time
+    scale:
+    - 1-player
+    - 500-players
+    session-shape: 2-4-videos
+    chatbot-response-behaviour:
+    - invents-number
+    - refuses-answerable-question
+  object: answers table row (one per video), spec.md line 6
+  situation: Designer asks 'walk me through player 17 minute by minute' for a 40-minute tutorial attempt over 3 videos.
+  consequence: The bot can only list 3 per-video answer rows in video order; it cannot say the player stalled at 05:10 of
+    video 2, so the designer cannot jump to the moment.
+  p_typical: 0.3
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - one row per video carries no within-video time'
+  already_specified: false
+  proposed: Store each answer with start/end offsets in session time (video index x 900 s + offset) for the utterances that
+    support it.
+  shallow: false
+  also_from:
+  - stitch
+  absorbed:
+  - stitch-30
+  variants_of:
+  - pipe-9
+- id: pipe-30
+  title: Studio query during a rerun reads a table half old, half new because rows are updated in place
+  level: L3
+  perspective: pipe
+  cell:
+    stage: answers-table
+    time-and-change: rerun-in-progress-while-queried
+    processing-status: rerun-in-progress
+    fast-path-dependency: cache-stale-after-rerun
+    chatbot-response-behaviour: differs-on-re-ask
+    answer-afterlife: re-asked-after-rerun
+  object: answers table read by the chatbot (spec.md step 4)
+  situation: Rerun updates 4000 rows over 3 hours; the studio asks the same question at hour 1 and hour 3
+  consequence: Two different numbers for the same cohort within one session of chat.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"the framework for generating the questions so that any type of question can be answered" - implies re-extraction over the same table the chatbot reads, with no rule for reads during a rerun'
+  already_specified: false
+  proposed: Write the rerun to a new table version and flip a pointer when complete.
+  shallow: false
+- id: ops-2
+  title: Answers table has no row for a queued video and the chatbot reads the missing row as 'No' for 'did the player abandon
+    the tutorial'
+  level: L4
+  perspective: ops
+  cell:
+    stage: answers-table
+    data-element: null-vs-no
+    processing-status:
+    - queued
+    - extracting
+    correctness-failure: null-treated-as-no
+    chatbot-response-behaviour: mixes-null-with-no
+    studio-question-type: cohort-count
+    scale: 500-players
+    fast-path-dependency: text-to-sql-generated-correctly
+    answer-afterlife: copied-into-deck
+  object: answers table per video (spec item 3); the chatbot answering 'from that table' (spec item 4)
+  situation: 120 of 500 players' tutorial videos are still queued for extraction when the studio asks 'how many players abandoned
+    the tutorial?'; a LEFT JOIN or an LLM reading the table sees no 'Yes' for those 120 and counts them as not abandoning
+  consequence: Reported abandonment = 95/500 = 19% instead of 95/380 = 25%; the 120 unprocessed players silently lower the
+    rate by 6 points
+  p_typical: 0.2
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no row or status exists for a video not yet processed'
+  already_specified: false
+  proposed: 'Write a placeholder row per (video, question) at ingest with status=pending and answer=NULL; test: query returning
+    count must report pending=120 separately; chatbot prompt forbids treating pending as No'
+  shallow: false
+  also_from:
+  - chat
+  - auditor
+  - pipe
+  absorbed:
+  - chat-2
+  - auditor-20
+  - pipe-8
+- id: ops-5
+  title: Non-idempotent retry inserts a second answer row for (video 4, Q2); 'players who quit at step 3' counts this player
+    twice
+  level: L4
+  perspective: ops
+  cell:
+    stage: answers-table
+    batch-failure-mix: retry-produced-duplicate
+    correctness-failure: duplicate-counted
+    data-element: extraction-run-id
+    recovery-action: retry-one-video
+    session-shape: duplicate-upload
+    studio-question-type: cohort-count
+    scale: 500-players
+    fast-path-dependency: text-to-sql-generated-correctly
+  object: answers table per video (spec item 3)
+  situation: Worker writes rows, then times out before acking the queue message; the message is redelivered and the worker
+    inserts 8 more rows with new auto-increment ids
+  consequence: Check 'SELECT video_id, question_id, COUNT(*) FROM answers GROUP BY 1,2 HAVING COUNT(*) > 1' returns rows;
+    cohort count of 'quit at step 3' is 41 instead of 40; with nondeterministic LLM output the two rows may also disagree
+    (one Yes, one No)
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no uniqueness key per (video, question) is named'
+  already_specified: false
+  proposed: Unique key (video_id, question_id, question_set_version, prompt_version); writes are upserts; nightly duplicate
+    check with zero tolerance
+  shallow: false
+  also_from:
+  - chat
+  - pipe
+  - eval
+  absorbed:
+  - chat-33
+  - pipe-4
+  - eval-30
+- id: ops-41
+  title: Backfill writing 400,000 rows while studios query pushes chatbot p99 latency past the timeout
+  level: L4
+  perspective: ops
+  cell:
+    stage: answers-table
+    fast-path-dependency: concurrent-studio-load
+    latency:
+    - p99-tail-under-concurrency
+    - under-2s
+    - under-30s
+    chatbot-response-behaviour: times-out
+    recovery-action: backfill-after-model-upgrade
+    scale: many-concurrent-studio-users
+    time-and-change: rerun-in-progress-while-queried
+    processing-status: rerun-in-progress
+  object: '''Answering a studio''s question must be fast'' (spec constraints)'
+  situation: Backfill upserts and index rebuilds on the answers table run during studio working hours; 20 concurrent analysts
+    query
+  consequence: 'p50 stays under 2s but p99 exceeds 30s and requests time out; observable: chatbot p99 latency graph rises
+    only during backfill windows'
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"Ingestion time and cost are not a concern. Answering a studio''s question must be fast." - no rule separates ingestion or backfill load from query serving'
+  already_specified: false
+  proposed: Backfill writes to a shadow table and swaps; or read replica for the chatbot; backfill throttled when chatbot
+    p99 > 5s
+  shallow: false
+  variants_of:
+  - pipe-30
+- id: privacy-24
+  title: Health and ability disclosures ('I'm colour-blind', 'I have ADHD') are stored and findable by studio queries
+  level: L3
+  perspective: privacy
+  cell:
+    stage: answers-table
+    data-element: utterance
+    studio-question-type: find-players-who
+    question-shape: question-not-in-set
+    speech-shape: continuous-think-aloud
+    fast-path-dependency: question-requires-raw-transcript-fallback
+  object: Fixed question set cannot capture this ('The question set is small'), so it survives only in the transcript
+  situation: A player says 'I'm colour-blind so I can't see the arrow'; a studio asks 'which players mentioned a disability?'
+    and the raw-transcript fallback returns 6 players by id.
+  consequence: Special-category health data is revealed to a studio and tied to an identified tester.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"Each video is converted to a transcript." - whatever the player says aloud, including health details, is kept in it'
+  already_specified: false
+  proposed: Define blocked query classes (health, disability, age, religion, politics) in the chatbot and exclude them from
+    raw-transcript fallback.
+  shallow: false
+- id: eval-14
+  title: No test that videos with failed extraction are excluded from the denominator rather than counted as 'No'
+  level: L4
+  perspective: eval
+  cell:
+    stage: answers-table
+    data-element: null-vs-no
+    chatbot-response-behaviour: mixes-null-with-no
+    processing-status: extraction-failed
+    correctness-failure: wrong-denominator
+    scale: 500-players
+  object: Answers table per video (spec step 3)
+  situation: 40 of 500 players have extraction-failed rows; chatbot computes '% who quit in tutorial' over 500.
+  consequence: Reported rate 18% instead of 19.6% on 460 processed players; error grows with failure rate and is invisible.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no rule says how failed extractions enter a denominator'
+  already_specified: false
+  proposed: Seed a test table with 10% null rows; assert chatbot denominators equal count of non-null rows and that the answer
+    states 'n=460 of 500'.
+  shallow: false
+  variants_of:
+  - ops-2
+- id: eval-24
+  title: No production drift monitor on option shares; a game update that changes the tutorial is not detected
+  level: L4
+  perspective: eval
+  cell:
+    stage: answers-table
+    time-and-change: game-update-changes-tutorial
+    correctness-failure: other-option-overused
+    data-element: game-version
+    latency: batch-overnight
+  object: Answers table per video (spec step 3)
+  situation: Studio ships a new tutorial; 'Other' for 'Where did the player get stuck?' rises from 8% to 31% within a week.
+  consequence: Options no longer describe the game; accuracy silently degrades with no alert.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." - no check ties the question set to the game build it describes'
+  already_specified: false
+  proposed: Nightly per-question option-share by game-version; alert when any option moves more than 10 points or 'Other'
+    exceeds 15%.
+  shallow: false
+- id: qauthor-8
+  title: A retired question leaves a column that is all null for new players and the chatbot reads null as No
+  level: L3
+  perspective: qauthor
+  cell:
+    stage:
+    - answers-table
+    - question-set-registry
+    data-element: null-vs-no
+    question-set-version-state: question-retired
+    chatbot-response-behaviour:
+    - mixes-null-with-no
+    - invents-number
+    correctness-failure:
+    - null-treated-as-no
+    - wrong-denominator
+    scale: 500-players
+    studio-question-type: cohort-count
+    time-and-change: question-set-revised
+  object: 'step 4: ''A chatbot ... answers the studio''s questions from that table'''
+  situation: question Q9 retired after player 300 of 500; players 301-500 have no Q9 value
+  consequence: '''what share did X'' answers 60% yes of 500 when the true denominator is 300; or ''No'' for 200 players who
+    were never asked'
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." - no rule covers retiring a question'
+  already_specified: false
+  proposed: write a 'not asked (question retired)' marker per row, distinct from 'asked, option No', and exclude it from denominators
+  shallow: false
+  also_from:
+  - pipe
+  absorbed:
+  - pipe-26
+  variants_of:
+  - ops-2
+- id: sec-17
+  title: Two games in one studio reuse question id q1 for different questions; a cross-game join on question_id silently merges
+    'quit at tutorial step 2' with 'liked the art style'
+  level: L4
+  perspective: sec
+  cell:
+    tenancy: one-studio-many-games
+    question-set-version-state: per-game-fork
+    correctness-failure:
+    - mixed-version-aggregation
+    - right-answer-wrong-player
+    - confident-no-evidence
+    stage: answers-table
+    studio-question-type:
+    - compare-two-versions
+    - compare-two-steps
+    chatbot-response-behaviour: answers-in-wrong-tenant-scope
+    fast-path-dependency: text-to-sql-generated-correctly
+  object: Step 3 'fixed set of questions with options, written per game target'
+  situation: Question ids are local per game set, but the answers table or text-to-SQL joins on question_id only
+  consequence: A comparison across the studio's two games reports a meaningless percentage with full confidence
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"written per game target" - so question ids are per game with no stated namespace'
+  already_specified: false
+  proposed: Globally unique question ids (game_id + set_version + local id); schema check rejects joins across game_id without
+    an explicit mapping table
+  shallow: false
+  also_from:
+  - onboard
+  absorbed:
+  - onboard-6
+- id: stitch-22
+  title: Sessions with zero videos are absent from the table, so the chatbot's denominator silently becomes 'players with
+    at least one processed video'
+  level: L3
+  perspective: stitch
+  cell:
+    stage: answers-table
+    session-shape: zero-videos-session-failed
+    correctness-failure: wrong-denominator
+    studio-question-type: cohort-count
+    batch-failure-mix: some-sessions-failed-in-cohort
+    scale: 500-players
+  object: '''a question over, say, 500 players'''
+  situation: 500 players recruited; 13 sessions produced no video (recorder failed to start).
+  consequence: Chatbot reports '% of 487 players' or '% of players' with no n; the studio believes it is 500; failed sessions
+    may correlate with low-end devices, biasing the cohort.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"a question over, say, 500 players is fast" - but the table only holds players who produced at least one video'
+  already_specified: false
+  proposed: Session registry row exists from recruitment with status; every cohort answer states recruited / with video /
+    fully processed counts.
+  shallow: false
+  variants_of:
+  - ops-2
+- id: skeptic-5
+  title: Answers table stores the option but not the evidence span (utterance + timestamp), so no answer can be re-checked
+    against the transcript later
+  level: L4
+  perspective: skeptic
+  cell:
+    stage: answers-table
+    data-element: evidence-span
+    studio-question-type: quote-me-evidence
+    correctness-failure:
+    - confident-no-evidence
+    - hallucinated-answer
+    fast-path-dependency: question-requires-raw-transcript-fallback
+  object: answers table row (video, question, option)
+  situation: Analyst asks 'show me what player 0417 said that made you pick confusing-controls'
+  consequence: The bot must re-read the 15-minute transcript to find a quote, which takes the slow path the table was built
+    to avoid, or it fabricates a quote
+  p_typical: 0.2
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - the row stores no evidence span pointing back into the transcript'
+  already_specified: false
+  proposed: Add evidence_span {video_id, start_s, end_s, quote<=40 words} to every answer row; assert non-null for any option
+    other than 'not mentioned'
+  shallow: false
+- id: skeptic-28
+  title: No offline benchmark that measures how much the table loses versus a raw-transcript answer on the same studio questions
+  level: L4
+  perspective: skeptic
+  cell:
+    stage: answers-table
+    correctness-failure: confident-no-evidence
+    studio-question-type: cohort-why
+    scale: 50-players
+    fast-path-dependency: question-requires-raw-transcript-fallback
+  object: named problem 'most of what is in the video and transcript is never captured'
+  situation: Team debates adding questions vs a raw-transcript path with no data on which answers differ
+  consequence: The redesign is chosen on opinion; the share of studio questions the table answers correctly is unknown
+  p_typical: 0.05
+  grounded: quote
+  evidence: 'The question set is small, so most of what is in the video and transcript is never captured.'
+  already_specified: false
+  proposed: 'Build a 50-session, 20-question gold set; report per question: table-path accuracy, raw-path accuracy, latency;
+    decide per question type'
+  shallow: false
+- id: speech-22
+  title: Silence itself is the churn signal but speech density per minute is never stored, so the chatbot cannot ask 'when
+    did players stop talking?'
+  level: L4
+  perspective: speech
+  cell:
+    stage: answers-table
+    speech-shape:
+    - continuous-think-aloud
+    - silent-player
+    studio-question-type: question-about-a-step-the-set-never-asked
+    data-element: timestamp
+    question-shape: question-not-in-set
+    fast-path-dependency: question-requires-raw-transcript-fallback
+  object: Owner statement 'The question set is small, so most of what is in the video and transcript is never captured.'
+  situation: A player thinks aloud at 120 words per minute for 8 minutes then drops to 5 words per minute until quitting;
+    no question measures this
+  consequence: The cheapest and most objective disengagement feature, derivable from the ASR with no LLM, is absent from the
+    table and each studio question about 'when did they lose interest' requires re-reading transcripts
+  p_typical: 0.04
+  grounded: quote
+  evidence: 'The question set is small, so most of what is in the video and transcript is never captured.'
+  already_specified: false
+  proposed: Write per-minute columns (words, speech_seconds, nonverbal_events) to the table at ingest, independent of the
+    question set
+  shallow: false
+- id: speech-25
+  title: Per-video ASR confidence is not carried into the answer table, so answers from clean and garbled audio are weighted
+    equally
+  level: L4
+  perspective: speech
+  cell:
+    stage: answers-table
+    data-element: answer-confidence
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    studio-question-type: cohort-count
+    correctness-failure: wrong-denominator
+    scale: 500-players
+  object: Answers table columns (one answer per video per question)
+  situation: In a 500-player cohort, 60 videos have mean ASR confidence below 0.5; their answers sit in the same column as
+    the 440 good ones
+  consequence: The chatbot reports '38% hit the controls problem' over 500 with no way to restrict to the 440 reliable videos;
+    the 60 noisy videos shift the figure by up to 12 points
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"Each video is converted to a transcript." - transcript quality is not carried into the answers table'
+  already_specified: false
+  proposed: Add asr_confidence, speech_seconds and word_count columns and let the chatbot filter and report the filtered n
+  shallow: false
+- id: cost-26
+  title: 'New game with 0 players: first answer waits for question authoring plus a full ingest, so time-to-first-answer is
+    days'
+  level: L4
+  perspective: cost
+  cell:
+    stage: question-set-registry
+    data-element: game-target
+    scale: 0-players-new-game
+    time-and-change: first-game-onboarded
+    latency:
+    - ingest-to-queryable (hours or days after session)
+    - batch-overnight
+    recovery-action: backfill-after-question-set-change
+  object: Step 3 'written per game target'; Unspecified 'current question count'
+  situation: A new studio uploads 200 sessions on day 1, but its question set is written on day 3 and re-extraction of 3,200
+    videos runs overnight.
+  consequence: First chatbot answer on day 4 even though the video was available on day 1; onboarding time is dominated by
+    the authoring dependency, not compute.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"written per game target" - so a new game has no question set until one is authored'
+  already_specified: false
+  proposed: Ship a default tutorial-churn question set so extraction starts at upload and is refined later.
+  shallow: false
+  variants_of:
+  - onboard-1
+- id: auditor-14
+  title: An option added in v2 makes the v1 share of 'lost interest' look like it fell, and the PM credits the tutorial change
+  level: L4
+  perspective: auditor
+  cell:
+    stage: question-set-registry
+    question-set-version-state:
+    - option-added
+    - mixed-versions-in-table
+    correctness-failure:
+    - forced-choice-bias
+    - mixed-version-aggregation
+    studio-question-type:
+    - trend-over-time
+    - compare-two-versions
+    time-and-change:
+    - game-update-changes-tutorial
+    - question-set-revised
+    recovery-action: backfill-after-question-set-change
+    question-shape:
+    - event-did-not-happen-in-this-video
+    - answer-is-a-why
+    answer-afterlife: copied-into-deck
+  object: question 'why did the player stop' with options {lost interest, instructions unclear, too hard, other}
+  situation: Option 'did not reach this step' is added in the same week the tutorial change ships; 'lost interest' drops from
+    40% to 24% because players who never reached the step were previously forced into it
+  consequence: The deck attributes a 16-point improvement to the change; the true effect is unknown
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"a fixed set of questions with options" - options can change with no version recorded'
+  already_specified: false
+  proposed: Chatbot refuses to compare across question-set versions where the option list differs and offers the comparison
+    on the option intersection only, labelled as such
+  shallow: false
+  also_from:
+  - extract
+  absorbed:
+  - extract-41
+- id: auditor-15
+  title: A retired question that a deck cites returns 'no data' or a silently substituted neighbour question on re-ask
+  level: L4
+  perspective: auditor
+  cell:
+    stage: question-set-registry
+    question-set-version-state: question-retired
+    chatbot-response-behaviour: substitutes-nearest-fixed-question
+    studio-question-type: question-about-a-step-the-set-never-asked
+    answer-afterlife:
+    - re-asked-after-rerun
+    - copied-into-deck
+    time-and-change: question-set-revised
+  object: question Q7 'did the player open the map in the first 5 minutes' removed in question-set v3
+  situation: Deck from v2 says 61% opened the map; auditor re-asks on v3 and the bot answers from Q4 'did the player use the
+    map' (74%) without naming the substitution
+  consequence: The auditor records a 13-point discrepancy against the PM; both numbers are correct answers to different questions
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"a fixed set of questions with options" - no rule covers what the chatbot does when a question is removed'
+  already_specified: false
+  proposed: Retired questions keep their rows and remain queryable with a 'retired in v3, last asked on <date>' label; substitution
+    is always named in the answer
+  shallow: false
+- id: extract-40
+  title: LLM-generated new questions ship with overlapping options ('confused by UI' vs 'instructions unclear') that split
+    one cause across two buckets
+  level: L3
+  perspective: extract
+  cell:
+    stage: question-set-registry
+    question-set-version-state: option-added
+    question-shape: fits-two-options
+    correctness-failure: inconsistent-across-videos
+    data-element: option
+  object: auto-generated question and option set
+  situation: Framework generates questions from studio questions without an option-overlap check
+  consequence: Neither option reaches 'top reason'; agreement between two runs on the same video < 70%
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"the framework for generating the questions so that any type of question can be answered" - is a stated goal with no check on overlapping options'
+  already_specified: false
+  proposed: 'Gate each generated question: run on 50 videos 2x, require >= 85% self-agreement and no option pair confused
+    in > 10% of disagreements'
+  shallow: false
+- id: l10n-8
+  title: Per-language translation of the question set merges or splits options, so the Japanese fork has 4 options where the
+    English has 5 under the same question-set-version id
+  level: L3
+  perspective: l10n
+  cell:
+    stage: question-set-registry
+    question-set-version-state: per-game-fork
+    data-element: question-set-version
+    correctness-failure: mixed-version-aggregation
+    studio-question-type: cohort-count
+    scale: 500-players
+    speech-shape: non-english
+  object: Step 3 'written per game target' with no mention of a per-language variant
+  situation: A translator renders 'instructions unclear' and 'confusing UI' as one Japanese option because the distinction
+    does not translate; the registry stores the Japanese set under the same version id as the English set
+  consequence: A cohort count of 'instructions unclear' over 500 players sums English option 3 with a Japanese option that
+    also contains English option 4; the number is not reproducible and no field records that the option cardinality differs
+    by language
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"written per game target" - with no per-language variant named, and languages are listed as unspecified'
+  already_specified: false
+  proposed: Make language a dimension of question-set-version (set_id, version, language); require option id sets to be identical
+    across languages and fail registry validation when counts differ
+  shallow: false
+  variants_of:
+  - sec-17
+- id: onboard-1
+  title: New game with 0 players has no question set row in the registry, so the first studio question gets an undefined reply
+  level: L3
+  perspective: onboard
+  cell:
+    stage: question-set-registry
+    scale: 0-players-new-game
+    time-and-change: first-game-onboarded
+    studio-question-type: what-can-you-answer
+    chatbot-response-behaviour:
+    - says-no-data-correctly
+    - invents-number
+    - answers-in-wrong-tenant-scope
+    correctness-failure: hallucinated-answer
+    processing-status: not-yet-uploaded
+  object: 'Step 3: ''a fixed set of questions with options, written per game target'''
+  situation: A CS person creates the studio's tenant on day 0 and the studio analyst opens the chatbot before any session
+    is uploaded; the table has 0 rows and possibly 0 questions for this game target.
+  consequence: The bot may return an empty result, a generic answer from another game's table, or a made-up one; the first
+    impression of the product is an unspecified behaviour.
+  p_typical: 0.15
+  grounded: inferred
+  evidence: '"written per game target" - so a new game target can exist before any question set or rows'
+  already_specified: false
+  proposed: 'Define the 0-row reply: ''No sessions processed for <game> yet; question set v0 has N questions'' and test it
+    for N=0 and N>0.'
+  shallow: false
+- id: onboard-7
+  title: Question template copied from a previous studio's game carries that game's mechanic names and answers
+  level: L3
+  perspective: onboard
+  cell:
+    stage: question-set-registry
+    question-set-version-state: per-game-fork
+    tenancy: many-studios-shared-infra
+    data-element:
+    - question
+    - option
+    time-and-change: first-game-onboarded
+  object: 'Step 3: ''written per game target'''
+  situation: To meet a 2-day onboarding, CS clones studio X's question set for studio Y; option text still says 'Forge screen'
+    and 'Gold chest', terms studio X's players used.
+  consequence: Studio Y sees option labels from a competitor's game (leak of studio X's design vocabulary), and the extraction
+    LLM maps Y's players to X's words, producing wrong answers.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Clone only from a game-neutral template library and diff option text for game-specific nouns before activation.
+  shallow: false
+  also_from:
+  - sec
+  absorbed:
+  - sec-19
+- id: percep-22
+  title: Question-set registry has no 'visual-dependence' flag, so questions that need the screen run over audio-only transcripts
+    with the same confidence as speech questions
+  level: L3
+  perspective: percep
+  cell:
+    stage: question-set-registry
+    question-shape: answer-needs-visuals
+    data-element: answer-confidence
+    correctness-failure: confident-no-evidence
+    question-set-version-state: single-version
+  object: question set written per game target (spec item 3); per-question metadata
+  situation: Of a 12-question set, 5 ask about what the player saw or tapped; all 12 are answered from the same transcript
+  consequence: The table cannot be filtered to 'answers the transcript could support'; the chatbot cites visual answers with
+    the same authority as verbal ones
+  p_typical: 0.06
+  grounded: quote
+  evidence: 'the transcript alone is not enough; what is on screen is largely lost.'
+  already_specified: false
+  proposed: Add evidence_channel per question (speech, screen, both); extraction prompt lowers the confidence ceiling to 0.5
+    for screen questions until a vision model is in the loop; chatbot prefixes such answers with 'from speech only'
+  shallow: false
+- id: pipe-6
+  title: 'Option renamed but id kept: old rows and new rows with the same option_id mean different things in one GROUP BY'
+  level: L4
+  perspective: pipe
+  cell:
+    stage:
+    - question-set-registry
+    - answers-table
+    question-set-version-state:
+    - option-renamed-same-id
+    - mixed-versions-in-table
+    data-element: option
+    scale:
+    - 500-players-x-3-question-set-versions
+    - 500-players
+    correctness-failure: mixed-version-aggregation
+    processing-status: rerun-in-progress
+    studio-question-type:
+    - distribution-not-count
+    - trend-over-time
+    - compare-two-versions
+    time-and-change:
+    - a-year-of-data
+    - question-set-revised
+    - rerun-in-progress-while-queried
+    answer-afterlife: copied-into-deck
+    recovery-action: backfill-after-question-set-change
+  object: fixed set of questions with options, 'written per game target' (spec.md step 3)
+  situation: Option B 'UI unclear' is reworded to 'Could not find the button' under the same option_id=q3_b after 200 of 500
+    players are processed; the remaining 300 are answered under the new meaning
+  consequence: 'Counting q3_b merges two definitions; the chatbot reports 41% ''B'' with no way to know 40% of it meant something
+    else. Test: any change to option text must produce a new option_id or bump question_set_version.'
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"a fixed set of questions with options" - options can be reworded with no version or id rule'
+  already_specified: false
+  proposed: Make options immutable once used; text edits create a new id and a new question_set_version stored on every answer
+    row.
+  shallow: false
+  also_from:
+  - ops
+  - ds
+  - auditor
+  - extract
+  - qauthor
+  absorbed:
+  - ops-26
+  - ds-24
+  - auditor-13
+  - extract-19
+  - qauthor-6
+- id: pipe-25
+  title: A question-set version is not stamped on rows, so 'which questions did this row come from' is lost after the first
+    edit
+  level: L4
+  perspective: pipe
+  cell:
+    stage: question-set-registry
+    data-element: question-set-version
+    question-set-version-state:
+    - mixed-versions-in-table
+    - question-reworded-same-id
+    - question-retired
+    time-and-change: question-set-revised
+    answer-afterlife: re-asked-after-rerun
+    scale: 500-players
+  object: '''a fixed set of questions with options, written per game target'''
+  situation: PM edits question 5 wording and removes question 9 in week 3; 120 of 500 players were already answered
+  consequence: 'A studio re-asking the week-2 question in week 4 gets a different number; the earlier number cannot be reproduced.
+    Test: every row has question_set_version and the registry keeps all versions.'
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"written per game target" - no question-set version is stamped on answer rows'
+  already_specified: false
+  proposed: Immutable versioned question sets; every answer row references (question_set_version, question_id, option_id).
+  shallow: false
+  variants_of:
+  - ds-7
+  - pipe-6
+- id: ops-25
+  title: Rollback from question set v3 to v2 leaves v3 rows in the table; no rule says which rows are current after a rollback
+  level: L3
+  perspective: ops
+  cell:
+    stage: question-set-registry
+    question-set-version-state:
+    - rollback-to-old-version
+    - option-added
+    - mixed-versions-in-table
+    recovery-action: backfill-after-question-set-change
+    processing-status: superseded-by-rerun
+    correctness-failure: mixed-version-aggregation
+    data-element: question-set-version
+    scale:
+    - 500-players-x-3-question-set-versions
+    - 500-players
+    batch-failure-mix: some-sessions-failed-in-cohort
+    time-and-change: question-set-revised
+    fast-path-dependency: text-to-sql-generated-correctly
+  object: fixed question set 'written per game target' (spec item 3)
+  situation: v3 adds an option that the model over-picks; PM rolls back to v2 after 2 days; 1,200 videos processed under v3
+    keep v3 rows
+  consequence: Readers filtering 'latest version' get v3; readers filtering 'active version' get v2 for most and nothing for
+    1,200 videos
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"a fixed set of questions with options" - no rule says which rows are current after the set changes or is rolled back'
+  already_specified: false
+  proposed: Registry holds active_version per game target separately from max version; rollback enqueues re-extraction of
+    rows whose version != active and reports remaining count
+  shallow: false
+  also_from:
+  - ds
+  - qauthor
+  absorbed:
+  - ds-38
+  - qauthor-33
+- id: eval-21
+  title: Question reworded under the same id; old gold labels scored against new answers corrupt the accuracy trend
+  level: L3
+  perspective: eval
+  cell:
+    stage: question-set-registry
+    question-set-version-state: question-reworded-same-id
+    data-element: question-set-version
+    correctness-failure:
+    - mixed-version-aggregation
+    - stale-after-prompt-change
+    time-and-change: question-set-revised
+  object: Per-game fixed question set (spec step 3)
+  situation: '''Did the player get stuck?'' becomes ''Did the player get stuck for over 60 seconds?'' under id Q4; gold labels
+    were for the old wording.'
+  consequence: Accuracy for Q4 drops from 88% to 70% on the dashboard, read as a regression though the model is fine.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"the framework for generating the questions so that any type of question can be answered" - implies rewording questions, with no rule for ids or labels when wording changes'
+  already_specified: false
+  proposed: Gold labels keyed by question-set-version; a reworded question gets a new id or a relabelled gold subset before
+    its accuracy is reported.
+  shallow: false
+  variants_of:
+  - ds-7
+- id: eval-23
+  title: No minimum labelled set or accuracy bar before a new game's question set goes live
+  level: L3
+  perspective: eval
+  cell:
+    stage: question-set-registry
+    question-set-version-state: per-game-fork
+    time-and-change: first-game-onboarded
+    scale: 0-players-new-game
+    tenancy: one-studio-many-games
+  object: '''written per game target'''
+  situation: New game onboarded with a forked question set; first studio questions are answered before any video is labelled.
+  consequence: The first answers the studio sees, which shape its trust, have unknown accuracy; labelling cost per game (e.g.
+    150 videos x 10 questions) is not budgeted.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." - no accuracy check is defined before a set goes live'
+  already_specified: false
+  proposed: 'Launch gate per game: at least 100 labelled videos and per-question accuracy >= 80% or the question is hidden
+    from the chatbot.'
+  shallow: false
+  variants_of:
+  - eval-1
+- id: eval-33
+  title: Goal (b) 'any type of question can be answered' has no coverage metric over real studio questions
+  level: L4
+  perspective: eval
+  cell:
+    stage: question-set-registry
+    studio-question-type: question-outside-game-target
+    chatbot-response-behaviour: refuses-answerable-question
+    question-shape: question-not-in-set
+    time-and-change: game-target-changes-beyond-tutorial
+  object: 'Spec goal (b): ''the framework for generating the questions so that any type of question can be answered'''
+  situation: Question set is extended; no one measures what share of logged studio questions the table can now answer.
+  consequence: Improvement of the question framework cannot be shown or compared; work is prioritised by guess.
+  p_typical: 0.1
+  grounded: quote
+  evidence: 'the framework for generating the questions so that any type of question can be answered'
+  already_specified: false
+  proposed: Label 200 logged studio questions as answerable / partly / not from the table; track the answerable share per
+    question-set version.
+  shallow: false
+- id: qauthor-10
+  title: A game update removes tutorial step 4 but the question 'Did the player finish the crafting step' stays in the set
+  level: L3
+  perspective: qauthor
+  cell:
+    stage:
+    - question-set-registry
+    - build-and-metadata-tagging
+    data-element:
+    - tutorial-step
+    - build-id
+    - game-version
+    time-and-change: game-update-changes-tutorial
+    question-set-version-state: per-game-version-fork
+    studio-question-type: compare-two-versions
+    correctness-failure:
+    - hallucinated-answer
+    - other-option-overused
+    question-shape: event-did-not-happen-in-this-video
+  object: 'step 3: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  situation: build 1.4 removes the crafting step; the PM keeps one question set for both builds; build 1.4 players are asked
+    about a step that does not exist
+  consequence: build 1.4 gets 'No' or hallucinated 'Yes' for a step they never saw, so 'compare 1.3 vs 1.4 crafting completion'
+    shows a crash from 80% to 5% that is an artifact
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." - the set is not tied to a game build, so a removed step can keep its question'
+  already_specified: false
+  proposed: bind each question to a tutorial-step id and a build range; questions outside the range are 'not applicable',
+    not asked
+  shallow: false
+  also_from:
+  - onboard
+  - pipe
+  absorbed:
+  - onboard-19
+  - pipe-37
+- id: qauthor-25
+  title: No pre-release test of a question set on labelled transcripts, so wording changes cannot be shown to help or hurt
+  level: L3
+  perspective: qauthor
+  cell:
+    stage: question-set-registry
+    data-element: prompt-version
+    time-and-change: question-set-revised
+    correctness-failure: stale-after-prompt-change
+    recovery-action: backfill-after-question-set-change
+    answer-afterlife: disputed-by-studio
+  object: 'Constraint: ''(b) the framework for generating the questions'''
+  situation: PM edits 4 option texts and ships; there is no set of, say, 30 human-labelled videos to compare old vs new accuracy
+  consequence: agreement with human labels may fall from 82% to 70% for Q3 and nobody sees it until a studio disputes a number
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"the framework for generating the questions so that any type of question can be answered" - is a stated goal with no test of a set on labelled transcripts'
+  already_specified: false
+  proposed: keep 30 labelled videos per game target; block publishing a question change if agreement drops more than 5 points
+  shallow: false
+  variants_of:
+  - eval-1
+- id: qauthor-32
+  title: Studio-authored extra questions would enter the shared registry with no tenant scope or review
+  level: L3
+  perspective: qauthor
+  cell:
+    stage: question-set-registry
+    tenancy: many-studios-shared-infra
+    data-element: studio-tenant
+    studio-question-type: cross-game-or-cross-studio-benchmark
+  object: 'Constraint: ''Buyers are gaming studios. Their questions are not known in advance.'''
+  situation: studio B asks to add its own 'did the player mention a competitor game' question; the registry has one namespace
+    for all question ids
+  consequence: id collision with studio A's Q14, or studio B's question text visible to studio A; a core question's meaning
+    changes for one studio only
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"Buyers are gaming studios. Their questions are not known in advance." - new questions would come from studios, with no tenant scope or review defined'
+  already_specified: false
+  proposed: namespace question ids by tenant and mark core questions read-only
+  shallow: false
+- id: player-29
+  title: A new question 'does the player sound under 18 / which accent / which gender' is backfilled across 500 players from
+    voice alone
+  level: L3
+  perspective: player
+  cell:
+    stage: question-set-registry
+    recovery-action: backfill-after-question-set-change
+    question-set-version-state: option-added
+    studio-question-type: question-about-a-step-the-set-never-asked
+    data-element: question
+    scale: 500-players
+  object: the question-generation framework
+  situation: Studio asks for a quick extension and the 'any question' framework adds 3 questions on age, gender and nationality
+    inferred from voice; backfill runs over 500 players (about 12,000 videos).
+  consequence: Sensitive attributes are inferred for people who never consented to that and stored as table values that cannot
+    be removed individually.
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"the framework for generating the questions so that any type of question can be answered" - any question includes ones inferring sensitive traits from voice'
+  already_specified: false
+  proposed: Question registry marks forbidden categories (age, gender, health, ethnicity, religion) and blocks them at creation
+    time.
+  shallow: false
+- id: sec-33
+  title: Auto-generated question framework takes studio chat questions or transcript phrases as input, so one injected utterance
+    can add or rewrite a question applied to all 500 players
+  level: L3
+  perspective: sec
+  cell:
+    stage: question-set-registry
+    data-element: question-set-version
+    question-set-version-state: question-reworded-same-id
+    correctness-failure: instruction-injected-via-transcript
+    studio-question-type: question-about-a-step-the-set-never-asked
+    scale: 500-players
+    tenancy: many-studios-shared-infra
+  object: Owner goal (b) 'the framework for generating the questions so that any type of question can be answered'
+  situation: Generator ingests untrusted text from transcripts or from studio users of other tenants
+  consequence: 'A persistent injection: every future extraction for the game runs a question an attacker wrote'
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"the framework for generating the questions so that any type of question can be answered" - the generator''s inputs are not defined, so untrusted text could reach it'
+  already_specified: false
+  proposed: Generated questions enter the registry as drafts requiring human approval; generator input restricted to the owning
+    tenant's data
+  shallow: false
+- id: skeptic-3
+  title: No promotion rule from repeated studio questions into the fixed question set, so the set never grows toward what
+    studios actually ask
+  level: L3
+  perspective: skeptic
+  cell:
+    stage: question-set-registry
+    data-element: question-set-version
+    question-shape: question-not-in-set
+    time-and-change: question-set-revised
+    studio-question-type: question-about-a-step-the-set-never-asked
+  object: fixed question set 'written per game target'; spec goal (b) 'the framework for generating the questions so that
+    any type of question can be answered'
+  situation: Three analysts at one studio ask variants of 'did players notice the daily reward?' within 7 days; no log of
+    uncovered questions feeds the question author
+  consequence: The set stays at its launch size; the owner's named problem 'The question set is small' is never reduced by
+    real demand
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Their questions are not known in advance." - no path promotes repeated studio questions into the fixed set'
+  already_specified: false
+  proposed: Log every uncovered question with its coverage verdict; when a cluster reaches 3 asks in 14 days, open a draft
+    question+options for the question author and backfill it
+  shallow: false
+- id: ds-13
+  title: Churn outcome is not in the table, so 'tutorial churn' rates cannot be computed from the answers
+  level: L3
+  perspective: ds
+  cell:
+    stage: fixed-question-set
+    data-element: game-target
+    studio-question-type:
+    - compare-two-steps
+    - cohort-count
+    question-shape: unknowable-from-audio
+    scale: 500-players
+    session-shape: session-ends-mid-sentence
+    correctness-failure: hallucinated-answer
+  object: 'Step 3: "The targets are mostly detecting churn in the tutorial and just after it." Unspecified: "whether game
+    telemetry is joined"'
+  situation: Studio asks what percentage churned at step 3; the only evidence a player left is that the last video ended,
+    and a session that ends mid-sentence may be a recording limit not a quit
+  consequence: Churn rate is guessed from last-video position by the LLM, with unknown error; no ground-truth outcome variable
+    exists to validate any why-answer against
+  p_typical: 0.12
+  grounded: quote
+  evidence: 'whether game telemetry is joined'
+  already_specified: false
+  proposed: Join a per-session outcome (completed tutorial, quit at step k, still playing) from telemetry or moderator log
+    as a column alongside answers
+  shallow: false
+- id: auditor-16
+  title: Tutorial step renamed in a game update leaves pre-update rows pointing at a step that no longer exists, and the bot
+    pools both
+  level: L3
+  perspective: auditor
+  cell:
+    stage: fixed-question-set
+    time-and-change: game-update-changes-tutorial
+    data-element: tutorial-step
+    question-set-version-state: per-game-version-fork
+    studio-question-type: compare-two-steps
+    correctness-failure: mixed-version-aggregation
+    question-shape: event-did-not-happen-in-this-video
+  object: question option naming a tutorial step (for example 'the crafting bench step')
+  situation: Build 1.4 merges the crafting bench and the forge into one 'workshop' step; options still say 'crafting bench';
+    the extractor keeps choosing it for 1.4 transcripts that say 'workshop'
+  consequence: PM's compare-two-steps answer counts a step that 1.4 players never saw
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"written per game target" - option text names game steps with no link to the game build'
+  already_specified: false
+  proposed: Question-set version is keyed to build range; a session on a build with no matching question-set version is held
+    in 'awaiting question set' status, not extracted with the old one
+  shallow: false
+  variants_of:
+  - qauthor-10
+- id: design-8
+  title: Tutorial step names differ between games and builds, so options listing steps cannot be reused or compared
+  level: L3
+  perspective: design
+  cell:
+    stage: fixed-question-set
+    question-set-version-state: option-renamed-same-id
+    data-element: tutorial-step
+    time-and-change: game-update-changes-tutorial
+    studio-question-type: compare-two-versions
+  object: option list of the question 'which tutorial step did the player get stuck on' (written per game target)
+  situation: Build 1.3 has 'Dash tutorial' as step 4; build 1.4 inserts 'Dodge' as step 4 and moves 'Dash' to step 5, keeping
+    the same option id.
+  consequence: '''Stuck on step 4'' means Dash in 1.3 and Dodge in 1.4; compare-two-versions shows a 22-point fall in Dash
+    difficulty that is an artefact.'
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"written per game target" - options naming tutorial steps have no rule for when a build reorders steps'
+  already_specified: false
+  proposed: Key options by stable step_id with a per-build mapping table, not by position or label.
+  shallow: false
+  variants_of:
+  - pipe-6
+  - qauthor-10
+- id: design-12
+  title: Churn has no defined event or window, so 'churn in the tutorial and just after it' cannot be computed from answers
+  level: L3
+  perspective: design
+  cell:
+    stage: fixed-question-set
+    data-element: game-target
+    session-shape: same-player-multiple-sessions
+    studio-question-type: cohort-count
+    time-and-change: game-target-changes-beyond-tutorial
+  object: 'spec.md line 6: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  situation: Player quits at minute 14 of the tutorial but returns next day and finishes in session 2; another finishes the
+    tutorial then never returns.
+  consequence: Designer asks 'what percent of players churn in the tutorial'; the bot cannot say whether churn means session
+    end, never-returning, or leaving before step 12, so three analysts get 3 different numbers.
+  p_typical: 0.15
+  grounded: quote
+  evidence: 'The targets are mostly detecting churn in the tutorial and just after it.'
+  already_specified: false
+  proposed: Define churn per game as 'last observed tutorial step id and no later session within 7 days' and store it as a
+    derived column.
+  shallow: false
+  variants_of:
+  - ds-13
+- id: design-25
+  title: Designer asks about a new tutorial hint added in build 1.5 that no fixed question covers
+  level: L3
+  perspective: design
+  cell:
+    stage: fixed-question-set
+    studio-question-type: question-about-a-step-the-set-never-asked
+    question-shape: question-not-in-set
+    fast-path-dependency: question-requires-raw-transcript-fallback
+    latency: minutes
+    scale: 500-players
+    time-and-change: game-update-changes-tutorial
+    correctness-failure: hallucinated-answer
+    session-shape: 2-4-videos
+  object: 'spec.md line 11: ''Their questions are not known in advance.'''
+  situation: Build 1.5 adds a hint at step 6; the designer asks 'did players notice the new hint' across 500 players x 4 videos
+    = 2000 transcripts.
+  consequence: The table has no column, so the bot must fall back to raw transcripts (the 'too slow and too much data' path)
+    taking minutes, or guess from a nearby question.
+  p_typical: 0.18
+  grounded: quote
+  evidence: 'Their questions are not known in advance.'
+  already_specified: false
+  proposed: 'Define the fallback: a background extraction job for the new question over stored transcripts, with an ETA shown
+    and the answer pending.'
+  shallow: false
+  variants_of:
+  - onboard-4
+- id: design-33
+  title: Tutorial transcript says nothing about which mechanic the player was on, so mechanic-level churn cannot be separated
+    from step-level
+  level: L3
+  perspective: design
+  cell:
+    stage: fixed-question-set
+    data-element: game-target
+    studio-question-type: compare-two-steps
+    question-shape: unknowable-from-audio
+    correctness-failure: wrong-denominator
+    scale: 10-games-at-once
+    tenancy: one-studio-many-games
+  object: '''game target'' per game written by a person; no mapping of tutorial step to mechanic'
+  situation: Steps 4 and 8 both use the dash; the designer asks whether the dash is the problem across the whole tutorial.
+  consequence: No table column links a step to a mechanic, so the dash question needs a hand-built step list for each game;
+    with 10 games at once that is 10 lists.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"written per game target" - no mapping from tutorial step to mechanic is described'
+  already_specified: false
+  proposed: Add a per-game step-to-mechanic registry used at extraction time and in the bot's query planner.
+  shallow: false
+- id: onboard-4
+  title: Studio target is mid-game retention, but the set only covers 'tutorial and just after it'
+  level: L3
+  perspective: onboard
+  cell:
+    stage: fixed-question-set
+    time-and-change: game-target-changes-beyond-tutorial
+    question-shape:
+    - question-not-in-set
+    - event-did-not-happen-in-this-video
+    - answer-is-a-why
+    studio-question-type: question-outside-game-target
+    recovery-action: backfill-after-question-set-change
+    chatbot-response-behaviour:
+    - answers-from-general-game-knowledge
+    - substitutes-nearest-fixed-question
+    data-element: game-target
+    scale: 500-players
+    session-shape: 5-20-videos
+    fast-path-dependency: question-requires-raw-transcript-fallback
+  object: 'Step 3: targets ''mostly detecting churn in the tutorial and just after it'''
+  situation: In week 2 the studio asks 'why do players stop at level 8'; the 500 sessions already ingested were only asked
+    tutorial-era questions.
+  consequence: Answering requires re-running extraction over 500 players x about 8 videos = 4000 videos, or raw transcripts
+    (the thing the table was built to avoid); no rule says which.
+  p_typical: 0.3
+  grounded: quote
+  evidence: 'The targets are mostly detecting churn in the tutorial and just after it.'
+  already_specified: false
+  proposed: 'Write the escalation rule: if the question is outside the set, offer a queued backfill with an ETA, and log the
+    question for the next set revision.'
+  shallow: false
+  also_from:
+  - skeptic
+  - exec
+  absorbed:
+  - skeptic-15
+  - exec-30
+- id: percep-15
+  title: Tutorial cue is a 0.5 s animated pulse that the game suppresses under 'reduced motion'; players with the setting
+    on never see it and no option says 'cue not shown'
+  level: L3
+  perspective: percep
+  cell:
+    stage: fixed-question-set
+    question-shape:
+    - negation-player-never-did-x
+    - event-did-not-happen-in-this-video
+    - answer-needs-visuals
+    data-element: tutorial-step
+    correctness-failure:
+    - null-treated-as-no
+    - perceptual-cause-attributed-to-verbal-option
+    answer-afterlife: acted-on-tutorial-changed
+  object: question 'did the player notice the pulse cue'; tutorial-step
+  situation: OS reduced-motion is on (about 10-15% of iOS users); the game drops the animation and shows a static icon that
+    1 in 3 players miss
+  consequence: Answer 'did not notice' is stored for a cue that was never rendered; the designer tunes the animation for players
+    who never had it
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"Transcript loses visual information." - a cue the game did not show leaves no trace and no option covers it'
+  already_specified: false
+  proposed: Per-step option set must include 'cue not presented (setting/build)' and the extraction prompt receives the session's
+    reduced_motion flag as context
+  shallow: false
+  variants_of:
+  - uxr-25
+- id: percep-35
+  title: Question author writes 'tapped the red exit' after watching a normal-vision playthrough; the option text bakes in
+    a perception the cohort does not share
+  level: L3
+  perspective: percep
+  cell:
+    stage: fixed-question-set
+    data-element: option
+    time-and-change: first-game-onboarded
+    question-set-version-state: per-game-fork
+    question-shape:
+    - fits-two-options
+    - event-did-not-happen-in-this-video
+    - answer-needs-visuals
+    correctness-failure: forced-choice-bias
+  object: option text of a step question in the per-game question set (spec item 3, 'written per game target')
+  situation: PM authors 12 questions from one playthrough on a calibrated monitor; 3 options name colours, 2 name 'the flashing
+    icon'
+  consequence: For colour-blind or reduced-motion players the options describe things they never saw; the extractor still
+    forces a choice among them
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"written per game target" - option text is authored by a person with no review of perceptual assumptions'
+  already_specified: false
+  proposed: 'Question-set lint: reject option text containing colour names or motion words unless the step registry marks
+    the cue as having a non-colour, non-motion equivalent'
+  shallow: false
+- id: eval-1
+  title: No labelled gold set exists for any question in the per-game fixed question set, so per-question accuracy is unmeasurable
+  level: L3
+  perspective: eval
+  cell:
+    stage: fixed-question-set
+    data-element: question
+    correctness-failure: hallucinated-answer
+    time-and-change: first-game-onboarded
+    scale: 500-players
+  object: 'Spec step 3: ''a fixed set of questions with options, written per game target'''
+  situation: A studio is onboarded and the question set runs over 500 players; no video has a human-assigned correct option
+    for any question.
+  consequence: Nobody can state whether question Q3 is right 95% or 60% of the time; every chatbot number inherits an unknown
+    error rate.
+  p_typical: 0.35
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." - no labelled correct answers are mentioned for any question'
+  already_specified: false
+  proposed: Before go-live per game, label at least 150 videos x every question by a human watching the video; publish accuracy
+    per question with a 95% interval.
+  shallow: false
+- id: eval-9
+  title: No inter-annotator agreement per question, so a 65% model accuracy cannot be judged against the human ceiling
+  level: L4
+  perspective: eval
+  cell:
+    stage: fixed-question-set
+    question-shape:
+    - two-options-both-partly-true
+    - answer-is-a-why
+    - fits-two-options
+    data-element: question
+    correctness-failure: inconsistent-across-videos
+    scale: 50-players
+    studio-question-type: cohort-why
+  object: A why-question in the fixed set, e.g. churn reason with overlapping options
+  situation: Two humans label the same 100 videos and agree on 'reason for quitting' only 70% of the time.
+  consequence: Model accuracy of 65% looks bad but is near the ceiling; a question with kappa 0.3 is unanswerable by design
+    and nobody rewrites it.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." - no human agreement baseline per question is mentioned'
+  already_specified: false
+  proposed: Double-label 20% of gold; compute Cohen's kappa per question; questions with kappa < 0.4 are rewritten before
+    model accuracy is reported.
+  shallow: false
+  variants_of:
+  - eval-1
+- id: qauthor-1
+  title: First question set for a new game is written with 0 transcripts, so options reflect the PM's guess, not what players
+    say
+  level: L3
+  perspective: qauthor
+  cell:
+    stage: fixed-question-set
+    data-element: question
+    time-and-change: first-game-onboarded
+    scale:
+    - 0-players-new-game
+    - 500-players
+    - 50-players
+    question-shape:
+    - fits-no-option
+    - answer-is-a-why
+    question-set-version-state: single-version
+    correctness-failure:
+    - other-option-overused
+    - forced-choice-bias
+    recovery-action: backfill-after-question-set-change
+  object: 'step 3: ''a fixed set of questions with options, written per game target'''
+  situation: PM writes the churn questions and 4-6 options for a new game before any session has been transcribed; no pilot
+    of even 5 players is defined between authoring and the 500-player run
+  consequence: options miss the real churn reasons, the first 500 players are forced into 'other' or a wrong option, and the
+    whole batch must be re-extracted after the first look at data
+  p_typical: 0.2
+  grounded: inferred
+  evidence: '"written per game target" - nothing says the set is piloted on transcripts before the full run'
+  already_specified: false
+  proposed: add a pilot step - run a draft question set on 5-10 transcripts, read the 'other' share and revise options before
+    the full ingest
+  shallow: false
+  also_from:
+  - skeptic
+  absorbed:
+  - skeptic-32
+- id: qauthor-9
+  title: Question set is forked per game, so 'compare our two games' has no shared columns
+  level: L3
+  perspective: qauthor
+  cell:
+    stage:
+    - fixed-question-set
+    - question-set-registry
+    question-set-version-state: per-game-fork
+    studio-question-type: cross-game-or-cross-studio-benchmark
+    tenancy:
+    - one-studio-many-games
+    - cross-studio-benchmark-request
+    scale: 10-games-at-once
+    chatbot-response-behaviour: refuses-answerable-question
+  object: 'step 3: ''written per game target'''
+  situation: a studio with 2 games asks 'which game loses more players in the first 10 minutes'; game A has Q1-Q8, game B
+    was authored separately with Q1-Q11, with different option sets for 'reason for quitting'
+  consequence: the chatbot can only compare questions with the same id and options; it either refuses or silently maps non-equivalent
+    options and returns a misleading ranking
+  p_typical: 0.08
+  grounded: quote
+  evidence: 'written per game target'
+  already_specified: false
+  proposed: maintain a small core question block (completion, quit moment, quit reason) shared by all games, with per-game
+    blocks on top
+  shallow: false
+  also_from:
+  - onboard
+  absorbed:
+  - onboard-23
+  variants_of:
+  - sec-17
+- id: qauthor-13
+  title: Skip logic between questions is undefined, so a follow-up is answered when its parent was 'No'
+  level: L3
+  perspective: qauthor
+  cell:
+    stage: fixed-question-set
+    data-element: question
+    question-shape:
+    - answer-depends-on-prior-video
+    - event-did-not-happen-in-this-video
+    correctness-failure: hallucinated-answer
+  object: 'step 3: ''a fixed set of questions with options'''
+  situation: Q5 'Did the player see the tutorial popup?' = No on video 2, but Q6 'How did the player react to the popup?'
+    still gets answered
+  consequence: Q6 contains an invented reaction for 100% of players who answered No on Q5; counts of reaction options include
+    people who never saw the popup
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"a fixed set of questions with options" - no ordering or conditional rule between questions is given'
+  already_specified: false
+  proposed: 'add a ''depends_on: Q5=Yes'' field to question definitions; when unmet the answer is ''not applicable'''
+  shallow: false
+  variants_of:
+  - uxr-25
+- id: qauthor-17
+  title: The target of 'any type of question' is stated but no taxonomy of question types the set must cover exists
+  level: L3
+  perspective: qauthor
+  cell:
+    stage: fixed-question-set
+    data-element: question
+    studio-question-type: cohort-why
+    question-shape:
+    - answer-is-a-why
+    - question-not-in-set
+    scale: 500-players
+  object: 'Constraints: ''(b) the framework for generating the questions so that any type of question can be answered'''
+  situation: PM must decide whether the framework covers count, time, why, who, sequence and sentiment questions; spec lists
+    none; current question count and answer types are 'Unspecified'
+  consequence: authors write 8 'why' questions and no 'when' or 'how many' question; first studio asks a time question and
+    the table has no column that answers it
+  p_typical: 0.18
+  grounded: quote
+  evidence: 'so that any type of question can be answered'
+  already_specified: false
+  proposed: write a 6-row taxonomy (count, time, why, who, sequence, sentiment) and require at least one core question per
+    row per game target
+  shallow: false
+- id: qauthor-19
+  title: Question definitions carry no 'unknowable from audio' flag, so thresholds are measured by an LLM with no clock
+  level: L3
+  perspective: qauthor
+  cell:
+    stage: fixed-question-set
+    question-shape: unknowable-from-audio
+    speech-shape: silent-player
+    correctness-failure:
+    - hallucinated-answer
+    - confident-no-evidence
+    data-element: utterance
+  object: 'assumption: ''transcript is speech-to-text of the player''s think-aloud plus any game audio; no on-screen text;
+    no telemetry joined'''
+  situation: option 'Player stuck for more than 2 minutes' for a player who stays silent for 3 minutes; the transcript has
+    no utterances in that span
+  consequence: the LLM can only guess duration from the absence of text, answering 'No' (nothing said) or 'Yes' with no evidence;
+    both are unfalsifiable
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"the transcript alone is not enough; what is on screen is largely lost." - so a silent stretch gives no time or screen signal for a threshold option'
+  already_specified: false
+  proposed: reject options that state durations or counts unless a timestamped field supports them; mark such questions 'needs
+    telemetry'
+  shallow: false
+  variants_of:
+  - percep-22
+- id: qauthor-20
+  title: '''Just after the tutorial'' has no boundary, so questions disagree on which videos are in scope'
+  level: L3
+  perspective: qauthor
+  cell:
+    stage: fixed-question-set
+    data-element: game-target
+    session-shape: 10-plus-hour-session
+    time-and-change: game-target-changes-beyond-tutorial
+    scale: 1-player-10-hour-session
+    question-shape: event-did-not-happen-in-this-video
+  object: 'step 3: ''detecting churn in the tutorial and just after it'''
+  situation: a 10-hour session has 40 videos; the tutorial ends at minute 25 (inside video 2); the question set is run on
+    all 40 videos
+  consequence: 38 videos receive tutorial questions about a tutorial that is over; 'just after' is undefined (5 minutes? the
+    first hour?), so the table cannot be sliced by tutorial vs post-tutorial
+  p_typical: 0.07
+  grounded: quote
+  evidence: 'The targets are mostly detecting churn in the tutorial and just after it.'
+  already_specified: false
+  proposed: define scope per question as a video index range or a 'first N minutes after tutorial end' window and store it
+    in the question definition
+  shallow: false
+- id: qauthor-26
+  title: A game with no tutorial makes the churn question set meaningless and the spec has no rule for it
+  level: L3
+  perspective: qauthor
+  cell:
+    stage: fixed-question-set
+    data-element: game-target
+    time-and-change:
+    - game-target-changes-beyond-tutorial
+    - first-game-onboarded
+    scale: 0-players-new-game
+    question-shape: event-did-not-happen-in-this-video
+  object: 'step 3: ''The targets are mostly detecting churn in the tutorial and just after it.'''
+  situation: a new studio's game has no tutorial; onboarding applies the standard tutorial-churn set; questions like 'Did
+    the player complete the tutorial' have no referent
+  consequence: every row answers 'No' or 'unclear'; first dashboard after ingest is 100% 'did not complete tutorial', and
+    the studio loses trust at the first answer
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." - no rule covers a game without a tutorial'
+  already_specified: false
+  proposed: onboarding checklist step that confirms the game target and drops questions whose object does not exist
+  shallow: false
+- id: qauthor-35
+  title: A question set that targets one churn moment gives no coverage metric for how much of each transcript is captured
+  level: L3
+  perspective: qauthor
+  cell:
+    stage: fixed-question-set
+    data-element: transcript
+    scale: 500-players
+    studio-question-type: what-can-you-answer
+    question-shape: question-not-in-set
+  object: 'Known problems: ''most of what is in the video and transcript is never captured'''
+  situation: 8 questions are run on 500 transcripts of about 4000 words each; no measure says which share of transcript content
+    (topics, utterances) maps to any question
+  consequence: the PM cannot say whether adding 5 questions captures 10% or 40% more; no stopping rule exists for extending
+    the set
+  p_typical: 0.12
+  grounded: quote
+  evidence: 'The question set is small, so most of what is in the video and transcript is never captured.'
+  already_specified: false
+  proposed: sample 20 transcripts, tag every topic mentioned, and report the share of topics covered by at least one question
+  shallow: false
+  variants_of:
+  - eval-33
+- id: moderator-15
+  title: Moderator wrongly sets the game target to 'mid-game' for a tutorial-focused study, so the wrong question set is run
+    on 40 sessions
+  level: L3
+  perspective: moderator
+  cell:
+    stage: fixed-question-set
+    data-element: game-target
+    question-set-version-state: per-game-fork
+    correctness-failure: stale-after-prompt-change
+    recovery-action: backfill-after-question-set-change
+    time-and-change: game-target-changes-beyond-tutorial
+  object: step 3 'written per game target. The targets are mostly detecting churn in the tutorial'
+  situation: Upload form dropdown has Tutorial and Mid-game adjacent; 40 sessions tagged Mid-game get questions about progression,
+    not the tutorial
+  consequence: All 40 tutorial-churn answers are absent and the chatbot says 'no data' for the cohort; ingestion is cheap
+    so a re-run is feasible but nothing detects that the target was wrong
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"written per game target" - the target selects the set, with no check that the right target was chosen'
+  already_specified: false
+  proposed: Validate declared game-target against the recording's first 2 minutes of transcript or a build config, and surface
+    mismatches before extraction
+  shallow: false
+- id: uxr-14
+  title: Moderated playtesters rarely quit; 'would have churned' is a counterfactual the fixed questions answer as if observed
+  level: L3
+  perspective: uxr
+  cell:
+    stage: fixed-question-set
+    question-shape: unknowable-from-audio
+    data-element: game-target
+    studio-question-type: recommendation-what-should-we-change
+    correctness-failure: confident-no-evidence
+  object: fixed question set 'written per game target' for tutorial churn
+  situation: Paid participants in a moderated session continue through a frustrating tutorial they would abandon at home
+  consequence: Observed quit rate near 0%; extractor answers 'churn risk' from frustration words; the chatbot presents a predicted
+    churn number to the studio as a measured one
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." - churn observed in a captured test session may not match churn at home'
+  already_specified: false
+  proposed: Name the column 'expressed frustration' or 'quit-intent stated', not 'churned'; chatbot answer template states
+    'stated, not observed'
+  shallow: false
+  variants_of:
+  - ds-13
+- id: uxr-25
+  title: Player presses 'Skip tutorial' silently; every tutorial-step question is still answered as if the tutorial was played
+  level: L3
+  perspective: uxr
+  cell:
+    question-shape: event-did-not-happen-in-this-video
+    data-element: null-vs-no
+    stage: fixed-question-set
+    correctness-failure: forced-choice-bias
+    studio-question-type: cohort-count
+  object: tutorial-step questions with 3-6 options and no 'did not happen' option
+  situation: Player skips the tutorial at second 20 with no comment
+  consequence: Step questions get forced answers; 'how many players struggled at step 2' includes skippers; the skip itself,
+    a strong churn signal, is never recorded
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." - no ''did not happen'' option is described for a skipped step'
+  already_specified: false
+  proposed: Every step question gets option 'step not reached/skipped'; skip is a session-level event field
+  shallow: false
+- id: uxr-28
+  title: Unexpected issues outside the question set (e.g. a soft-lock seen by 40 of 500 players) are never captured; no free-text
+    'surprising observations' column
+  level: L3
+  perspective: uxr
+  cell:
+    stage: fixed-question-set
+    question-shape: question-not-in-set
+    studio-question-type: question-about-a-step-the-set-never-asked
+    scale: 500-players
+    chatbot-response-behaviour: substitutes-nearest-fixed-question
+  object: '''fixed set of questions''; owner''s named problem ''most of what is in the video and transcript is never captured'''
+  situation: Researchers found most top issues by watching for what they did not plan to look for
+  consequence: Emergent issues never reach the table; the chatbot answers the nearest fixed question instead and the studio
+    never learns the soft-lock exists
+  p_typical: 0.3
+  grounded: quote
+  evidence: 'The question set is small, so most of what is in the video and transcript is never captured.'
+  already_specified: false
+  proposed: One open-ended per-video extraction 'notable problems not covered by the set' stored as text plus embeddings;
+    weekly clustering report
+  shallow: false
+  variants_of:
+  - onboard-4
+- id: uxr-29
+  title: Expectation statements ('I thought this would work like Clash Royale') have no question, so mental-model mismatch
+    is lost
+  level: L3
+  perspective: uxr
+  cell:
+    question-shape:
+    - question-not-in-set
+    - answer-is-a-why
+    stage: fixed-question-set
+    data-element: utterance
+    studio-question-type: cohort-why
+    speech-shape: continuous-think-aloud
+  object: fixed question set per game target
+  situation: 12% of players compare the controls to a competitor game before failing a step
+  consequence: The 'why' behind tutorial failures (wrong prior mental model) is in the transcript but never extracted; cohort-why
+    answers default to 'instructions unclear'
+  p_typical: 0.04
+  grounded: quote
+  evidence: 'The question set is small, so most of what is in the video and transcript is never captured.'
+  already_specified: false
+  proposed: Add question 'Did the player state an expectation from another game? (yes + which / no)'
+  shallow: false
+- id: uxr-34
+  title: Delight moments ('oh that's so cool') have no question because the set targets churn, so 'what did players like'
+    gets nothing
+  level: L3
+  perspective: uxr
+  cell:
+    studio-question-type:
+    - question-outside-game-target
+    - cohort-why
+    stage: fixed-question-set
+    chatbot-response-behaviour:
+    - refuses-answerable-question
+    - substitutes-nearest-fixed-question
+    - answers-from-general-game-knowledge
+    data-element: game-target
+    latency: under-2s
+    question-shape: question-not-in-set
+    answer-afterlife: acted-on-tutorial-changed
+  object: fixed question set 'written per game target' (mostly tutorial churn)
+  situation: Studio asks which tutorial moment players enjoyed most, to keep it when redesigning
+  consequence: The answer is in the transcripts but not the table; the chatbot either says no data or answers from general
+    knowledge; a redesign removes the moment players liked
+  p_typical: 0.13
+  grounded: quote
+  evidence: 'The targets are mostly detecting churn in the tutorial and just after it.'
+  already_specified: false
+  proposed: Add one 'positive reaction + what' question to every game target
+  shallow: false
+  also_from:
+  - qauthor
+  absorbed:
+  - qauthor-27
+- id: chat-12
+  title: Segment-by-device question answered from transcript mentions ('on my phone') because no device-platform column exists,
+    counting only players who said their device aloud
+  level: L4
+  perspective: chat
+  cell:
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: device-platform
+    stage: build-and-metadata-tagging
+    chatbot-response-behaviour:
+    - invents-number
+    - answers-from-general-game-knowledge
+    scale: 500-players
+    answer-afterlife:
+    - copied-into-deck
+    - acted-on-tutorial-changed
+    correctness-failure: confident-no-evidence
+  object: session metadata (not listed in spec); answers table
+  situation: Analyst asks 'tutorial churn on iOS vs Android?'; bot finds device in 41 of 500 sessions via a free-text field
+    or infers it.
+  consequence: Reply gives two percentages over 41 players presented as platform split of 500.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"whether game telemetry is joined" - is unspecified, so no device or platform field exists'
+  already_specified: false
+  proposed: Metadata columns (device, OS, country, build) are first-class and enumerated in the planner's schema; when a segment
+    column is absent, reply 'not recorded' with no inference.
+  shallow: false
+  also_from:
+  - auditor
+  absorbed:
+  - auditor-27
+- id: ds-26
+  title: Moderator prompts are credited to the player, inflating 'needed a hint' in sessions where the moderator talks more
+  level: L4
+  perspective: ds
+  cell:
+    stage:
+    - build-and-metadata-tagging
+    - fixed-question-set
+    speech-shape:
+    - moderator-speaking-or-leading
+    - two-speakers
+    data-element: moderator
+    correctness-failure: moderator-words-attributed-to-player
+    studio-question-type: compare-two-versions
+    session-shape: one-video
+    question-shape: negation-player-never-did-x
+  object: 'Assumption: "transcript is speech-to-text of the player''s think-aloud"; no speaker labels are mentioned'
+  situation: Moderator A leads (says 'try the left button') in 20% of videos; moderator B in 3%; moderator A ran most of the
+    1.5-build sessions
+  consequence: Answer 'player knew what to do' is true because the moderator said it; moderator identity confounds build comparison,
+    and the table has no moderator column to adjust for
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)" - is unspecified, so speaker labels are not defined'
+  already_specified: false
+  proposed: Record moderator_id per session, diarise speakers, and let extraction answer from player utterances only; show
+    moderator-level rates as a check
+  shallow: false
+  also_from:
+  - qauthor
+  absorbed:
+  - qauthor-23
+- id: auditor-4
+  title: Tutorial change ships and no one re-asks the same question against the new build because game-version is not a filter
+    the chatbot exposes
+  level: L3
+  perspective: auditor
+  cell:
+    stage:
+    - build-and-metadata-tagging
+    - answers-table
+    time-and-change: game-update-changes-tutorial
+    studio-question-type: compare-two-versions
+    data-element: game-version
+    answer-afterlife: acted-on-tutorial-changed
+    correctness-failure: mixed-version-aggregation
+    scale: 500-players
+    chatbot-response-behaviour: refuses-answerable-question
+  object: spec sentence 'The targets are mostly detecting churn in the tutorial and just after it'; the answers table per
+    video
+  situation: PM shipped a shorter crafting tutorial in build 1.4 based on the bot's answer on build 1.3 data; 120 new sessions
+    on 1.4 arrive over 3 weeks; PM asks 'did it help' and the bot pools 1.3 and 1.4 rows into one percentage
+  consequence: The before/after comparison that justified the change can never be made; the PM reports 'churn moved from 38%
+    to 35%' from a pooled number that still contains 380 pre-change players
+  p_typical: 0.18
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no build or game-version column is listed'
+  already_specified: false
+  proposed: Require build_id on every session at ingest; the chatbot's compare-two-versions path returns two rows (build,
+    n, k, share) and refuses to pool builds unless asked
+  shallow: false
+  also_from:
+  - design
+  - analyst
+  absorbed:
+  - design-9
+  - analyst-9
+- id: l10n-16
+  title: The game's localised item and step names differ from the English names used in the question text, so a player on
+    the Japanese build never 'mentions' the step
+  level: L4
+  perspective: l10n
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: tutorial-step
+    speech-shape: non-english
+    question-shape: negation-player-never-did-x
+    correctness-failure: confident-no-evidence
+    answer-afterlife: acted-on-tutorial-changed
+  object: Step 3 question written per game target, e.g. 'Did the player find the Elixir in the Forge tutorial step?'
+  situation: The Japanese build names the item 回復薬 and the step 鍛冶場; the session has no game-locale tag, and the transcript
+    says 'あ、回復薬あった' at 04:50
+  consequence: The extractor, matching on 'Elixir', answers 'player never found the Elixir'; a 'players who never found X'
+    list for the Japanese cohort is 100% and the studio ships a hint nobody needed
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"written per game target" - question text uses one language''s names, and languages are listed as unspecified'
+  already_specified: false
+  proposed: Tag each session with game_locale from the build; attach the game's string table (string id, English, localised)
+    to the extraction prompt so question text references string ids, not English names
+  shallow: false
+- id: onboard-12
+  title: 'Mobile game recorded via emulator or screen-cast: device-platform tag says PC'
+  level: L3
+  perspective: onboard
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: device-platform
+    capture-integrity: wrong-window-captured
+    studio-question-type:
+    - compare-two-versions
+    - segment-by-metadata (device, country, build)
+    correctness-failure: right-answer-wrong-player
+  object: 'Step 1: ''a player''s gameplay session is captured as video'''
+  situation: A mobile studio tests on a desktop emulator for convenience, and the upload form default device is 'PC'; 30 of
+    100 sessions carry the wrong tag.
+  consequence: '''Compare iOS and Android drop-off'' includes touch-vs-mouse differences, and tap errors that exist only on
+    real phones are missed.'
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Make device, build and game_version required fields with no default, with a validation list per studio set at
+    onboarding.
+  shallow: false
+  variants_of:
+  - moderator-1
+- id: onboard-22
+  title: Studio's own player IDs collide with another studio's IDs or are reused between sessions
+  level: L3
+  perspective: onboard
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: player
+    session-shape: same-player-multiple-sessions
+    tenancy: many-studios-shared-infra
+    correctness-failure: right-answer-wrong-player
+    scale: 50-players
+    studio-question-type: find-players-who
+  object: 'Unspecified: ''how videos of one session are linked'''
+  situation: Studio uploads with its own player ids 1-500; studio X also used 1-500; one studio recycles id 17 for a second
+    tester after the first dropped out.
+  consequence: Player 17 appears with two different people's sessions in one cohort, so 'find players who' and per-player
+    timelines mix two humans; cross-tenant IDs may share a key.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, so the player and session id source and namespace are undefined'
+  already_specified: false
+  proposed: Generate internal player_id as (tenant, game, external_id, recruitment_batch) and reject duplicate external ids
+    within a batch.
+  shallow: false
+  also_from:
+  - stitch
+  absorbed:
+  - stitch-29
+  variants_of:
+  - privacy-22
+- id: percep-3
+  title: No metadata column for the player's accessibility settings (colour-blind mode, font scale, reduced motion, subtitles)
+    so 'stuck at colour gate' cannot be segmented by who could see it
+  level: L3
+  perspective: percep
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: device-platform
+    studio-question-type:
+    - segment-by-metadata (device, country, build)
+    - cohort-count
+    scale: 500-players
+    correctness-failure: wrong-denominator
+    chatbot-response-behaviour: refuses-answerable-question
+  object: 'session metadata (spec ''Unspecified'': ''how videos of one session are linked''; no settings listed anywhere)'
+  situation: Studio asks 'how many players with colour-blind mode on got stuck at the gate vs off'
+  consequence: Chatbot either refuses or answers over all 500 with the wrong denominator; a 3x difference between the two
+    groups (the fix signal) is invisible
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"whether game telemetry is joined" - is unspecified, so player settings do not reach the table'
+  already_specified: false
+  proposed: 'Capture at session start: colourblind_mode (none/protan/deutan/tritan), ui_font_scale (1.0-2.0), reduced_motion
+    (bool), subtitles (bool), game_audio_muted (bool); expose as filterable columns'
+  shallow: false
+  variants_of:
+  - chat-12
+- id: percep-21
+  title: System font scale at 150-200% reflows the tutorial UI and truncates hint text with an ellipsis; 'instructions unclear'
+    rate differs by font scale and no column records it
+  level: L4
+  perspective: percep
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: device-platform
+    studio-question-type: segment-by-metadata (device, country, build)
+    correctness-failure: wrong-denominator
+    scale: 500-players
+    question-shape: answer-needs-visuals
+  object: session metadata; 'instructions unclear' option
+  situation: On Android with font scale 1.7, the hint 'Drag the crystal to the altar' renders as 'Drag the crys...'; players
+    say 'drag it where?'
+  consequence: 'Chatbot reports ''instructions unclear: 18%'' with no split; the real figure is 4% at scale 1.0 and 61% at
+    scale 1.5+, which the designer cannot see'
+  p_typical: 0.02
+  grounded: inferred
+  evidence: '"Transcript loses visual information." - truncated on-screen hint text and font scale are not recorded'
+  already_specified: false
+  proposed: Capture ui_font_scale per session; assert the chatbot can group any option count by it; capture one screenshot
+    of the first hint per session for a truncation check
+  shallow: false
+  variants_of:
+  - percep-3
+- id: pipe-13
+  title: 'Recording that started after the tutorial began: first video opens mid-flow, and ''first step'' questions are answered
+    from the wrong step'
+  level: L3
+  perspective: pipe
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: tutorial-started-before-recording
+    data-element: tutorial-step
+    question-shape: negation-player-never-did-x
+    correctness-failure: right-answer-wrong-player
+  object: game target 'detecting churn in the tutorial and just after it' (spec.md step 3)
+  situation: Moderator hits record 3 minutes into a 10-minute tutorial; video 1 starts at step 4
+  consequence: Question 'did the player complete step 1' answers No (not in transcript) rather than unknown; step-1 completion
+    rate for the cohort falls by the share of late-start sessions.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." - nothing says where in the tutorial recording starts'
+  already_specified: false
+  proposed: Capture recording_started_at relative to game launch and mark early-step questions not_applicable when the offset
+    is above 0.
+  shallow: false
+  variants_of:
+  - uxr-25
+- id: privacy-22
+  title: Player id is reused or swapped between two players, so a deletion request removes the wrong person's data or misses
+    the right one
+  level: L3
+  perspective: privacy
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: player
+    session-shape: same-player-multiple-sessions
+    correctness-failure: right-answer-wrong-player
+    time-and-change: player-deletion-request
+    processing-status: deleted-by-request
+    recovery-action: delete-and-propagate
+  object: 'Player and session tagging done by playtest ops (spec: ''how videos of one session are linked'' is unspecified)'
+  situation: Moderator types id P-0412 for two different testers on Monday and Tuesday; on Wednesday P-0412 asks to be deleted.
+  consequence: Both testers' data is deleted, or the wrong person's is, and the requester cannot be matched to their own recordings.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Issue player ids from a registry with a consent record, reject duplicate active ids, and store the consent id
+    on every video.
+  shallow: false
+  also_from:
+  - player
+  absorbed:
+  - player-24
+- id: privacy-23
+  title: Same pseudonymous player id used across games and studios builds a cross-title profile
+  level: L3
+  perspective: privacy
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: player
+    session-shape: same-player-multiple-sessions
+    tenancy: many-studios-shared-infra
+    scale: 10-games-at-once
+    time-and-change: a-year-of-data
+  object: Spec step 3 per-game question sets with a shared answers table
+  situation: The same recruited tester plays 4 sessions in 3 different studios' games over 6 months; one global player id
+    links them.
+  consequence: The vendor holds a profile (preferences, frustration points, speech) spanning studios that the player was never
+    told about, and a deletion must run across 3 tenants.
+  p_typical: 0.07
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Issue a separate id per studio and keep the mapping in a restricted table with its own deletion path.
+  shallow: false
+  variants_of:
+  - onboard-22
+- id: eval-37
+  title: Game telemetry quit events are an available ground truth for churn questions and are not used
+  level: L3
+  perspective: eval
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: tutorial-step
+    question-shape: fits-an-option
+    correctness-failure: hallucinated-answer
+    scale: 5000-players
+  object: 'Spec ''Unspecified: whether game telemetry is joined'''
+  situation: Studio servers log tutorial step reached and session-end time; question 'Did the player quit during the tutorial?'
+    could be checked against them.
+  consequence: Free, large-scale labels for the core churn question go unused; accuracy stays measured on a few hundred hand
+    labels.
+  p_typical: 0.04
+  grounded: quote
+  evidence: 'whether game telemetry is joined'
+  already_specified: false
+  proposed: Ask each studio for step-reached events; compute agreement between telemetry and extracted churn answers on all
+    players nightly.
+  shallow: false
+  variants_of:
+  - ds-13
+- id: moderator-1
+  title: Moderator tags build 1.4.2 on a session actually played on 1.4.3, so a compare-two-versions answer is built on a
+    mislabelled cohort
+  level: L4
+  perspective: moderator
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: build-id
+    studio-question-type: compare-two-versions
+    correctness-failure: right-answer-wrong-player
+    time-and-change: game-update-changes-tutorial
+    scale: 500-players
+    answer-afterlife: acted-on-tutorial-changed
+  object: step 3 'fixed set of questions ... written per game target' plus the Unspecified list, which never says where build
+    or game-version comes from
+  situation: A moderator types the build by hand at session start; 6 of 40 sessions in the 1.4.3 cohort are tagged 1.4.2 after
+    a mid-day build swap, and nothing in the video or transcript carries the build
+  consequence: The studio asks 'did tutorial churn drop after 1.4.3?' and the chatbot reports a drop that is partly 1.4.2
+    players; the studio ships or reverts a tutorial change on a contaminated 15% of the cohort
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"written per game target" - no source for the build or game-version tag is described'
+  already_specified: false
+  proposed: Read build-id from the capture client at record start and store the moderator-typed value as a separate field;
+    flag sessions where the two disagree
+  shallow: false
+  also_from:
+  - ds
+  absorbed:
+  - ds-27
+- id: moderator-3
+  title: Internal QA or moderator dry-run sessions are uploaded with the same pipeline and counted in the 500-player cohort
+  level: L3
+  perspective: moderator
+  cell:
+    stage: build-and-metadata-tagging
+    data-element:
+    - cohort
+    - game-version
+    scale:
+    - 500-players
+    - 50-players
+    correctness-failure: wrong-denominator
+    studio-question-type: cohort-count
+    answer-afterlife: copied-into-deck
+    speech-shape: silent-player
+  object: step 4 'a question over, say, 500 players'
+  situation: A moderator runs a 12-minute dry run before the first player and an internal QA engineer plays the tutorial with
+    a test account; 14 such sessions reach the table with no test flag
+  consequence: Tutorial completion looks higher by roughly 14 sessions that skip nothing and never churn; the cohort-count
+    denominator is 514, not 500, and no query can exclude them
+  p_typical: 0.09
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Add a session-kind field (player, dry-run, internal-qa) set at upload and make the answers table default-filter
+    to player
+  shallow: false
+  also_from:
+  - onboard
+  - exec
+  absorbed:
+  - onboard-34
+  - exec-32
+- id: moderator-17
+  title: Moderator records a free-text device like 'iphone13 pro' and 'iOS 17 / 13pro', so segment-by-device splits one device
+    into 2 buckets
+  level: L3
+  perspective: moderator
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: device-platform
+    studio-question-type: segment-by-metadata (device, country, build)
+    correctness-failure: wrong-denominator
+    fast-path-dependency: index-on-game-target-and-version
+    scale: 500-players
+  object: step 4 'chatbot ... answers the studio's questions from that table'
+  situation: 5 moderators type device strings freely; 34 variants appear for 6 real device models in a 500-player cohort
+  consequence: '''Compare churn on iPhone vs Android'' returns an iPhone count that misses the sessions tagged ''ios'' or
+    ''IPHONE 13'', and per-bucket n is wrong'
+  p_typical: 0.07
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Replace free text with a controlled device list and store the OS version separately
+  shallow: false
+  variants_of:
+  - chat-12
+- id: moderator-18
+  title: Moderator identity is not stored, so a moderator effect (one moderator's sessions all have shorter tutorials) cannot
+    be found or excluded
+  level: L3
+  perspective: moderator
+  cell:
+    data-element: moderator
+    studio-question-type:
+    - cohort-why
+    - segment-by-metadata (device, country, build)
+    correctness-failure:
+    - forced-choice-bias
+    - moderator-words-attributed-to-player
+    stage: build-and-metadata-tagging
+    scale: 500-players
+    speech-shape: moderator-speaking-or-leading
+  object: 'Unspecified: ''who at the studio asks and what they ask'' (and who ran the session is absent from the spec)'
+  situation: 3 of 8 moderators coach players on the first 2 steps; their 140 sessions all show high tutorial success
+  consequence: The chatbot reports 'tutorial success is 78%' without any ability to split by moderator; a data scientist cannot
+    control for the coaching
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store moderator ID on each session as a column and make it available to segment-by-metadata queries
+  shallow: false
+  variants_of:
+  - ds-26
+- id: moderator-28
+  title: Moderator notes ('player was ill', 'tutorial lagged 20 seconds at step 4') have no field, so context that explains
+    a churn event never reaches the table
+  level: L4
+  perspective: moderator
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: session
+    studio-question-type: cohort-why
+    question-shape:
+    - unknowable-from-audio
+    - answer-is-a-why
+    - answer-needs-visuals
+    correctness-failure: perceptual-cause-attributed-to-verbal-option
+    speech-shape: silent-player
+  object: 'Known problems: ''Transcript loses visual information.'''
+  situation: Moderator writes 'tutorial video froze 20s at step 4' in a paper log; the player says nothing and then quits
+  consequence: Extraction chooses 'lost interest' for the quit and the chatbot reports disinterest as the churn cause at step
+    4 instead of a performance fault
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"Transcript loses visual information." - context outside the speech, such as a frozen screen, has no field'
+  already_specified: false
+  proposed: Add a structured moderator incident list (type, timestamp, step) per session and pass it to extraction as context
+  shallow: false
+- id: exec-15
+  title: Before/after comparison of a tutorial change is presented as causal when build tagging and cohort differ
+  level: L3
+  perspective: exec
+  cell:
+    studio-question-type: compare-two-versions
+    time-and-change: game-update-changes-tutorial
+    data-element: build-id
+    answer-afterlife: acted-on-tutorial-changed
+    stage: build-and-metadata-tagging
+    correctness-failure: confident-no-evidence
+  object: cohort split by game-version in the chatbot answer
+  situation: Build 1.4 has 60 players recruited from a forum, build 1.5 has 55 recruited via ads; bot reports 'confusion fell
+    22%' with no sample or recruitment note; studio ships on that and does not re-ask
+  consequence: Tutorial redesign justified by two non-comparable cohorts; nobody re-checks on the shipped build
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"a question over, say, 500 players is fast" - the answer carries no sample size or cohort description'
+  already_specified: false
+  proposed: Comparisons print n per arm and recruitment source and warn when arms differ in source
+  shallow: false
+  variants_of:
+  - auditor-4
+- id: uxr-13
+  title: No session-end reason (player quit / moderator stopped / time cap / crash), so 'churned in tutorial' is inferred
+    from transcripts that end the same way in all four cases
+  level: L3
+  perspective: uxr
+  cell:
+    data-element: session
+    session-shape: session-ends-mid-sentence
+    stage: build-and-metadata-tagging
+    studio-question-type: cohort-count
+    correctness-failure: hallucinated-answer
+    scale: 500-players
+  object: session record; churn target ('detecting churn in the tutorial')
+  situation: Of 500 sessions, some end because the 60-minute slot ran out mid-tutorial, some because of a crash, some because
+    the player chose to stop
+  consequence: cohort-count 'how many players quit in the tutorial' counts time-cap and crash endings as churn; the most important
+    label in a churn study is never captured at source
+  p_typical: 0.14
+  grounded: inferred
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." - nothing records why a session ended'
+  already_specified: false
+  proposed: Required session field end_reason with 4 values set by the moderator tool; extractor never infers it
+  shallow: false
+  variants_of:
+  - ds-13
+- id: auditor-11
+  title: A deck number cited before a player deletion cannot be reconciled with the re-asked number after it because no deletion
+    log explains the decrement
+  level: L4
+  perspective: auditor
+  cell:
+    stage: retention-and-deletion
+    answer-afterlife:
+    - cited-after-player-deletion
+    - copied-into-deck
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+    data-element:
+    - cohort
+    - cached-aggregate
+    scale: 500-players
+    studio-question-type: cohort-count
+    correctness-failure: wrong-denominator
+    processing-status: deleted-by-request
+    chatbot-response-behaviour: differs-on-re-ask
+  object: cohort count in a deck versus the answers table after rows for 3 players were removed
+  situation: Deck says 41 of 500 quit; 3 of those 41 players request deletion; the re-ask gives 38 of 497; the auditor sees
+    41 -> 38 and 500 -> 497 with no record of why
+  consequence: The PM cannot distinguish deletions from re-extraction changes and the numbers are treated as unstable
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Keep a deletion ledger (date, count of players removed, which cohorts affected) readable by the chatbot so a
+    re-ask can state ''n changed from 500 to 497: 3 deletions on <date>'''
+  shallow: false
+  also_from:
+  - ds
+  absorbed:
+  - ds-32
+- id: auditor-12
+  title: A player quote pasted by the chatbot into a deck survives the player's deletion request with no way to find or retract
+    it
+  level: L3
+  perspective: auditor
+  cell:
+    stage: retention-and-deletion
+    studio-question-type: quote-me-evidence
+    answer-afterlife:
+    - cited-after-player-deletion
+    - copied-into-deck
+    data-element: evidence-span
+    time-and-change: player-deletion-request
+    processing-status: deleted-by-request
+    recovery-action: delete-and-propagate
+  object: transcript quote returned by the chatbot for a quote-me-evidence question
+  situation: 'Bot returns ''player 212 said: this inventory thing makes no sense, I''m done'' and the PM pastes it into a
+    deck circulated to 40 people; player 212 is deleted 6 weeks later'
+  consequence: The deck is an uncontrolled copy of deleted speech; deletion is complete in the pipeline and incomplete in
+    the studio
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Quotes carry a quote id and the conversation log records which quotes were served to which studio user; a deletion
+    emits a notice to those users listing quote ids to remove
+  shallow: false
+  variants_of:
+  - privacy-2
+- id: auditor-23
+  title: Studio offboarded and later re-onboarded cannot reproduce any number its decks cite because the answers table was
+    deleted with the tenant
+  level: L3
+  perspective: auditor
+  cell:
+    stage: retention-and-deletion
+    tenancy: studio-offboarded
+    time-and-change:
+    - studio-offboarded
+    - a-year-of-data
+    answer-afterlife:
+    - copied-into-deck
+    - exported-csv
+    data-element: studio-tenant
+    scale: 500-players
+  object: studio tenant's answers table and conversation logs at offboarding
+  situation: Studio churns in month 9, returns in month 14 with a deck of 11 numbers from the bot; the table, snapshots and
+    logs were deleted at offboarding with no export handed over
+  consequence: Every cited number is unverifiable; the studio asks for a free re-extraction of 500 sessions it no longer has
+    videos for
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: At offboarding, hand the studio a signed export (answers table with all version columns, conversation log, snapshot
+    ids) before deletion; keep a hash of each snapshot for 2 years to verify later claims
+  shallow: false
+  variants_of:
+  - privacy-8
+- id: auditor-24
+  title: A disputed answer cannot be settled because the video and transcript expired at 90 days while the answer row did
+    not
+  level: L4
+  perspective: auditor
+  cell:
+    stage: retention-and-deletion
+    time-and-change: retention-expiry
+    answer-afterlife:
+    - disputed-by-studio
+    - copied-into-deck
+    data-element: evidence-span
+    studio-question-type: show-me-raw-transcript-or-clip
+  object: answer row for player 88 video 4 and its source video and transcript
+  situation: PM disputes the row on day 120; retention for video and transcript is 90 days; the row survives indefinitely;
+    the bot can neither show the clip nor re-extract
+  consequence: The row stays, the dispute stays open, and the PM removes the whole question from the deck rather than defend
+    it
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Rows whose source media has expired carry status 'unverifiable' and are excluded from counts by default or shown
+    as a separate bucket; retention for the evidence span (a 30-second clip plus 200 characters of transcript) matches the
+    row's retention
+  shallow: false
+  variants_of:
+  - ops-34
+- id: l10n-24
+  title: PII detection for spoken names and addresses runs on English patterns only, so a Japanese player's name or school
+    said aloud survives deletion and redaction
+  level: L4
+  perspective: l10n
+  cell:
+    stage: retention-and-deletion
+    time-and-change: player-deletion-request
+    speech-shape: non-english
+    data-element: transcript
+    recovery-action: delete-and-propagate
+    processing-status: deleted-by-request
+    answer-afterlife: cited-after-player-deletion
+  object: Step 2 transcript store and any redaction applied before the table or chatbot sees it
+  situation: The player says '僕、田中です、○○中学の' at 00:20; the redactor is configured for English name and address entities and
+    matches nothing
+  consequence: The name and school reach the extraction prompt, the evidence spans and the chatbot conversation log; a later
+    deletion request removes rows by player id but the chatbot log still holds the quoted name
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Run entity redaction with the model for the video's transcript_language; fail ingest when no redactor exists for
+    that language rather than passing text through
+  shallow: false
+  variants_of:
+  - privacy-2
+- id: ops-16
+  title: Deletion request completes while an extraction job for the same video is in flight; the job then writes 8 answer
+    rows for a deleted player
+  level: L3
+  perspective: ops
+  cell:
+    stage: retention-and-deletion
+    recovery-action: delete-and-propagate
+    processing-status:
+    - extracting
+    - deleted-by-request
+    time-and-change: player-deletion-request
+    data-element: answer
+    studio-question-type: cohort-count
+  object: player -> video -> transcript -> answers chain (spec items 1-3)
+  situation: Delete job removes video, transcript and existing answer rows at 10:00:00; an extraction worker that loaded the
+    transcript at 09:59:50 writes its results at 10:00:20
+  consequence: Orphan answer rows reference a deleted video_id; the player keeps appearing in cohort counts; a deletion audit
+    would show the player 'deleted' while their data is still queryable
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Deletion writes a tombstone (player_id, deleted_at) first; every writer checks the tombstone in the same transaction
+    as the insert; post-delete sweep at +1h re-deletes stragglers
+  shallow: false
+  variants_of:
+  - privacy-1
+- id: ops-34
+  title: Videos and transcripts expire at retention before a question-set change; backfill cannot run for older sessions,
+    leaving the table permanently mixed-version
+  level: L3
+  perspective: ops
+  cell:
+    stage: retention-and-deletion
+    time-and-change:
+    - retention-expiry
+    - question-set-revised
+    - a-year-of-data
+    recovery-action: backfill-after-question-set-change
+    question-set-version-state: mixed-versions-in-table
+    studio-question-type: trend-over-time
+    data-element: transcript
+    scale: 500-players
+    correctness-failure: mixed-version-aggregation
+  object: transcript (spec item 2) as the only re-extraction input
+  situation: Transcripts kept 90 days; question set v4 ships in month 7; sessions from months 1-4 have only v3 answers and
+    no transcript
+  consequence: Trend over 7 months compares v3 answers (months 1-4) to v4 (5-7); the trend break is an artefact of the version
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Retention for transcripts set >= the period over which trends are reported, or trend answers restricted to rows
+    on one version with the covered months stated
+  shallow: false
+  also_from:
+  - skeptic
+  absorbed:
+  - skeptic-14
+- id: privacy-1
+  title: Deletion request removes video and transcript but nothing defines removal of the per-video answer rows and the cached
+    aggregate
+  level: L3
+  perspective: privacy
+  cell:
+    stage: retention-and-deletion
+    data-element:
+    - cached-aggregate
+    - chatbot-conversation-log
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+    scale: 500-players
+    processing-status: deleted-by-request
+    studio-question-type: cohort-count
+    session-shape: 5-20-videos
+    fast-path-dependency: precomputed-aggregate-exists
+  object: Spec step 3 'The answers form a structured table per video' and step 4 (table feeds the chatbot)
+  situation: Player 212 of 500 withdraws consent; engineers delete the video file and transcript. The answer rows for that
+    player's 6 videos and any precomputed cohort count that included them are not keyed to a deletion job.
+  consequence: Derived data about the player (for example 'quit at tutorial step 3, frustrated') stays queryable by the studio
+    chatbot; the deletion is incomplete and the cohort count still includes the player.
+  p_typical: 0.25
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no deletion path for answer rows is defined'
+  already_specified: false
+  proposed: 'Define a deletion manifest per player: video, transcript, every answer row across all extraction-run-ids, cached
+    aggregates (recomputed within a stated number of hours), and a completion receipt.'
+  shallow: false
+  also_from:
+  - pipe
+  absorbed:
+  - pipe-40
+- id: privacy-2
+  title: Chatbot conversation log keeps verbatim quotes from a player after that player was deleted
+  level: L3
+  perspective: privacy
+  cell:
+    stage: retention-and-deletion
+    data-element: chatbot-conversation-log
+    answer-afterlife: cited-after-player-deletion
+    time-and-change: player-deletion-request
+    studio-question-type:
+    - quote-me-evidence
+    - show-me-raw-transcript-or-clip
+    processing-status: deleted-by-request
+    recovery-action: delete-and-propagate
+  object: Studio chatbot (spec step 4) and its conversation log, which the spec does not mention
+  situation: An analyst asked 'quote me players who said the tutorial was confusing' two weeks ago; the reply quoted 4 players.
+    One of them is now deleted.
+  consequence: The quote persists in the conversation log and in any history the analyst can reopen, so deletion of the source
+    rows does not remove the personal data.
+  p_typical: 0.08
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store conversation logs with the player ids they cite so a deletion job can redact those turns; set a log retention
+    number of days.
+  shallow: false
+  also_from:
+  - chat
+  - player
+  absorbed:
+  - chat-34
+  - player-2
+  variants_of:
+  - privacy-1
+- id: privacy-7
+  title: Spec says ingestion cost is no concern, which in practice means raw video, transcripts and answer rows are kept with
+    no retention period
+  level: L3
+  perspective: privacy
+  cell:
+    stage: retention-and-deletion
+    data-element:
+    - video
+    - transcript
+    time-and-change:
+    - retention-expiry
+    - a-year-of-data
+    scale:
+    - 50000-videos
+    - 500-players
+    processing-status: complete
+  object: Constraint 'Ingestion time and cost are not a concern'
+  situation: Month 13, 50000 videos of 500 players are still stored; no expiry date exists on video, transcript or answers.
+  consequence: Data is held longer than the purpose needs, so one breach or one data-subject request covers every session
+    ever recorded.
+  p_typical: 0.2
+  grounded: inferred
+  evidence: '"Ingestion time and cost are not a concern." - nothing sets a retention period, so all data may be kept'
+  already_specified: false
+  proposed: Set per-asset retention (for example raw video 90 days, transcript 12 months, answers 24 months) with a nightly
+    expiry job and a log of what it removed.
+  shallow: false
+  also_from:
+  - player
+  absorbed:
+  - player-18
+- id: privacy-8
+  title: Studio is offboarded and nothing says what happens to its players' videos, transcripts, answers, caches and chatbot
+    logs
+  level: L3
+  perspective: privacy
+  cell:
+    stage: retention-and-deletion
+    data-element:
+    - studio-tenant
+    - chatbot-conversation-log
+    time-and-change:
+    - studio-offboarded
+    - retention-expiry
+    tenancy:
+    - studio-offboarded
+    - one-studio-many-games
+    processing-status: complete
+    answer-afterlife:
+    - exported-csv
+    - shared-link
+    scale: 500-players
+    fast-path-dependency: precomputed-aggregate-exists
+  object: Spec has no tenant lifecycle; 'Buyers are gaming studios'
+  situation: A studio ends its contract; 1200 videos, the answer table and 90 days of chatbot logs for its 3 games stay in
+    shared infrastructure.
+  consequence: Orphaned personal data with no owner and no contractual basis for continued storage; a later analyst at the
+    vendor could still query it.
+  p_typical: 0.1
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Define an offboarding runbook: export to the studio on request, then hard delete all tenant data within a stated
+    number of days and issue a certificate.'
+  shallow: false
+  also_from:
+  - onboard
+  - player
+  - cost
+  absorbed:
+  - onboard-31
+  - player-20
+  - cost-34
+- id: eval-38
+  title: Deleting a player's data changes the gold set and makes historical accuracy numbers irreproducible
+  level: L3
+  perspective: eval
+  cell:
+    stage: retention-and-deletion
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+    data-element: consent-record
+    processing-status: deleted-by-request
+  object: Gold-labelled videos derived from player sessions (spec step 1)
+  situation: A labelled player requests deletion; their 12 gold videos and labels must go.
+  consequence: Accuracy reported last quarter cannot be recomputed; if labels are kept, deletion is incomplete.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Record gold-set membership per player; on deletion remove labels, log a gold-set version bump, and report accuracy
+    with gold-set version.
+  shallow: false
+  variants_of:
+  - privacy-1
+- id: player-1
+  title: Deletion of player 212 removes answer rows but the cached cohort aggregate still counts that player
+  level: L4
+  perspective: player
+  cell:
+    stage: retention-and-deletion
+    data-element: cached-aggregate
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+    fast-path-dependency:
+    - precomputed-aggregate-exists
+    - cache-stale-after-rerun
+    scale: 500-players
+    processing-status: deleted-by-request
+    latency: fast-but-stale
+  object: precomputed cohort aggregate behind the chatbot's fast answer over 500 players
+  situation: Player 212 of 500 requests deletion; their per-video answer rows are deleted, but the stored aggregate '38% quit
+    at tutorial step 3' (190 of 500) was computed with their rows and is served unchanged.
+  consequence: The deleted player still shapes every number the studio sees; the deletion is incomplete and cannot be shown
+    to the player or a regulator. Aggregate and table disagree by 1 player until the next recompute.
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"a question over, say, 500 players is fast" - speed may rely on stored aggregates that a deletion does not update'
+  already_specified: false
+  proposed: Every cached aggregate records the player ids it used or is keyed to a table version; deletion invalidates every
+    aggregate that listed that player and recomputes before the next read.
+  shallow: false
+  variants_of:
+  - privacy-1
+- id: player-5
+  title: Raw video that failed transcription or arrived as a duplicate upload is invisible to a deletion keyed on answer rows
+  level: L3
+  perspective: player
+  cell:
+    stage: retention-and-deletion
+    processing-status: transcription-failed
+    batch-failure-mix: one-video-of-session-failed
+    session-shape:
+    - duplicate-upload
+    - 5-20-videos
+    data-element: video
+    time-and-change: player-deletion-request
+  object: video object of a session with 8 videos where 1 failed
+  situation: Video 5 of 8 failed transcription and has no transcript or answer rows; video 6 was uploaded twice under two
+    video ids. A deletion that walks the answers table finds 6 of the 9 stored video files.
+  consequence: 3 recordings of the player's voice remain in storage after the player was told everything was deleted.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." - a video that failed transcription has no answer rows to trace it by'
+  already_specified: false
+  proposed: Deletion walks storage by player and session id, not by answers-table rows; a nightly job lists video files with
+    no matching live player.
+  shallow: false
+  variants_of:
+  - stitch-37
+- id: player-23
+  title: Locating all rows of one player needs a full scan because the table is indexed by game target and version
+  level: L3
+  perspective: player
+  cell:
+    stage: retention-and-deletion
+    fast-path-dependency: index-on-game-target-and-version
+    scale: 50000-videos
+    time-and-change: player-deletion-request
+    latency: minutes
+  object: answers table index
+  situation: 'Deletion or access request for player 212: no index on player id; 50,000 videos x 15 questions = 750,000 rows
+    scanned.'
+  consequence: Each request takes minutes of table scan and is skipped when busy; requests pile up beyond the legal response
+    window.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no player key or index is named'
+  already_specified: false
+  proposed: Add a player-id index and a secondary map from player id to video ids, session ids and aggregate ids.
+  shallow: false
+  variants_of:
+  - privacy-1
+  - cost-8
+- id: sec-30
+  title: Studio offboarded but its rows still feed the cross-studio benchmark aggregate and cached answers for remaining tenants
+  level: L3
+  perspective: sec
+  cell:
+    time-and-change: studio-offboarded
+    tenancy:
+    - studio-offboarded
+    - many-studios-shared-infra
+    - cross-studio-benchmark-request
+    stage: retention-and-deletion
+    data-element: cached-aggregate
+    fast-path-dependency:
+    - cache-stale-after-rerun
+    - precomputed-aggregate-exists
+    chatbot-response-behaviour: answers-in-wrong-tenant-scope
+  object: 'Precomputed aggregates built for speed (constraint: ''Answering a studio''s question must be fast'')'
+  situation: Offboarding deletes the studio's tables, but derived benchmarks, caches and chat logs are not traced
+  consequence: A former client's data keeps answering other studios' questions after contract end
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Answering a studio''s question must be fast." - speed may rely on derived aggregates that offboarding does not trace'
+  already_specified: false
+  proposed: Lineage table from each aggregate to contributing studio_ids; offboarding job recomputes or drops every aggregate
+    with that studio_id
+  shallow: false
+  variants_of:
+  - privacy-8
+- id: stitch-37
+  title: A deletion request for a player misses a late or orphaned video that was never linked to a session id
+  level: L3
+  perspective: stitch
+  cell:
+    stage: retention-and-deletion
+    processing-status: deleted-by-request
+    batch-failure-mix: late-arriving-video-after-aggregation
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+  object: 'Unspecified linkage: ''how videos of one session are linked'''
+  situation: Deletion cascades from player -> sessions -> videos; video 9 arrived after deletion (or failed linking) and sits
+    with session_id null.
+  consequence: The player's voice and transcript survive deletion; its answer rows may be stitched back into a session later.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, so a late or unlinked video can be missed'
+  already_specified: false
+  proposed: Videos carry player_id directly as well as session_id; deletion tombstones the player so late arrivals are rejected
+    at ingest.
+  shallow: false
+  variants_of:
+  - privacy-1
+- id: skeptic-31
+  title: Player deletion must purge transcript, answer rows, ad-hoc columns, session summaries and the vector index; the more
+    raw text is kept for flexibility, the more places to purge
+  level: L3
+  perspective: skeptic
+  cell:
+    stage: retention-and-deletion
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+    processing-status: deleted-by-request
+    answer-afterlife: cited-after-player-deletion
+  object: transcripts and answers table
+  situation: Player 0417 requests deletion after their quotes were cached in a slow-path column and a session summary
+  consequence: Table rows deleted but quotes survive in summaries or embeddings and resurface in a chatbot answer
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Register every derived store keyed by player_id; deletion job asserts zero rows for the player in each registered
+    store
+  shallow: false
+  variants_of:
+  - privacy-1
+- id: speech-30
+  title: Player deletion request removes the player's transcript but bystander voices and cached chat answers survive
+  level: L4
+  perspective: speech
+  cell:
+    stage: retention-and-deletion
+    speech-shape:
+    - two-speakers
+    - background-tv-or-other-people
+    time-and-change: player-deletion-request
+    answer-afterlife: cited-after-player-deletion
+    data-element: consent-record
+    processing-status: deleted-by-request
+    recovery-action: delete-and-propagate
+    fast-path-dependency: precomputed-aggregate-exists
+  object: Data element 'consent-record' and the stored transcripts
+  situation: A player withdraws consent; the transcripts include a non-consenting child's voice from the same room and two
+    cached chatbot answers quote them
+  consequence: Deleting by player id leaves the bystander's words in derived answers and cached aggregates; voice data of
+    a third party was never consented
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store the speaker label per utterance, derive answers with a provenance link to the transcript, and cascade deletion
+    to cached aggregates and chat logs
+  shallow: false
+  variants_of:
+  - privacy-1
+- id: ds-15
+  title: One player with several sessions or a crash-split session is counted as several players
+  level: L4
+  perspective: ds
+  cell:
+    stage: session-stitching
+    data-element: player
+    session-shape:
+    - session-split-by-crash-into-two
+    - same-player-multiple-sessions
+    correctness-failure: duplicate-counted
+    scale:
+    - 500-players
+    - 50-players
+    studio-question-type: cohort-count
+    batch-failure-mix: all-succeed
+  object: 'Unspecified: "how videos of one session are linked"'
+  situation: 500 session ids from 460 distinct players; 25 sessions were split by a crash into two session ids
+  consequence: Cohort count of 'confused at step 2' counts 40 players twice; share is inflated by roughly 5-9%, and independence
+    assumed by any later interval is false because repeat sessions are correlated
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, and no player key separate from session is defined'
+  already_specified: false
+  proposed: Make player_id the cohort unit with session_id nested, and define in the registry the merge rule for crash-split
+    sessions and repeat plays (first play only for tutorial questions)
+  shallow: false
+  also_from:
+  - pipe
+  absorbed:
+  - pipe-41
+  variants_of:
+  - stitch-14
+- id: auditor-26
+  title: Evidence timestamp is video-relative, so '03:12' sends the PM to the wrong one of 9 videos
+  level: L4
+  perspective: auditor
+  cell:
+    stage: session-stitching
+    transcription-subsystem: timestamps-reset-per-video
+    data-element: timestamp
+    session-shape: 5-20-videos
+    studio-question-type: show-me-raw-transcript-or-clip
+    correctness-failure: answer-attached-to-wrong-video-index
+  object: timestamp in an evidence span and the session's ordered list of 15-minute videos
+  situation: Bot answers 'at 03:12 the player said this is pointless'; the session has 9 videos; the PM opens video 1 and
+    finds nothing at 03:12
+  consequence: The PM reports the evidence as fabricated; the clip exists in video 6 at 03:12 (session time 1:18:12)
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." - so a video-relative timestamp does not locate the moment in the session'
+  already_specified: false
+  proposed: Evidence spans carry both (video_index, offset) and session-relative time; the chatbot prints 'video 6 of 9, 03:12
+    (session 1:18:12)'
+  shallow: false
+  variants_of:
+  - pipe-9
+- id: extract-43
+  title: Crash splits one playthrough into two sessions; extractor of session 2 video 1 lacks the context that the player
+    is resuming, answering 'started tutorial = Yes'
+  level: L3
+  perspective: extract
+  cell:
+    stage: session-stitching
+    session-shape: session-split-by-crash-into-two
+    question-shape: answer-depends-on-prior-video
+    correctness-failure: duplicate-counted
+    data-element: session
+  object: session linkage feeding the extractor
+  situation: Game crashes at 47:00; player relaunches and continues in a new recording session
+  consequence: Tutorial starts counted twice for one player; quit-after-crash reads as voluntary churn
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, and nothing links two sessions split by a crash'
+  already_specified: false
+  proposed: Add question 'did the game crash or freeze (player mentions)?' and link sessions of the same player within 30
+    minutes as one playthrough
+  shallow: false
+  variants_of:
+  - stitch-14
+- id: pipe-9
+  title: Timestamps reset to 00:00 in each video, so 'when in the session did the player quit' cannot be answered across videos
+  level: L4
+  perspective: pipe
+  cell:
+    stage: session-stitching
+    transcription-subsystem: timestamps-reset-per-video
+    data-element: timestamp
+    studio-question-type: timeline-of-one-player
+    question-shape: answer-is-a-time
+  object: transcript per video (spec.md step 2)
+  situation: Utterance 'I give up' is at 07:12 inside video 3 of 6
+  consequence: 'Table stores 07:12 with no offset; the chatbot answers ''quit at 7 minutes'' when real session time is 37:12.
+    Test: the stored time for that utterance equals (3-1)*15:00 + 07:12 = 37:12.'
+  p_typical: 0.12
+  grounded: quote
+  evidence: 'how videos of one session are linked'
+  already_specified: false
+  proposed: Store video_start_offset_s per video and expose session_time_s on every evidence span.
+  shallow: false
+  also_from:
+  - stitch
+  absorbed:
+  - stitch-18
+- id: ops-22
+  title: Stitched transcript of a 10-hour session exceeds the extraction context; the runner truncates it and still marks
+    the session complete
+  level: L3
+  perspective: ops
+  cell:
+    stage: session-stitching
+    scale: 1-player-10-hour-session
+    transcription-subsystem: truncated-at-length-limit
+    processing-status: complete
+    session-shape: 10-plus-hour-session
+    time-and-change: game-target-changes-beyond-tutorial
+    question-shape: answer-spans-videos
+    fast-path-dependency: table-fits-in-llm-context
+  object: '''Long multi-video sessions'' (spec, known problems)'
+  situation: 40 videos x ~2,000 words = ~80,000 words; session-level questions get the first N tokens only
+  consequence: Answers about post-tutorial churn (late in the session) come from text that never reached the model; status
+    complete hides the truncation
+  p_typical: 0.04
+  grounded: quote
+  evidence: 'Long multi-video sessions.'
+  already_specified: false
+  proposed: Record input_tokens_sent vs input_tokens_total per call; status complete-truncated when they differ; session questions
+    run per video and reduce, not over one concatenation
+  shallow: false
+  also_from:
+  - skeptic
+  absorbed:
+  - skeptic-13
+- id: ops-28
+  title: Session split into two by a game crash gets two session ids; no merge operation exists, so one player has 'quit tutorial'
+    in session A and 'completed' in session B
+  level: L3
+  perspective: ops
+  cell:
+    stage: session-stitching
+    session-shape: session-split-by-crash-into-two
+    recovery-action: rerun-whole-session
+    data-element: player
+    correctness-failure:
+    - inconsistent-across-videos
+    - duplicate-counted
+  object: '''how videos of one session are linked'' (spec, unspecified)'
+  situation: Game crashes at minute 22; player relaunches; capture starts a new session id
+  consequence: Crash counted as tutorial quit in A; player counted twice in the cohort; on-call has no command to merge A
+    and B and re-run aggregation
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, and nothing merges two sessions split by a crash'
+  already_specified: false
+  proposed: 'Merge operation: reassign B''s videos to A with video_index offset, mark B merged_into=A, re-run session aggregation;
+    heuristic flag for same player with sessions < 10 min apart'
+  shallow: false
+  variants_of:
+  - stitch-14
+- id: privacy-32
+  title: Session split by a crash into two session ids, so a deletion by session id removes only the first part
+  level: L3
+  perspective: privacy
+  cell:
+    stage: session-stitching
+    session-shape:
+    - session-split-by-crash-into-two
+    - 5-20-videos
+    data-element: session
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+    processing-status: deleted-by-request
+  object: Spec 'how videos of one session are linked' (unspecified)
+  situation: A game crash at minute 90 restarts capture; videos 7-12 get a new session id with the same player id.
+  consequence: Deleting by the first session id leaves 6 videos, their transcripts and answers behind.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, so a crash-split session can carry two ids'
+  already_specified: false
+  proposed: Delete by player id and consent id, never by session id alone; add a test with a crash-split session.
+  shallow: false
+  also_from:
+  - player
+  absorbed:
+  - player-32
+  variants_of:
+  - privacy-1
+- id: eval-28
+  title: No trace test from answer row back to the source video file, so wrong-player joins pass every accuracy check
+  level: L4
+  perspective: eval
+  cell:
+    stage: session-stitching
+    correctness-failure: right-answer-wrong-player
+    data-element: player
+    session-shape: same-player-multiple-sessions
+    studio-question-type: one-player-what-happened
+  object: 'Spec ''Unspecified: how videos of one session are linked'''
+  situation: Two sessions of different players share a session key; answers are right for the video but filed under the wrong
+    player.
+  consequence: Per-question accuracy is fine; 'what happened to player 87' returns another person's session.
+  p_typical: 0.04
+  grounded: quote
+  evidence: 'how videos of one session are linked'
+  already_specified: false
+  proposed: 'Weekly sample of 50 rows: follow row -> video file hash -> upload record -> player id; assert all match.'
+  shallow: false
+  variants_of:
+  - sec-11
+- id: eval-29
+  title: Out-of-order videos are never tested; a timeline question returns events in upload order
+  level: L4
+  perspective: eval
+  cell:
+    stage: session-stitching
+    session-shape: videos-out-of-order
+    correctness-failure: answer-attached-to-wrong-video-index
+    studio-question-type: timeline-of-one-player
+    data-element: timestamp
+    question-shape: answer-is-a-time
+  object: Many 15-minute videos per session (spec step 1)
+  situation: Video 4 uploads before video 2; index assigned by arrival.
+  consequence: '''When did the player first get stuck?'' answers 45 minutes instead of 15 minutes; no test fixture covers
+    shuffled uploads.'
+  p_typical: 0.03
+  grounded: quote
+  evidence: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos.'
+  already_specified: false
+  proposed: 'Fixture: a 6-video session uploaded in order 1,4,2,6,3,5; assert stored indices and timeline answer match capture
+    order.'
+  shallow: false
+  variants_of:
+  - stitch-20
+- id: sec-11
+  title: Session linking key is a filename like session_001_part3.mp4; two studios' uploads collide and studio B's videos
+    are stitched into studio A's session
+  level: L3
+  perspective: sec
+  cell:
+    stage: session-stitching
+    data-element: session
+    session-shape: 5-20-videos
+    tenancy: many-studios-shared-infra
+    correctness-failure: right-answer-wrong-player
+    chatbot-response-behaviour: answers-in-wrong-tenant-scope
+  object: 'Unspecified: ''how videos of one session are linked'''
+  situation: Linking uses a client-supplied or sequential session id without a tenant namespace
+  consequence: Session-level answers combine two players from two studios; one studio's chatbot can quote another studio's
+    player
+  p_typical: 0.05
+  grounded: quote
+  evidence: 'how videos of one session are linked'
+  already_specified: false
+  proposed: Server-issued UUID session ids scoped by studio_id; reject any video whose studio_id differs from its session's
+  shallow: false
+  variants_of:
+  - stitch-1
+- id: moderator-29
+  title: Moderator-entered session start time and recorder clock disagree by 3 minutes across two machines, so the stitched
+    timeline of 14 videos has a visible jump
+  level: L3
+  perspective: moderator
+  cell:
+    capture-integrity: clock-drift-between-videos
+    stage: session-stitching
+    session-shape: 5-20-videos
+    data-element: timestamp
+    studio-question-type: timeline-of-one-player
+  object: 'Unspecified: ''how videos of one session are linked'''
+  situation: Video 1 start is entered by the moderator at 14:02 and video 2 is stamped by the recorder at 14:20:41, so a 15:00-minute
+    video 1 leaves a 3:41 apparent gap
+  consequence: A timeline of one player shows 3:41 of nothing between videos 1 and 2 and ordering can flip when 2 videos from
+    2 sessions share the same minute
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, so clock sources for ordering can disagree'
+  already_specified: false
+  proposed: Order videos by an index assigned at the recorder and ignore moderator-typed times for ordering
+  shallow: false
+- id: stitch-1
+  title: No session key is defined, so two same-day sessions of one player that are linked by player id + date merge into
+    one 'session' and per-session answers mix both
+  level: L3
+  perspective: stitch
+  cell:
+    stage: session-stitching
+    data-element: session
+    session-shape:
+    - same-player-multiple-sessions
+    - 5-20-videos
+    - 2-4-videos
+    correctness-failure: answer-attached-to-wrong-video-index
+    scale: 500-players
+  object: 'Unspecified: ''how videos of one session are linked'''
+  situation: Player P plays 10:00-10:45 (3 videos) and 16:00-18:00 (8 videos) on 2026-10-27; with no session_id written at
+    capture time, stitching by player id + date produces one 11-video session with a 5-hour hole between video 3 and video
+    4.
+  consequence: Session duration reads 8 h instead of 2 h 45 min; 'did the player quit after the tutorial' is answered from
+    the second sitting; the 10:45 quit is lost as a churn event.
+  p_typical: 0.25
+  grounded: quote
+  evidence: 'how videos of one session are linked'
+  already_specified: false
+  proposed: Recorder mints session_id at capture start and writes it plus video_index into every video's metadata; stitching
+    never infers sessions from player id + date.
+  shallow: false
+- id: stitch-6
+  title: Overlapping videos (recorder restart re-captures the last 10-30 s) double-count events in count questions
+  level: L4
+  perspective: stitch
+  cell:
+    stage: session-stitching
+    session-shape: overlapping-videos
+    question-shape: answer-is-a-count
+    correctness-failure: duplicate-counted
+    capture-integrity: clock-drift-between-videos
+    data-element: utterance
+    speech-shape: profanity-or-slang
+  object: Count-type question, e.g. 'How many times did the player die?' summed across per-video rows
+  situation: Video 2 ends 15:00 at a death; recorder restarts with a 20 s pre-roll buffer, so video 3 starts with the same
+    death and the player's 'ugh, again' line.
+  consequence: Deaths sum to 9 instead of 8; cross-player 'average deaths in tutorial' is inflated by roughly 1 per boundary
+    for every player whose recorder uses pre-roll.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." - video boundaries exist, with no rule for overlap at a boundary'
+  already_specified: false
+  proposed: Store capture start/end wall-clock per video; stitching trims transcript segments whose time falls inside the
+    previous video's range before counting.
+  shallow: false
+  also_from:
+  - pipe
+  absorbed:
+  - pipe-11
+- id: stitch-14
+  title: A game crash at 40 min that the recorder treats as session end creates a fake churn plus a second 'new player' session
+  level: L4
+  perspective: stitch
+  cell:
+    stage: session-stitching
+    session-shape: session-split-by-crash-into-two
+    correctness-failure:
+    - duplicate-counted
+    - right-answer-wrong-player
+    studio-question-type: cohort-count
+    data-element:
+    - player
+    - session
+    scale: 500-players
+    question-shape: answer-is-a-time
+  object: Session as the unit of churn in the answers table
+  situation: Game crashes at 40:12; player relaunches 2 minutes later; recorder issues a new session id.
+  consequence: Session A counts as 'quit after 40 min'; session B, starting on the main menu, is counted as another tutorial
+    attempt; churn rate rises by 1 per crash and player count by 1.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"A player''s gameplay session is captured as video." - nothing distinguishes a crash restart from a new session'
+  already_specified: false
+  proposed: Stitch sessions of the same player with a gap under 10 min into one logical session with a 'crash_gap' marker;
+    churn requires no follow-on session within 24 h.
+  shallow: false
+  also_from:
+  - design
+  - pipe
+  - moderator
+  absorbed:
+  - design-23
+  - pipe-14
+  - moderator-8
+- id: stitch-19
+  title: Session offset computed as video_index x 15 min is wrong after any short mid-session video, shifting every later
+    timestamp
+  level: L4
+  perspective: stitch
+  cell:
+    stage: session-stitching
+    data-element: timestamp
+    session-shape: session-split-by-crash-into-two
+    question-shape: answer-is-a-time
+    studio-question-type: timeline-of-one-player
+  object: '''each video is capped at 15 minutes'' read as ''each video is 15 minutes'''
+  situation: Recorder restarts after a crash so video 4 is 9 min long; offsets for videos 5-12 are assumed 60, 75, 90... min.
+  consequence: Every event after video 4 is placed 6 minutes late; a timeline that aligns quit time with a known server-side
+    event is off by 6 min per short video.
+  p_typical: 0.04
+  grounded: quote
+  evidence: 'each video is capped at 15 minutes'
+  already_specified: false
+  proposed: Offset = sum of actual durations of prior videos (or capture start wall-clock minus session start); test with
+    a 9-minute middle video.
+  shallow: false
+  variants_of:
+  - pipe-9
+- id: stitch-20
+  title: Videos ordered by device-local start time reorder when the clock jumps (DST end on 2026-11-01, NTP correction) during
+    a long session
+  level: L3
+  perspective: stitch
+  cell:
+    stage: session-stitching
+    capture-integrity: clock-drift-between-videos
+    session-shape: videos-out-of-order
+    scale: 1-player-10-hour-session
+    time-and-change: a-year-of-data
+  object: Video capture start time used for ordering and offsets
+  situation: A US session running 2026-10-31 22:00 to 2026-11-01 04:00 local crosses 02:00 -> 01:00; videos starting 01:15
+    (first) and 01:15 (second) carry identical local times.
+  consequence: Two videos tie or invert; offsets for the rest of the session are off by 60 minutes; this recurs once or twice
+    a year per DST region.
+  p_typical: 0.02
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, so ordering may use device clocks that jump in an n-hour session'
+  already_specified: false
+  proposed: Recorder writes UTC monotonic start times plus video_index; ordering never uses local wall-clock.
+  shallow: false
+- id: speech-12
+  title: Clock drift between videos makes wall-clock timestamps overlap by seconds, so stitched utterances duplicate or reorder
+  level: L3
+  perspective: speech
+  cell:
+    stage: session-stitching
+    capture-integrity: clock-drift-between-videos
+    session-shape:
+    - overlapping-videos
+    - videos-out-of-order
+    data-element: timestamp
+    batch-failure-mix: retry-produced-duplicate
+  object: Unspecified item 'how videos of one session are linked'
+  situation: Video 5 ends at 14:57 of recorded time but video 6 starts stamped 4 seconds earlier by the recorder's wall clock
+  consequence: Sorting by start time puts a 4-second utterance twice or in the wrong order; 'timeline-of-one-player' answers
+    show events out of order
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, so wall-clock stamps from the recorder may drive stitching'
+  already_specified: false
+  proposed: Order by video_index and cumulative media duration, never by wall-clock; keep wall-clock only as metadata
+  shallow: false
+  variants_of:
+  - moderator-29
+  - stitch-6
+- id: exec-23
+  title: 'find-players-who request: exec wants a list of players to contact and gets wrong players after a crash-split session'
+  level: L3
+  perspective: exec
+  cell:
+    studio-question-type: find-players-who
+    session-shape: session-split-by-crash-into-two
+    correctness-failure: right-answer-wrong-player
+    data-element: session
+    stage: session-stitching
+  object: session id assigned after a crash split one play into 2 sessions with different ids
+  situation: Player quit in session A part 2 but the list shows session B player; or the list returns two entries for one
+    person
+  consequence: Studio contacts the wrong person or twice; recruiter ops spend a day correcting
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"how videos of one session are linked" - is unspecified, and a crash split yields two session ids for one play'
+  already_specified: false
+  proposed: Return player id plus session ids and tag crash-split sessions as merged
+  shallow: false
+  variants_of:
+  - stitch-14
+# counts: total=121 quote=23 inferred=78 speculative=20 already_specified_true=0

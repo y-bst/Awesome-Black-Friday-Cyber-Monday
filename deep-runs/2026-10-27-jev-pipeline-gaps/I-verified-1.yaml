@@ -1,0 +1,2757 @@
+- id: cost-30
+  title: Diarisation added to stop moderator words being credited to the player increases transcription cost and delays ingest-to-queryable
+  level: L3
+  cell:
+    stage: transcription
+    data-element: utterance
+    speech-shape: moderator-speaking-or-leading
+    correctness-failure: moderator-words-attributed-to-player
+    latency: ingest-to-queryable (hours or days after session)
+  object: Step 2 'Each video is converted to a transcript'
+  situation: Speaker separation on 8,000 videos adds a second pass per video; a typical diarisation pass runs in about 0.3x
+    real time, so 15 minutes of audio costs about 4.5 more minutes.
+  consequence: Per cohort that is about 600 extra compute hours; if skipped, the moderator's 'try the button on the left'
+    is read by extraction as the player's behaviour. The trade is made nowhere because cost is declared irrelevant.
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Decide per game whether sessions are moderated and enable diarisation only for those; record the flag on the session.
+  shallow: false
+  perspective: cost
+  variants_of:
+  - moderator-5
+- id: ds-20
+  title: Missingness from transcription failure is not random, so dropped sessions bias the cohort toward quiet, clean-audio,
+    English players
+  level: L4
+  cell:
+    stage: transcription
+    processing-status: transcription-failed
+    batch-failure-mix: some-sessions-failed-in-cohort
+    speech-shape:
+    - game-audio-dominates
+    - non-english
+    scale: 500-players
+    correctness-failure: wrong-denominator
+    data-element: cohort
+    studio-question-type: cohort-count
+  object: 'Step 2: "Each video is converted to a transcript."'
+  situation: 47 of 500 sessions fail transcription, concentrated in videos where game-audio-dominates and non-English players
+  consequence: Cohort is 453 players with the loudest-game and non-English players under-represented (about 9.4% lost, but
+    25% of the non-English group); the bot reports 'of 500 players' while computing over 453
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"A chatbot for the gaming studio answers the studio''s questions from that table, so that a question over, say,
+    500 players is fast."; no transcription-failure handling or coverage reporting is described, so failed sessions silently
+    shrink the cohort'
+  already_specified: false
+  proposed: Report coverage per segment (language, device, build) next to every rate and flag segments where coverage is below
+    90%
+  shallow: false
+  perspective: ds
+- id: auditor-21
+  title: Transcription model upgrade mid-year bends a 12-month frustration trend, and the PM reads the bend as a product effect
+  level: L4
+  cell:
+    stage: transcription
+    time-and-change:
+    - transcription-model-upgraded
+    - a-year-of-data
+    data-element: transcription-model-version
+    studio-question-type: trend-over-time
+    transcription-subsystem: profanity-masked-by-vendor
+    speech-shape: profanity-or-slang
+    correctness-failure: mixed-version-aggregation
+  object: monthly trend of the option 'expressed frustration' across a year of sessions
+  situation: In month 7 the speech-to-text vendor model changes and starts masking profanity; 'expressed frustration' falls
+    from 31% to 19% at that month with no table column recording the transcription model
+  consequence: The PM presents month 7 as the month the new tutorial fixed frustration
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store transcription_model_version per video; trend answers mark any month where it changed and split the series
+    there
+  shallow: false
+  perspective: auditor
+  variants_of:
+  - extract-44
+- id: design-22
+  title: Quiet 90-second stall inside a talkative session is not a transcript event
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape: mic-muted-for-a-period
+    capture-integrity: mic-muted-for-a-period
+    question-shape: unknowable-from-audio
+    studio-question-type: one-player-what-happened
+    data-element: timestamp
+    scale: 1-player
+  object: transcript window between two utterances 90 s apart at the step-3 screen
+  situation: Think-aloud player goes silent for 90 seconds at the same screen because the mic was muted or because they are
+    stuck.
+  consequence: The designer asks 'where did player 9 stall'; the table cannot distinguish muted mic from a real stall, and
+    no per-utterance time gap is stored.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."; a silent on-screen
+    stall leaves no text in a transcript'
+  already_specified: false
+  proposed: Store silence intervals of more than 30 s as explicit events with cause unknown or mic-muted when the capture
+    flags it.
+  shallow: false
+  perspective: design
+  variants_of:
+  - uxr-2
+- id: extract-44
+  title: 'Mixed transcription-model versions across videos of one session: v1 drops filler words, v2 keeps them; extractor
+    rates hesitation differently per video'
+  level: L3
+  cell:
+    stage: transcription
+    transcription-subsystem: transcription-model-version-differs-across-videos
+    data-element: transcription-model-version
+    correctness-failure:
+    - inconsistent-across-videos
+    - mixed-version-aggregation
+    time-and-change: transcription-model-upgraded
+    session-shape: 5-20-videos
+    recovery-action: backfill-after-model-upgrade
+  object: transcript style input to hesitation/confusion questions
+  situation: STT upgraded mid-ingest of a 10-video session
+  consequence: '''Player hesitant'' = Yes in v2 videos only; within-session trend is an artefact'
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Pin STT version per session; store transcription-model-version per row; re-transcribe whole sessions on upgrade
+  shallow: false
+  perspective: extract
+  also_from:
+  - cost-15
+  - pipe-16
+- id: l10n-3
+  title: Speech-to-text vendor masks profanity, so the strongest frustration signal is removed before the 'expressed frustration'
+    question is asked
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: profanity-masked-by-vendor
+    speech-shape: profanity-or-slang
+    question-shape: fits-an-option
+    correctness-failure:
+    - null-treated-as-no
+    - forced-choice-bias
+    scale: 500-players
+    data-element: transcript
+    studio-question-type: cohort-count
+  object: Step 2 transcript feeding Step 3 question 'Did the player express frustration during the tutorial?'
+  situation: 'The player says ''what the f*** am I supposed to do here'' at 07:12; the vendor''s default profanity filter
+    emits ''what the **** am I supposed to do here'' or drops the word'
+  consequence: The extractor reads a neutral question and answers 'No frustration'; on a 500-player cohort the frustration
+    count for the tutorial step is understated by every swearing player, and nobody can tell because the masking is invisible
+    in the stored transcript
+  p_typical: 0.2
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Disable vendor profanity masking at the ASR call (profanity_filter=false) and store a per-video flag profanity_masked
+    so old transcripts can be identified and re-transcribed
+  shallow: false
+  perspective: l10n
+  also_from:
+  - design-20
+  - extract-30
+  - speech-8
+- id: l10n-6
+  title: Code-switched speech (Hinglish, Taglish, Spanglish) inside one utterance is transcribed with a single-language ASR
+    so one half of every sentence is garbled
+  level: L4
+  cell:
+    stage:
+    - transcription
+    - language-detection
+    speech-shape: mixed-language
+    transcription-subsystem: wrong-language-detected
+    question-shape: unknowable-from-audio
+    correctness-failure:
+    - transcription-hallucination-propagated
+    - other-option-overused
+    data-element: transcript
+  object: Step 2 'Each video is converted to a transcript' with language unspecified
+  situation: A Manila player says 'ang hirap nito, where is the attack button ba?'; the ASR locked to en-PH renders 'ang hirap
+    nito' as 'and here up neato'
+  consequence: The frustration phrase (ang hirap = this is hard) is lost and the English fragment is kept, so 'too hard' is
+    never selected; the garbled text can also be read as nonsense and pushed to 'other'
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"languages"; languages are listed as unspecified, so mixed-language speech has no defined transcription path'
+  already_specified: false
+  proposed: Use an ASR mode that supports code-switching for the session's locale pair (configured from the player's country
+    and game locale) and store per-segment language tags in the transcript
+  shallow: false
+  perspective: l10n
+  also_from:
+  - speech-24
+- id: l10n-13
+  title: A transcription model upgrade adds Thai support, so Thai sessions transcribed before the upgrade are empty and after
+    it are full, with no field to separate them
+  level: L3
+  cell:
+    stage: transcription
+    time-and-change: transcription-model-upgraded
+    data-element: transcription-model-version
+    transcription-subsystem: empty-transcript-for-non-empty-video
+    recovery-action: backfill-after-model-upgrade
+    speech-shape: non-english
+    studio-question-type: trend-over-time
+    correctness-failure: mixed-version-aggregation
+  object: Step 2 transcript store and the Unspecified 'languages'
+  situation: Vendor model v3 (no Thai) produced 0-20 word transcripts for 60 Bangkok players in March; v4 (Thai supported)
+    transcribes 600-word videos from April; the answers table holds both
+  consequence: A trend-over-time query for the Thai cohort shows confusion jumping from 3% to 35% in April; the studio attributes
+    it to a game update that shipped the same week
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store transcription_model_version and supported_languages per video; when a model adds a language, queue every
+    prior video of that language for re-transcription and mark the old rows superseded
+  shallow: false
+  perspective: l10n
+  variants_of:
+  - extract-44
+  - auditor-21
+- id: l10n-14
+  title: English accent variants (en-IN, en-NG, en-SG) are transcribed with an en-US model and churn keywords are mis-heard
+  level: L4
+  cell:
+    stage:
+    - transcription
+    - language-detection
+    speech-shape: continuous-think-aloud
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    studio-question-type: segment-by-metadata (device, country, build)
+    correctness-failure: wrong-denominator
+    data-element: transcript
+  object: Step 2 transcript with no locale field on the session
+  situation: 'A Lagos player says ''I''ll quit this now'' at 09:02; the en-US model emits ''I''ll quiet this now'' with confidence
+    0.4, and segments under 0.5 are dropped'
+  consequence: The quit intent is dropped from the transcript; segmented by country, Nigerian players show 40% fewer quit
+    statements than UK players for the same tutorial step and the gap is a transcription artefact
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"languages"; languages and locales are unspecified, so accent handling in transcription is undefined'
+  already_specified: false
+  proposed: Pass the session's country as the ASR locale hint; store per-segment confidence and never drop segments, only
+    flag them; report per-country mean confidence next to any country segmentation
+  shallow: false
+  perspective: l10n
+  variants_of:
+  - speech-9
+- id: l10n-18
+  title: The vendor profanity list covers English only, so English cohorts have frustration masked and Spanish cohorts do
+    not
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: profanity-masked-by-vendor
+    speech-shape:
+    - profanity-or-slang
+    - non-english
+    studio-question-type: segment-by-metadata (device, country, build)
+    correctness-failure: wrong-denominator
+    data-element: transcript
+  object: Step 2 transcript and Step 4 country segmentation
+  situation: '''what the f***'' is masked for UK players; ''joder, que mierda'' is left intact for Spanish players; the same
+    frustration question is run on both'
+  consequence: Frustration at tutorial step 3 reads 14% UK vs 38% Spain; the studio localises the Spanish tutorial again;
+    the UK number is the masked one
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Turn masking off for all languages and store a per-video masking flag; add a parity check that the share of masked
+    tokens is 0 for every language before cohort comparison
+  shallow: false
+  perspective: l10n
+  variants_of:
+  - l10n-3
+- id: l10n-20
+  title: Non-verbal events are emitted differently per ASR language ('[laughs]' in English, '(笑)' in Japanese, nothing in
+    Portuguese), so a 'did the player laugh or sigh' question is inconsistent across cohorts
+  level: L4
+  cell:
+    stage: transcription
+    speech-shape:
+    - emotional-nonverbal-only (sighs, laughs, swearing-masked)
+    - non-english
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    data-element: utterance
+    correctness-failure: null-treated-as-no
+    studio-question-type: segment-by-metadata (device, country, build)
+  object: Step 2 transcript format, unspecified beyond 'converted to a transcript'
+  situation: The same vendor emits audio-event tags for en-US, a different token set for ja-JP and no tags for pt-BR; a question
+    'Did the player sigh or groan at step 2?' is run on all three
+  consequence: Brazilian players show 0% sighing, Japanese 8%, US 22%; the question appears to measure the tutorial but measures
+    the ASR configuration
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; whether non-speech events are emitted, and
+    in what form per language, is not defined'
+  already_specified: false
+  proposed: Normalise audio-event tags to one vocabulary (laugh, sigh, groan, silence) across languages at ingest and store
+    supports_audio_events per video so the chatbot can exclude videos without it
+  shallow: false
+  perspective: l10n
+  variants_of:
+  - speech-34
+- id: l10n-27
+  title: A word-count threshold for 'silent player' counts a 300-character Japanese transcript as 1 word because the script
+    has no spaces
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: empty-transcript-for-non-empty-video
+    processing-status: transcript-empty
+    speech-shape:
+    - non-english
+    - continuous-think-aloud
+    recovery-action: skip-and-mark-unknown
+    data-element: null-vs-no
+    correctness-failure: wrong-denominator
+  object: Any rule of the form 'skip extraction when word count < N' applied to Step 2 output
+  situation: A talkative Osaka player produces 300 characters of unspaced Japanese per video; the word counter splits on whitespace
+    and returns 1
+  consequence: Every video of the player is marked silent and skipped (or answered unknown); the Japanese cohort's effective
+    sample size collapses to the few players whose ASR inserted spaces
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Measure speech by seconds of voiced audio or by tokenizer token count, never whitespace words; set the threshold
+    per language
+  shallow: false
+  perspective: l10n
+- id: l10n-29
+  title: Moderator speaks English while the player speaks Spanish; a single detected language drops the moderator's leading
+    instructions, so leading is invisible
+  level: L4
+  cell:
+    stage:
+    - transcription
+    - language-detection
+    speech-shape:
+    - moderator-speaking-or-leading
+    - two-speakers
+    transcription-subsystem: wrong-language-detected
+    data-element: moderator
+    correctness-failure: moderator-words-attributed-to-player
+  object: Step 2 transcript with one language per video and no speaker labels
+  situation: 'The moderator says ''try the button on the left'' in English at 05:30; the video is detected as es-MX; the English
+    line is transcribed as Spanish-looking noise and the player''s next line is ''ah, el de la izquierda'''
+  consequence: The player is credited with discovering the control unaided; the leading that invalidates the answer is in
+    the audio but not the transcript
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Transcribe with multi-language diarisation and store speaker role (player/moderator) and language per segment;
+    exclude moderator segments from player questions
+  shallow: false
+  perspective: l10n
+  variants_of:
+  - moderator-5
+- id: l10n-31
+  title: Low-confidence segment dropping removes 2-3x more speech from non-English transcripts, so non-English cohorts are
+    systematically shorter and under-answer every 'did the player say' question
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    speech-shape: non-english
+    scale: 500-players
+    correctness-failure: wrong-denominator
+    data-element: transcript
+    studio-question-type: segment-by-metadata (device, country, build)
+  object: Step 2 transcript and the per-video answers it feeds
+  situation: The ASR vendor's mean confidence is 0.91 for en-US and 0.74 for vi-VN on the same mic setup; a 0.7 drop threshold
+    removes 4% of English segments and 31% of Vietnamese segments
+  consequence: Vietnamese players appear to say less, express less and quit less; any cohort comparison that includes them
+    is biased in the direction of 'fine' and the stored transcript carries no count of dropped segments
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store segments_dropped and mean_confidence per video; have the chatbot attach a per-language confidence note when
+    a cohort mixes languages whose mean confidence differs by more than 0.1
+  shallow: false
+  perspective: l10n
+  variants_of:
+  - speech-9
+  - l10n-14
+- id: onboard-14
+  title: Casual mobile players never talk; 50 sessions yield an all-unknown table
+  level: L4
+  cell:
+    stage: transcription
+    speech-shape: silent-player
+    scale: 50-players
+    processing-status: transcript-empty
+    correctness-failure: null-treated-as-no
+    data-element: null-vs-no
+    studio-question-type: cohort-count
+    time-and-change: first-game-onboarded
+  object: 'Step 2: ''The owner''s view: the transcript alone is not enough'''
+  situation: A hyper-casual studio recruits 50 players, none instructed to think aloud; 42 of 50 transcripts are empty.
+  consequence: The question 'Did the player say they were confused' stores No for 42 rows; the bot reports '16% confused'
+    (8 of 50) with no sign that 84% of rows carry no signal.
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."; if players do not
+    speak, the transcript the questions run on is near-empty'
+  already_specified: false
+  proposed: 'Pre-onboarding fit check: sample 5 sessions and compute speech minutes per hour; if under a threshold (for example
+    5 minutes), warn the studio that this pipeline is speech-dependent.'
+  shallow: false
+  perspective: onboard
+  variants_of:
+  - speech-1
+- id: onboard-26
+  title: 'Multiplayer tutorial with a teammate or in-game guide: second speaker''s words land in the transcript as the player''s'
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape: two-speakers
+    transcription-subsystem: game-lyrics-or-npc-voice-transcribed-as-player
+    correctness-failure:
+    - right-answer-wrong-player
+    - duplicate-counted
+    data-element: utterance
+  object: 'Step 2: ''Each video is converted to a transcript'''
+  situation: A co-op game onboarding places 2 testers in a voice channel for the 12-minute tutorial; one shouts 'I hate this
+    part'.
+  consequence: The question 'Did the player express frustration' answers Yes for both players' rows, though one never spoke,
+    and per-player cohort counts double.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; speaker attribution is not described, so
+    a second voice lands in the transcript'
+  already_specified: false
+  proposed: Game-profile flag 'multi-speaker'; one audio track per player at capture, or diarisation with the target player's
+    voice sample.
+  shallow: false
+  perspective: onboard
+  variants_of:
+  - speech-13
+- id: onboard-32
+  title: Game-specific terms (character, item and boss names) are mis-transcribed and the options cannot match them
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    speech-shape: inaudible-segments
+    correctness-failure:
+    - transcription-hallucination-propagated
+    - other-option-overused
+    question-shape: fits-no-option
+    time-and-change: first-game-onboarded
+    data-element: transcript
+  object: 'Step 2: ''Each video is converted to a transcript'''
+  situation: A fantasy game with invented names ('Xal'tharok', 'Vym') is onboarded; speech-to-text has no custom vocabulary
+    for it.
+  consequence: Names become 'cell tharok', 'vim'; the answer to 'Which character did the player find confusing' is Other for
+    55% of rows, and any dropped low-confidence segments are not listed.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target."; options are
+    per game, but no game-specific vocabulary step for transcription is described'
+  already_specified: false
+  proposed: Onboarding form field for a glossary (up to 100 terms) passed to the transcription and extraction steps, with
+    a before/after check on 3 videos.
+  shallow: false
+  perspective: onboard
+  variants_of:
+  - speech-9
+- id: percep-16
+  title: Game's built-in narrator or text-to-speech reads the tutorial instruction aloud; transcription attributes it to the
+    player and extractor answers 'player read the instructions'
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: game-lyrics-or-npc-voice-transcribed-as-player
+    speech-shape:
+    - player-reading-chat-or-overlay-aloud
+    - game-audio-dominates
+    correctness-failure:
+    - transcription-hallucination-propagated
+    - right-answer-wrong-player
+    data-element: utterance
+  object: transcript (spec item 2); question 'did the player read the instructions'
+  situation: Game has screen-reader narration enabled (accessibility mode); every hint is spoken by a synthetic voice at the
+    same level as the mic
+  consequence: Transcript shows the exact instruction text as a player utterance; answer 'read and understood' for a player
+    who may have skipped it; a blind player's session is mis-scored in the opposite direction
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; whether game audio is separated from the
+    player''s voice is not stated'
+  already_specified: false
+  proposed: 'Diarise and tag synthetic-voice segments (TTS has flat pitch and zero breath noise); test: an utterance that
+    exactly matches a known hint string is labelled source=game'
+  shallow: false
+  perspective: percep
+  variants_of:
+  - speech-3
+- id: percep-18
+  title: Player with a speech impairment (dysarthria, stutter) gets a 40%+ word error rate against a 10% baseline; the garbled
+    transcript pushes every answer to 'other' or to a hallucinated option
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape: inaudible-segments
+    correctness-failure:
+    - other-option-overused
+    - transcription-hallucination-propagated
+    data-element: transcription-model-version
+    question-shape: fits-no-option
+    scale: 500-players
+    session-shape: 5-20-videos
+  object: transcript; per-video answers for that player
+  situation: One of 500 players has dysarthric speech; the vendor transcribes fragments and invents words
+  consequence: That player's 8 videos produce answers with no relation to what was said; no per-player transcription quality
+    score exists to exclude or flag them
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"Each video is converted to a transcript."; transcription quality per speaker is not addressed, so atypical speech
+    degrades the input'
+  already_specified: false
+  proposed: Store per-video mean word confidence; if under 0.6, mark the session transcript_quality=low, null the answers
+    and show the count of excluded sessions in every cohort answer
+  shallow: false
+  perspective: percep
+  variants_of:
+  - speech-9
+- id: pipe-18
+  title: Transcription hits a length or size limit on a dense 15-minute video and returns a truncated transcript with status
+    success
+  level: L3
+  cell:
+    stage: transcription
+    transcription-subsystem: truncated-at-length-limit
+    capture-integrity: upload-truncated
+    processing-status: transcribed
+    data-element: transcript
+    correctness-failure: null-treated-as-no
+  object: transcript per video (spec.md step 2)
+  situation: A 15-minute 1080p capture exceeds the vendor's file-size limit (e.g. 25 MB audio); the API truncates at minute
+    11
+  consequence: Answers on minutes 11-15 are 'not mentioned', typically the minutes just after the tutorial, where the spec
+    says churn is detected.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Compare transcript last timestamp with video duration; fail the video if the gap is above 10 s.
+  shallow: false
+  perspective: pipe
+- id: ops-11
+  title: Transcription vendor outage of 6 hours fails every job in a 50,000-video backfill; exponential retries without a
+    global rate cap create a retry storm when the vendor recovers
+  level: L3
+  cell:
+    stage:
+    - transcription
+    - job-orchestration-and-status
+    - rerun-and-backfill
+    batch-failure-mix:
+    - all-failed
+    - retry-produced-duplicate
+    scale: 50000-videos
+    recovery-action: rerun-whole-session
+    latency: batch-overnight
+    processing-status: transcription-failed
+  object: transcription stage (spec item 2); 'Ingestion time and cost are not a concern'
+  situation: Vendor returns 503 for 6h; 50,000 queued jobs each retry 5 times then dead-letter; on recovery, a manual 'rerun
+    all' re-submits all sessions, including the 30% that had already succeeded
+  consequence: Duplicate transcription spend on ~15,000 videos and a second wave of 429 rate-limit failures; the overnight
+    batch finishes 2 days late, and status per video cannot tell 'failed in outage' from 'failed on content'
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Circuit breaker on vendor error rate > 50% over 5 min pauses the queue instead of failing jobs; rerun selects
+    only videos with status transcription-failed and failure_reason=vendor_unavailable
+  shallow: false
+  perspective: ops
+- id: ops-30
+  title: Final 40-second video fails transcription (below vendor minimum length) and blocks the session from ever reaching
+    complete
+  level: L3
+  cell:
+    stage:
+    - transcription
+    - 15-minute-split
+    - job-orchestration-and-status
+    session-shape:
+    - last-video-under-1-minute
+    - 5-20-videos
+    processing-status: transcription-failed
+    batch-failure-mix: one-video-of-session-failed
+    recovery-action: skip-and-mark-unknown
+    data-element: video
+  object: 15-minute split (spec item 1)
+  situation: Session length 2h00m40s yields 8 full videos plus one 40-second tail; vendor returns an error for audio under
+    60s
+  consequence: Retries fail deterministically 5 times; session stuck in transcribing; it is excluded from cohorts that require
+    complete sessions
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos."; a session that
+    is not a multiple of 15 minutes ends in a short tail video with no defined handling'
+  already_specified: false
+  proposed: Tail videos under 60s are padded or concatenated to the previous video before transcription; non-retryable errors
+    go to skip-and-mark-unknown after 1 attempt
+  shallow: false
+  perspective: ops
+  variants_of:
+  - pipe-12
+- id: privacy-3
+  title: Player says own name, address or school while thinking aloud; the transcript keeps it and the quote-me path can return
+    it
+  level: L3
+  cell:
+    stage:
+    - transcription
+    - evidence-display
+    data-element:
+    - utterance
+    - evidence-span
+    speech-shape: continuous-think-aloud
+    studio-question-type: quote-me-evidence
+    question-shape: unknowable-from-audio
+    scale: 500-players
+  object: 'Spec step 2 ''Each video is converted to a transcript'' (contents unspecified: ''What a transcript contains'')'
+  situation: At minute 9 of video 3 a 14-year-old says 'my mum says I have to stop, I go to Hillcrest Middle School'; no redaction
+    step exists between transcription and the question runner.
+  consequence: School name and family detail sit in the transcript store and can surface in an evidence clip or quote shown
+    to a studio analyst.
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"Each video is converted to a transcript."; no redaction step is described between transcription and the questions'
+  already_specified: false
+  proposed: Add an entity-redaction pass on the transcript (names, addresses, schools, phone numbers) before storage, with
+    the unredacted audio kept only under the retention limit.
+  shallow: false
+  perspective: privacy
+  also_from:
+  - player-6
+- id: privacy-11
+  title: Raw audio goes to a speech-to-text vendor and a transcription-model upgrade silently changes the processor and region
+  level: L3
+  cell:
+    stage:
+    - transcription
+    - rerun-and-backfill
+    data-element: transcription-model-version
+    time-and-change: transcription-model-upgraded
+    tenancy: many-studios-shared-infra
+    recovery-action: backfill-after-model-upgrade
+    scale: 500-players
+  object: Spec step 2 'Each video is converted to a transcript'
+  situation: Transcription moves from a vendor endpoint in the EU to a cheaper endpoint in another region; 15-minute audio
+    files for 500 players are re-sent during backfill.
+  consequence: Cross-border transfer of EU players' voice without a transfer mechanism; nobody reviews because ingestion cost
+    is declared not a concern and the change is a config flip.
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Pin vendor and region per game in config; any change opens a privacy review ticket and records the new region
+    on every transcript row.
+  shallow: false
+  perspective: privacy
+  variants_of:
+  - extract-44
+- id: privacy-13
+  title: Moderator's voice and name are stored in the transcript with no moderator record or consent
+  level: L3
+  cell:
+    stage:
+    - transcription
+    - recruitment-and-consent
+    data-element:
+    - moderator
+    - consent-record
+    speech-shape: moderator-speaking-or-leading
+    correctness-failure: moderator-words-attributed-to-player
+    session-shape: 2-4-videos
+  object: Spec step 2 transcript; no speaker field described
+  situation: A playtest moderator says 'I'm Dev from Studio Ops, try the left button' in video 2 of 4; the line is stored
+    as the player's speech.
+  consequence: Employee personal data is held without a role field and the player is credited with the moderator's words.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Tag speaker role per utterance; keep moderator utterances out of the answers and out of quote output, and record
+    the staff notice.
+  shallow: false
+  perspective: privacy
+  variants_of:
+  - moderator-5
+- id: privacy-14
+  title: Speaker separation for two-speaker sessions creates voice embeddings that may count as biometric identifiers
+  level: L3
+  cell:
+    stage:
+    - transcription
+    - retention-and-deletion
+    data-element:
+    - utterance
+    - consent-record
+    speech-shape: two-speakers
+    tenancy: many-studios-shared-infra
+  object: 'Assumption in frame: ''transcript is speech-to-text''; speaker labels not described'
+  situation: To tell player from moderator the vendor derives voiceprints per video; labels 'speaker 1' and 'speaker 2' swap
+    between videos 3 and 4, so a voiceprint is kept to re-link them.
+  consequence: In jurisdictions that regulate voiceprints (for example Illinois BIPA), storage without written consent and
+    a retention schedule carries statutory damages per person.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Ask the vendor whether embeddings are persisted; if yes, disable or add biometric consent text and a deletion
+    schedule.
+  shallow: false
+  perspective: privacy
+- id: privacy-28
+  title: Player reads other players' usernames or chat messages aloud and they are stored as speech
+  level: L3
+  cell:
+    stage:
+    - transcription
+    - evidence-display
+    speech-shape: player-reading-chat-or-overlay-aloud
+    data-element: utterance
+    studio-question-type: quote-me-evidence
+    question-shape: fits-no-option
+    correctness-failure: right-answer-wrong-player
+  object: Transcript of 'think-aloud plus any game audio' (frame assumption)
+  situation: The player reads 'xX_JaneD_Xx says go back to the base, you noob' at minute 11; the username and message are
+    transcribed.
+  consequence: Third-party identifiers and abusive text are stored and may be quoted to the studio as the player's own words.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Each video is converted to a transcript."; whatever the player reads aloud, including third-party names, is
+    kept with no redaction step described'
+  already_specified: false
+  proposed: Mask username-like tokens in stored transcripts and tag chat reading as a speech type that quote output excludes.
+  shallow: false
+  perspective: privacy
+  also_from:
+  - player-27
+  variants_of:
+  - privacy-3
+- id: eval-2
+  title: Gold labels made by reading transcripts share the transcript's blindness, so accuracy on visual questions is overstated
+  level: L3
+  cell:
+    stage: transcription
+    question-shape:
+    - answer-needs-visuals
+    - answer-is-a-why
+    correctness-failure: perceptual-cause-attributed-to-verbal-option
+    data-element: screen-state
+    capture-integrity: audio-and-video-ok
+    studio-question-type: cohort-why
+  object: 'Spec step 2: ''the transcript alone is not enough; what is on screen is largely lost'''
+  situation: Labelers produce gold answers from the transcript text (cheaper than watching 15 minutes of video); question
+    'Why did the player get stuck at the inventory step?' has truth 'did not see the highlighted button'.
+  consequence: Labeler and LLM both pick 'instructions unclear' from the same words; measured agreement is high while both
+    are wrong against the video.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."; no evaluation process
+    is described, so labels built from transcripts would inherit this loss'
+  already_specified: false
+  proposed: 'Rule: gold labels are assigned while watching the video; record a second ''transcript-only'' label and report
+    the gap per question as the visual-loss rate.'
+  shallow: false
+  perspective: eval
+  variants_of:
+  - percep-1
+- id: eval-4
+  title: Transcription model upgrade changes transcript text, but a regression suite keyed on stored transcripts never sees
+    it
+  level: L3
+  cell:
+    stage: transcription
+    transcription-subsystem: transcription-model-version-differs-across-videos
+    time-and-change: transcription-model-upgraded
+    data-element: transcription-model-version
+    correctness-failure:
+    - inconsistent-across-videos
+    - mixed-version-aggregation
+  object: Spec step 2 transcript stage feeding step 3 answers
+  situation: Regression tests replay frozen transcripts through the extraction prompt; the speech-to-text vendor ships a new
+    model that drops filler words and 'ugh' interjections.
+  consequence: Frustration questions drop silently in production while the prompt regression suite stays green; videos transcribed
+    before and after the upgrade answer differently.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Keep a 50-video audio gold set; on any ASR model change, run audio -> transcript -> answers end to end and diff
+    per-question accuracy.
+  shallow: false
+  perspective: eval
+  variants_of:
+  - extract-44
+- id: eval-17
+  title: Gold set sampled from talkative players only; accuracy for silent and game-audio-dominated videos is unmeasured
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape:
+    - silent-player
+    - game-audio-dominates
+    transcription-subsystem: hallucinated-text-on-silence-or-music
+    correctness-failure: transcription-hallucination-propagated
+    scale: 500-players
+  object: Transcript stage (spec step 2) feeding answers
+  situation: Labelers pick 'clear' sessions; 30% of real sessions are near-silent with music, where speech-to-text invents
+    lines.
+  consequence: Reported 90% accuracy holds on the easy 70% while the silent 30% runs far lower, and the cohort numbers mix
+    both.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Stratify gold: at least 20 videos per speech-shape slice (silent-player, game-audio-dominates, continuous-think-aloud,
+    non-english); report accuracy per slice.'
+  shallow: false
+  perspective: eval
+  variants_of:
+  - speech-2
+- id: player-13
+  title: Household members and TV in the background are transcribed as the player, including first names of third parties
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape:
+    - background-tv-or-other-people
+    - two-speakers
+    data-element:
+    - utterance
+    - player
+    correctness-failure: right-answer-wrong-player
+    capture-integrity: audio-and-video-ok
+  object: utterance list in the transcript (no speaker label)
+  situation: A child shouts 'Dad, where's my charger, Mia took it' during minute 9; the transcript has no speaker turns and
+    credits the whole line to the player.
+  consequence: People who never consented are stored by first name; the sentence feeds an answer like 'player was distracted
+    at step 2'.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; speaker attribution is not described, so
+    household voices land in the transcript'
+  already_specified: false
+  proposed: Diarise each transcript, keep only the primary speaker's turns for extraction, and drop or mask other speakers'
+    names.
+  shallow: false
+  perspective: player
+  variants_of:
+  - speech-13
+  - sec-34
+- id: player-14
+  title: Moderator's remark about the player is stored as an utterance and used as evidence about the player's skill
+  level: L3
+  cell:
+    stage: transcription
+    data-element: moderator
+    speech-shape: moderator-speaking-or-leading
+    correctness-failure: moderator-words-attributed-to-player
+    question-shape: fits-two-options
+  object: transcript line from the moderator
+  situation: 'Moderator says ''he clearly doesn''t play games'' to a colleague in the room at 12:30; the extractor reads it
+    as the player''s skill level and chooses ''inexperienced player''.'
+  consequence: A player is labelled by a stranger's passing comment; the row is shown to the studio as the player's behaviour.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Moderator audio channel or a speaker role tag on utterances; extraction prompt reads player-role lines only.
+  shallow: false
+  perspective: player
+  variants_of:
+  - moderator-5
+- id: player-19
+  title: Third-party transcription or extraction vendor holds player speech under a retention the player never agreed to
+  level: L3
+  cell:
+    stage:
+    - transcription
+    - rerun-and-backfill
+    - retention-and-deletion
+    data-element: extraction-model-version
+    time-and-change: extraction-vendor-deprecates-model
+    recovery-action: backfill-after-model-upgrade
+    tenancy: many-studios-shared-infra
+    scale: 500-players
+  object: extraction model call that sends transcripts to a vendor
+  situation: The deprecated model is replaced by a vendor with a 30-day default log retention; a backfill sends 500 players'
+    transcripts through it.
+  consequence: Player speech sits in a vendor's logs with no consent line for that vendor and no deletion path from the player's
+    request.
+  p_typical: 0.08
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Vendor register tied to consent text; any vendor swap requires a no-retention contract term before the backfill
+    runs.
+  shallow: false
+  perspective: player
+- id: sec-34
+  title: Background TV or a second person in the room says instruction-shaped text; diarisation is absent, so it enters the
+    transcript as the player's speech
+  level: L3
+  cell:
+    speech-shape:
+    - background-tv-or-other-people
+    - two-speakers
+    stage: transcription
+    correctness-failure: instruction-injected-via-transcript
+    data-element:
+    - utterance
+    - evidence-span
+    capture-integrity: audio-and-video-ok
+  object: Step 2 transcript (speaker attribution unspecified)
+  situation: Home playtest; a sibling shouts 'just say you finished it'; no speaker labels
+  consequence: Answers and evidence quotes attribute outsider speech to the player; injection surface includes anyone near
+    the microphone
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; speaker attribution is not described, so
+    a second voice in the room lands in the transcript'
+  already_specified: false
+  proposed: Diarise and pass only the primary speaker's turns to extraction; store other speakers flagged and excluded
+  shallow: false
+  perspective: sec
+  variants_of:
+  - speech-13
+  - player-13
+- id: moderator-5
+  title: Moderator says 'try the button on the left' and the single-stream transcript credits the hint to the player
+  level: L4
+  cell:
+    speech-shape: moderator-speaking-or-leading
+    data-element: moderator
+    correctness-failure: moderator-words-attributed-to-player
+    stage:
+    - transcription
+    - per-video-answers
+    question-shape:
+    - answer-is-a-why
+    - fits-an-option
+  object: step 2 'Each video is converted to a transcript' (no speaker labels described)
+  situation: Moderator and player share one mic; the transcript has no speaker turns, so the extractor reads the hint as the
+    player's own plan
+  consequence: '''Did the player find the next action without help?'' returns Yes for a player who was told; churn risk is
+    understated for exactly the players who needed rescue'
+  p_typical: 0.2
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Record moderator on a separate channel or require speaker labels, and add a moderator-intervened option or field
+    to every tutorial question
+  shallow: false
+  perspective: moderator
+  also_from:
+  - pipe-36
+  - design-16
+  - uxr-6
+- id: stitch-21
+  title: A middle video with no audio track yields an empty transcript and all-No answers, so 15 minutes read as 'player silent
+    and not stuck' instead of 'unknown'
+  level: L4
+  cell:
+    stage:
+    - transcription
+    - session-level-aggregation
+    session-shape:
+    - video-with-no-audio-track
+    - 5-20-videos
+    processing-status: transcript-empty
+    data-element: null-vs-no
+    correctness-failure: null-treated-as-no
+    capture-integrity: no-audio-track
+  object: Transcript of one video in a multi-video session
+  situation: Audio device disconnected for video 6 of 10; video track records fine.
+  consequence: Session rollups for 'any frustration', 'stuck >3 min', 'asked for help' treat video 6 as a clean No; the period
+    may hold the churn trigger.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos."; one session is
+    many separately transcribed videos, and an audio-less one has no defined not-assessable state'
+  already_specified: false
+  proposed: Per-video audio_present flag; videos with no audio produce null answers and the session is marked 'audio gap 75-90
+    min'.
+  shallow: false
+  perspective: stitch
+  variants_of:
+  - speech-1
+- id: stitch-24
+  title: Per-video diarisation labels reset each video, so SPEAKER_0 is the player in video 1 and the moderator in video 2,
+    and moderator hints are credited to the player
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape: moderator-speaking-or-leading
+    correctness-failure: moderator-words-attributed-to-player
+    session-shape: 2-4-videos
+    data-element:
+    - utterance
+    - moderator
+  object: Transcript speaker labels across videos of one session
+  situation: Moderator speaks first in video 2 ('try the button on the left'); diariser numbers speakers by first appearance
+    per file.
+  consequence: '''Did the player figure out the jump mechanic unaided?'' answers Yes for video 2; the leading hint is counted
+    as player insight.'
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Enrol the player's voice from video 1 and map speakers per video by embedding similarity; store speaker role (player
+    / moderator / game) not index.
+  shallow: false
+  perspective: stitch
+  variants_of:
+  - moderator-5
+- id: skeptic-6
+  title: Replacing the table with a long-context model over raw transcripts does not recover the named visual loss; both paths
+    attribute a colour-only cue miss to a verbal option
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape: silent-player
+    question-shape: answer-needs-visuals
+    correctness-failure: perceptual-cause-attributed-to-verbal-option
+    data-element: screen-state
+  object: spec item 2 'what is on screen is largely lost'
+  situation: Silent player stands for 4 minutes next to a glowing quest marker they never notice, then quits
+  consequence: Table picks 'lost interest'; a long-context model over the same transcript has the same blind spot, so the
+    structure-vs-raw debate does not touch the first lossy step
+  p_typical: 0.15
+  grounded: quote
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."'
+  already_specified: false
+  proposed: Decide the visual channel separately (sampled frames every 5 s, OCR, or telemetry join) before redesigning the
+    question layer; tag questions whose answer needs visuals as 'unanswerable from audio'
+  shallow: false
+  perspective: skeptic
+  variants_of:
+  - percep-1
+- id: speech-1
+  title: 'Silent player: empty transcript flows into extraction and every ''did the player say/do X'' question is answered
+    ''No'' instead of ''unknown'''
+  level: L4
+  cell:
+    stage:
+    - transcription
+    - per-video-answers
+    speech-shape: silent-player
+    processing-status: transcript-empty
+    correctness-failure:
+    - null-treated-as-no
+    - forced-choice-bias
+    data-element: null-vs-no
+    question-shape: unknowable-from-audio
+    studio-question-type: cohort-count
+  object: Step 3 'The transcript is run through a fixed set of questions with options' applied to a 15-minute video whose
+    transcript is 0 words
+  situation: A player who does not think aloud produces a 0-word transcript; the fixed questions (e.g. 'Did the player express
+    confusion at tutorial step 2?') are still run once per video
+  consequence: The answers table holds 'No' / 'Other' for that video; the cohort count 'how many players were confused' undercounts
+    silent players and the studio reads silence as satisfaction
+  p_typical: 0.3
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target."; questions run
+    regardless of transcript length, and no unknown/not-assessable state is described'
+  already_specified: false
+  proposed: Skip extraction when word count < N and write answer=NULL with reason=no_speech; the chatbot reports the denominator
+    of players with speech
+  shallow: false
+  perspective: speech
+  also_from:
+  - pipe-19
+  - ops-8
+  - design-5
+- id: speech-2
+  title: Vendor speech-to-text invents stock phrases on silence or music and extraction treats them as player speech
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: hallucinated-text-on-silence-or-music
+    speech-shape:
+    - silent-player
+    - game-audio-dominates
+    correctness-failure: transcription-hallucination-propagated
+    data-element: transcript
+    processing-status: transcribed
+  object: Step 2 'Each video is converted to a transcript'
+  situation: A 15-minute video with 6 minutes of menu music and no voice; the ASR emits lines such as 'Thanks for watching'
+    or repeated 'you' at the silent stretch
+  consequence: The extraction LLM answers 'player expressed boredom / disengagement' from text nobody spoke; the hallucination
+    is stored as an answer with no flag
+  p_typical: 0.12
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Run voice-activity detection before ASR and drop or flag segments with no_speech_prob above a set threshold; store
+    speech_seconds per video
+  shallow: false
+  perspective: speech
+  also_from:
+  - cost-12
+  - ds-35
+  - pipe-20
+  - player-31
+- id: speech-3
+  title: Tutorial NPC voice-over transcribed as player speech makes 'player understood the objective' true by construction
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: game-lyrics-or-npc-voice-transcribed-as-player
+    speech-shape: game-audio-dominates
+    question-shape: fits-an-option
+    correctness-failure: right-answer-wrong-player
+    data-element: utterance
+  object: Assumption 'transcript is speech-to-text of the player's think-aloud plus any game audio'
+  situation: 'The game''s tutorial voice-over says ''Tap the glowing sword to attack'' at 00:42 and the ASR merges it into
+    one unlabelled stream with the player''s ''hmm, what is this'''
+  consequence: A question 'Did the player state the tutorial objective correctly?' is answered Yes from the NPC line; tutorial
+    comprehension is overstated for every player in the cohort
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; whether game voice-over is separated from
+    the player''s voice is not stated'
+  already_specified: false
+  proposed: Capture mic and game audio as separate tracks, transcribe only the mic track for player questions, and keep game
+    audio as a labelled second stream
+  shallow: false
+  perspective: speech
+  also_from:
+  - onboard-13
+- id: speech-7
+  title: 'Non-English speech: unclear whether transcripts are native-language or translated, and the question options are
+    in English'
+  level: L3
+  cell:
+    stage:
+    - transcription
+    - language-detection
+    - answer-options
+    speech-shape: non-english
+    question-shape: fits-an-option
+    scale: 500-players
+    correctness-failure:
+    - forced-choice-bias
+    - other-option-overused
+    data-element: transcript
+  object: Unspecified item 'languages' and the option lists of the fixed question set
+  situation: In a 500-player cohort, 120 players speak Japanese or Korean; the extraction prompt and options are English and
+    the transcript may be native or machine-translated
+  consequence: Idioms of frustration are mistranslated or missed, so non-English players skew to 'Other' or 'No issue'; cohort
+    percentages mix two measurement qualities with no language column to split on
+  p_typical: 0.12
+  grounded: quote
+  evidence: '"languages" (spec.md, Unspecified list)'
+  already_specified: false
+  proposed: State the transcript language policy (native plus English gloss), write options language-neutral, and store language
+    per video
+  shallow: false
+  perspective: speech
+  variants_of:
+  - l10n-6
+- id: speech-9
+  title: 'Whispering players: low-confidence segments are dropped by the ASR silence gate and the churn reason vanishes without
+    any log'
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    speech-shape: whispering
+    capture-integrity: audio-and-video-ok
+    processing-status: transcribed
+    data-element: transcript
+    correctness-failure: null-treated-as-no
+    question-shape: answer-is-a-why
+  object: Step 2 'Each video is converted to a transcript'
+  situation: A player plays late at night and whispers; segments below the no-speech or logprob threshold are discarded, leaving
+    40 words for 15 minutes
+  consequence: Status is 'transcribed' and extraction runs on a thin transcript; answers read 'no reason stated' for a player
+    who spoke continuously
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store kept_words, dropped_segments and mean_confidence per video; extraction output must carry a low-audio-quality
+    flag below a set kept-speech ratio
+  shallow: false
+  perspective: speech
+  also_from:
+  - extract-37
+  - uxr-10
+- id: speech-13
+  title: 'No diarisation: a friend on the couch saying ''this looks boring'' is stored as the player''s opinion'
+  level: L4
+  cell:
+    stage: transcription
+    speech-shape: two-speakers
+    data-element: utterance
+    correctness-failure: right-answer-wrong-player
+    studio-question-type: cohort-why
+    capture-integrity: audio-and-video-ok
+  object: Assumption 'transcript is speech-to-text of the player's think-aloud'
+  situation: In 15 of 100 sessions a second voice is present (partner, sibling, flatmate); transcript is a single undifferentiated
+    text block
+  consequence: 'Churn reason counts include opinions of non-players; a studio cites ''boredom: 22%'' where 7 points come from
+    bystanders'
+  p_typical: 0.15
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; speaker attribution is not described, so
+    a second voice lands in the transcript'
+  already_specified: false
+  proposed: Diarise and label speakers; extract only the speaker enrolled as the player, flag unknown speakers
+  shallow: false
+  perspective: speech
+  also_from:
+  - design-17
+  - moderator-16
+  - uxr-31
+- id: speech-14
+  title: Moderator asks a leading question and the player's 'yeah' becomes a confirmed finding because speaker labels are
+    missing
+  level: L4
+  cell:
+    stage: transcription
+    speech-shape: moderator-speaking-or-leading
+    data-element: moderator
+    correctness-failure: moderator-words-attributed-to-player
+    question-shape: fits-an-option
+    studio-question-type: cohort-count
+  object: Fixed question set per game target, answered from the transcript
+  situation: 'Moderator: ''Was the second step confusing?'' Player: ''yeah, kind of'' at 07:20 in a moderated session'
+  consequence: Answer 'confusion at step 2' is stored for a player who never raised it unprompted; unmoderated and moderated
+    sessions are pooled with no moderated flag, inflating confusion rates
+  p_typical: 0.12
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store moderated boolean and moderator speaker id; extraction ignores moderator turns unless the question asks
+    about prompted answers
+  shallow: false
+  perspective: speech
+  also_from:
+  - skeptic-26
+  variants_of:
+  - moderator-5
+- id: speech-16
+  title: TV or other people in the room are transcribed and the extraction LLM treats them as think-aloud
+  level: L4
+  cell:
+    stage: transcription
+    speech-shape: background-tv-or-other-people
+    data-element: utterance
+    correctness-failure: hallucinated-answer
+    capture-integrity: audio-and-video-ok
+    question-shape: answer-is-a-why
+  object: Step 2 transcript with 'any game audio' and no speaker separation
+  situation: A news broadcast plays at 40% volume during minutes 3-9 of a video and adds about 700 words
+  consequence: Questions about reasons for quitting pick up words like 'strike', 'crash' or 'refund' from the broadcast and
+    fill the 'why' option with off-topic reasons
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; speaker attribution and background-audio
+    handling are not described'
+  already_specified: false
+  proposed: Speaker-embedding match to the enrolled player and a drop of unmatched speakers before extraction
+  shallow: false
+  perspective: speech
+  variants_of:
+  - speech-13
+  - player-13
+- id: speech-19
+  title: Vendor returns HTTP 200 with an empty string for a non-empty video and status becomes 'transcribed', not 'transcript-empty'
+  level: L4
+  cell:
+    stage: transcription
+    transcription-subsystem: empty-transcript-for-non-empty-video
+    processing-status:
+    - transcribed
+    - transcript-empty
+    capture-integrity: no-audio-track
+    correctness-failure:
+    - null-treated-as-no
+    - other-option-overused
+    data-element: transcript
+  object: Step 2 'Each video is converted to a transcript'
+  situation: A 15-minute video with a corrupt audio stream returns '' without an error code
+  consequence: Empty text is passed to the extractor, which has to pick one of 3-6 options and emits 'Other'; a technical
+    failure is counted as a player behaviour
+  p_typical: 0.09
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Treat zero words with non-zero media duration as transcription-failed and retry once with a different decoder
+    before writing NULL
+  shallow: false
+  perspective: speech
+  variants_of:
+  - speech-1
+- id: speech-34
+  title: Sighs, laughs and 'ugh' are dropped by the ASR as non-speech, deleting the dominant emotional signal for quiet players
+  level: L4
+  cell:
+    stage: transcription
+    speech-shape: inaudible-segments
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    question-shape: perceptual-cause-not-verbalised
+    studio-question-type: cohort-why
+    data-element: utterance
+    correctness-failure: null-treated-as-no
+  object: Step 3 questions about tutorial churn reasons
+  situation: A player sighs three times and laughs once at an unclear step, but says nothing in words; the ASR outputs nothing
+    or '[Music]'
+  consequence: The extractor has no evidence of frustration and answers 'no reaction'; nonverbal events never become a column,
+    so the cause is unrecoverable from the transcript
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; whether non-speech vocal events are kept
+    is not defined'
+  already_specified: false
+  proposed: Add an audio-event tagger (sigh, laugh, groan) that writes timed nonverbal events into the transcript
+  shallow: false
+  perspective: speech
+  also_from:
+  - uxr-9
+- id: uxr-2
+  title: Pause lengths between utterances (hesitation) are discarded when the transcript is reduced to text, so 'where did
+    players hesitate' has no column
+  level: L3
+  cell:
+    stage: transcription
+    data-element:
+    - timestamp
+    - utterance
+    speech-shape: continuous-think-aloud
+    question-shape: answer-is-a-time
+    studio-question-type: compare-two-steps
+  object: 'transcript (spec item 2: ''Each video is converted to a transcript''); per-utterance timestamps'
+  situation: Player talks continuously but pauses 8-15 s at one tutorial screen (reading, deciding) and 1-2 s elsewhere
+  consequence: The LLM reads only words; a 12 s hesitation and a 1 s gap look identical, so the strongest observational struggle
+    signal a researcher used is absent from every answer and from the chatbot
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; whether timing or pauses are kept in the
+    transcript is not defined'
+  already_specified: false
+  proposed: Keep utterance start/end times; compute per-video pause count over 5 s and longest pause with its timestamp as
+    stored columns
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - design-22
+- id: ds-3
+  title: Right-censoring ignored for 'time until' questions, because timestamps restart per 15-minute video
+  level: L4
+  cell:
+    stage: per-video-answers
+    question-shape: answer-is-a-time
+    transcription-subsystem: timestamps-reset-per-video
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-steps
+    capture-integrity: clock-drift-between-videos
+    correctness-failure: wrong-denominator
+    scale: 50-players
+    data-element: timestamp
+  object: 'Step 1: "each video is capped at 15 minutes"; question type answer-is-a-time'
+  situation: Studio asks median time to first confusion; 12 of 50 players never get confused and the offset of video k is
+    not stored, so per-video times (0-15 min) are not session times
+  consequence: Median is computed only on players who were confused (survivorship) and from in-video offsets, giving e.g.
+    6 min instead of 51 min; non-confused players appear nowhere
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos."; per-video times
+    are not session times and censoring for players who never reach the event is not addressed'
+  already_specified: false
+  proposed: Store video_index and start_offset_sec per video, answer times as session-absolute, and carry an 'event never
+    occurred, observed until T' flag so survival estimates are possible
+  shallow: false
+  perspective: ds
+  variants_of:
+  - extract-26
+- id: ds-5
+  title: Silent players produce 'no problem' answers, so silence is read as absence of confusion and silent-share differs
+    between cohorts
+  level: L4
+  cell:
+    stage: per-video-answers
+    speech-shape: silent-player
+    data-element:
+    - answer
+    - game-version
+    question-shape: unknowable-from-audio
+    studio-question-type: compare-two-versions
+    correctness-failure:
+    - forced-choice-bias
+    - null-treated-as-no
+    processing-status: transcript-empty
+  object: 'Assumption: "transcript is speech-to-text of the player''s think-aloud plus any game audio"'
+  situation: Build 1.4 cohort was briefed to think aloud, build 1.5 cohort was not; 35% of 1.5 videos have empty or near-empty
+    transcripts
+  consequence: Extractor answers 'No issues' or 'Other' on empty transcripts, so 1.5 appears 20 points better than 1.4; an
+    artefact of talking, not of the tutorial
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"Each video is converted to a transcript."; a session with little speech yields a near-empty transcript that
+    the questions still answer'
+  already_specified: false
+  proposed: Store speech_seconds and word_count per video and have comparisons refuse or stratify when the talk-rate differs
+    between groups by more than a set margin
+  shallow: false
+  perspective: ds
+  variants_of:
+  - speech-1
+- id: ds-6
+  title: Empty transcript from a silent or muted video is coded as an answer instead of a not-assessable state
+  level: L4
+  cell:
+    stage: per-video-answers
+    processing-status: transcript-empty
+    data-element:
+    - transcript
+    - null-vs-no
+    transcription-subsystem: empty-transcript-for-non-empty-video
+    capture-integrity: mic-muted-for-a-period
+    correctness-failure:
+    - null-treated-as-no
+    - forced-choice-bias
+    speech-shape:
+    - mic-muted-for-a-period
+    - silent-player
+  object: 'Step 2: "Each video is converted to a transcript" then Step 3 "The transcript is run through a fixed set of questions"'
+  situation: A 15-minute video whose mic was muted for 9 of 15 minutes produces a 40-word transcript; all questions are still
+    run
+  consequence: Every one of the 10 questions gets a forced answer from 40 words, adding 1 row of noise per such video to the
+    cohort distribution; no field marks the row as low-information
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target."; questions run
+    on every transcript, and no not-assessable state is described'
+  already_specified: false
+  proposed: Add per-video transcript_words and speech_coverage_pct; questions below a minimum (for example 100 words) store
+    'not assessable' not an option
+  shallow: false
+  perspective: ds
+  variants_of:
+  - speech-1
+- id: ds-10
+  title: LLM labelling error on a rare option biases prevalence upward and nothing stores a confusion matrix to correct it
+  level: L4
+  cell:
+    stage: per-video-answers
+    data-element: option
+    question-shape: fits-an-option
+    correctness-failure: hallucinated-answer
+    scale: 5000-players
+    studio-question-type:
+    - distribution-not-count
+    - cohort-count
+  object: 'Step 3: "options" per question; frame assumption "answered once per video by an LLM"'
+  situation: Option 'rage quit' truly occurs in 2% of videos; extractor has 95% specificity and 80% sensitivity on it
+  consequence: Observed share = 0.8*0.02 + 0.05*0.98 = 6.5%, over 3 times the real 2%; studio sees a phantom rage-quit problem;
+    there is no per-question confusion matrix to deflate it
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target."; an automated
+    answerer has error rates per option and none are stored or corrected for'
+  already_specified: false
+  proposed: Keep a labelled audit sample per question, store sensitivity and specificity per option, and publish corrected
+    prevalence with its interval for options under 10% prevalence
+  shallow: false
+  perspective: ds
+- id: ds-28
+  title: Same video, same question gives a different option on a second run, and run-to-run disagreement is never measured
+  level: L4
+  cell:
+    stage: per-video-answers
+    correctness-failure: inconsistent-across-videos
+    chatbot-response-behaviour: differs-on-re-ask
+    data-element: extraction-run-id
+    time-and-change: model-upgraded
+    answer-afterlife: re-asked-after-rerun
+    recovery-action: retry-one-video
+  object: 'Frame assumption: "answered once per video by an LLM"'
+  situation: Each (video, question) is answered once; at temperature above 0 about 10% of ambiguous items flip on a rerun
+  consequence: Measurement noise is unknown; a rerun after a model upgrade moves cohort shares by 2-3 points with no real
+    change; once-only answers give no way to estimate test-retest agreement or a kappa per question
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"The answers form a structured table per video."; each (video, question) is answered once and run-to-run agreement
+    is not recorded'
+  already_specified: false
+  proposed: Run a 5% sample of videos 3 times per question, store agreement per question, and suppress comparisons whose gap
+    is under the measured noise
+  shallow: false
+  perspective: ds
+  also_from:
+  - eval-31
+- id: auditor-19
+  title: Answers carry no confidence, so a PM cannot tell a cohort count built from 51%-confidence picks from one built from
+    95%-confidence picks
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element: answer-confidence
+    correctness-failure: confident-no-evidence
+    studio-question-type: cohort-count
+    answer-afterlife: copied-into-deck
+    speech-shape: silent-player
+    scale: 500-players
+  object: per-video answer row (option id only, as described in 'a structured table per video')
+  situation: 500 players; the churn question has 3 options; the extractor's choice is near-uniform for 180 videos with silent
+    players, yet each row stores one option exactly like a confident row
+  consequence: The deck's 38% is built on 180 coin-flip rows and reads with the same authority as the rest
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"The answers form a structured table per video."; no confidence column is described'
+  already_specified: false
+  proposed: Store confidence 0-1 per row; cohort answers report share with confidence >= 0.7 separately from the rest ('38%
+    (26% at high confidence, 12% low)')
+  shallow: false
+  perspective: auditor
+  variants_of:
+  - extract-22
+- id: design-1
+  title: Tutorial-step granularity is lost because one answer row covers a whole 15-minute video that spans several tutorial
+    steps
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element: tutorial-step
+    session-shape: 2-4-videos
+    question-shape:
+    - answer-is-a-why
+    - answer-needs-visuals
+    studio-question-type: compare-two-steps
+  object: 'spec.md line 6: ''The answers form a structured table per video.'''
+  situation: A 12-step tutorial runs across video 1 (steps 1-7) and video 2 (steps 8-12); the question 'why did the player
+    struggle' is answered once per video with one option.
+  consequence: The designer sees 'controls confusing' for video 1 and cannot tell whether it was step 2 or step 6; step-vs-step
+    comparison is impossible because the table has no tutorial-step column.
+  p_typical: 0.45
+  grounded: quote
+  evidence: '"The answers form a structured table per video."'
+  already_specified: false
+  proposed: Add a tutorial_step key to the answers table (one row per question x video x step) and have the extractor emit
+    a step id from a per-game step list.
+  shallow: false
+  perspective: design
+  also_from:
+  - analyst-10
+  variants_of:
+  - onboard-21
+- id: design-7
+  title: Mis-taps on a touch tutorial never reach the transcript, so device-segmented answers undercount touch problems
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element: device-platform
+    question-shape: perceptual-cause-not-verbalised
+    correctness-failure: wrong-denominator
+    scale: 500-players
+    studio-question-type: segment-by-metadata (device, country, build)
+    speech-shape: silent-player
+  object: device-platform metadata and the 'what blocked the player' question
+  situation: Of 500 players, 200 are on phones; they tap the wrong zone 5 times and say nothing, while 300 desktop players
+    complain aloud about key bindings.
+  consequence: Chatbot reports 'controls confusing' 40% desktop vs 8% mobile; designer concludes mobile controls are fine.
+  p_typical: 0.08
+  grounded: quote
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."'
+  already_specified: false
+  proposed: Join input telemetry (taps per target, failed taps) per step and expose it as a second answer source.
+  shallow: false
+  perspective: design
+  variants_of:
+  - uxr-3
+- id: extract-4
+  title: Single-select forces one option when the player states two causes; which one wins depends on mention order (first
+    vs last), not salience
+  level: L3
+  cell:
+    stage: per-video-answers
+    question-shape: two-options-both-partly-true
+    correctness-failure: inconsistent-across-videos
+    speech-shape: continuous-think-aloud
+    data-element: answer
+    studio-question-type: cohort-why
+  object: per-video answer row (one option per question)
+  situation: 'Player says at 03:10 ''controls are confusing'' and at 11:40 ''and honestly this is slow and boring''; options
+    include ''controls unclear'' and ''pacing too slow'''
+  consequence: Two videos with equivalent content get different single answers; cohort counts split arbitrarily between two
+    real causes
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"current question count and answer types"; answer types are unspecified, so single- versus multi-select is undefined'
+  already_specified: false
+  proposed: Declare per question whether it is single- or multi-select; for causal questions store a set of options each with
+    its own evidence span
+  shallow: false
+  perspective: extract
+- id: extract-6
+  title: '''Did the player complete the tutorial?'' answered per video without prior-video context returns No for video 4
+    even though completion happened in video 2'
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - session-level-aggregation
+    question-shape:
+    - answer-depends-on-prior-video
+    - event-did-not-happen-in-this-video
+    correctness-failure: null-treated-as-no
+    session-shape: 5-20-videos
+    data-element: null-vs-no
+    studio-question-type: cohort-count
+  object: per-video extraction call; session-level aggregation (unspecified)
+  situation: Videos are extracted independently; video 4 contains no mention of the tutorial
+  consequence: Session has rows Yes (v2), No (v3-v8); an aggregation by majority says 'did not complete'; the chatbot's tutorial-completion
+    rate is understated
+  p_typical: 0.15
+  grounded: quote
+  evidence: '"how videos of one session are linked" + "The answers form a structured table per video."'
+  already_specified: false
+  proposed: Pass a rolling session state (answers so far + last 2 minutes of prior transcript) into each video's prompt, or
+    define per question an aggregation operator (ANY, ALL, LAST, FIRST) and allow per-video null
+  shallow: false
+  perspective: extract
+  variants_of:
+  - skeptic-4
+- id: extract-15
+  title: 'No cross-question consistency check: same video yields ''completed tutorial = No'' and ''quit at step = did not
+    quit'''
+  level: L4
+  cell:
+    stage: per-video-answers
+    data-element: answer
+    correctness-failure:
+    - hallucinated-answer
+    - inconsistent-across-videos
+    question-set-version-state: single-version
+    scale: question-set-of-50-questions
+    studio-question-type: cohort-count
+  object: answers table row set for one video
+  situation: Questions are answered independently (or in one batch without constraints) and nothing validates logical relationships
+  consequence: 'Chatbot counts contradict each other: 120 ''did not complete'' but only 70 with a quit step'
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"The answers form a structured table per video."; no cross-question validation is described'
+  already_specified: false
+  proposed: Declare implication rules in the question registry (Q1=No requires Q2 != 'did not quit'); run them after extraction
+    and re-ask violating videos once with both questions shown
+  shallow: false
+  perspective: extract
+  also_from:
+  - qauthor-28
+- id: extract-22
+  title: LLM self-reported confidence clusters at 0.85-0.95 for 80%+ of answers and is uncalibrated against labelled answers
+  level: L4
+  cell:
+    stage: per-video-answers
+    data-element: answer-confidence
+    correctness-failure: confident-no-evidence
+    studio-question-type: cohort-count
+    scale: 500-players
+    question-shape: answer-is-a-why
+  object: answer-confidence (if taken from the model's own number)
+  situation: Chatbot filters to 'high-confidence answers only' using the model-stated score
+  consequence: Filter removes almost nothing; or removes the wrong 10%; studio believes counts are vetted
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Derive confidence from sample agreement (extract-16) and evidence validation (extract-21); report a reliability
+    curve on 200 hand-labelled videos per question
+  shallow: false
+  perspective: extract
+  also_from:
+  - eval-15
+- id: extract-26
+  title: Time question ('when did frustration start?') returns minute 3 of video 5 while timestamps reset per video, so the
+    session time is never computed
+  level: L4
+  cell:
+    stage: per-video-answers
+    question-shape: answer-is-a-time
+    transcription-subsystem: timestamps-reset-per-video
+    correctness-failure: answer-attached-to-wrong-video-index
+    data-element: timestamp
+    session-shape: 5-20-videos
+    studio-question-type: timeline-of-one-player
+  object: timestamp in a per-video answer
+  situation: 'No video_index or session offset is passed to the extractor; video 5 starts at 60:00 session time'
+  consequence: Chatbot reports 'frustration at minute 3' for a player who was fine for an hour
+  p_typical: 0.06
+  grounded: quote
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." + "how videos
+    of one session are linked"'
+  already_specified: false
+  proposed: Extractor returns video-relative seconds only; a deterministic join adds video_index x 900 s (or recorded start
+    offsets) to produce session time
+  shallow: false
+  perspective: extract
+  also_from:
+  - qauthor-15
+  - speech-33
+- id: l10n-4
+  title: Gaming slang ('this is cooked', 'gg', 'mid', 'skill issue') is mapped to the wrong option by the extractor
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - extraction-prompt
+    speech-shape: profanity-or-slang
+    question-shape: fits-two-options
+    correctness-failure:
+    - perceptual-cause-attributed-to-verbal-option
+    - other-option-overused
+    data-element: utterance
+    studio-question-type: cohort-count
+  object: Step 3 options for the churn question, e.g. [too hard / boring / confusing / other]
+  situation: 'Player says ''nah this tutorial is cooked, gg'' at 11:40 and quits; ''cooked'' here means broken/hopeless and
+    ''gg'' means giving up, not a win'
+  consequence: The extractor picks 'boring' or 'other' for a player who quit because the step felt broken; a studio count
+    of 'players who found the tutorial broken' misses the players who used the most current slang, which skews younger
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target."; options are
+    written per game target but slang mapping to options is not addressed'
+  already_specified: false
+  proposed: Maintain a per-game slang glossary (term, meaning, example, date added) injected into the extraction prompt, and
+    add a regression set of 30 slang utterances with expected options re-run on every prompt or model change
+  shallow: false
+  perspective: l10n
+- id: l10n-15
+  title: Localised number and time expressions ('half two', '14h30', Japanese counters) are misparsed when an answer is a
+    count or a time
+  level: L4
+  cell:
+    stage: per-video-answers
+    question-shape:
+    - answer-is-a-count
+    - answer-is-a-time
+    speech-shape: non-english
+    data-element: answer
+    correctness-failure: hallucinated-answer
+  object: Step 3 questions whose answer is a number, e.g. 'How many attempts at the boss before quitting?'
+  situation: A Japanese player says '三回目だ' (third time) and a British player says 'that's the half-dozenth time'; the extractor
+    returns 3 and 6 respectively but a French player's 'une bonne dizaine' (a good ten or so) returns 10 as an exact count
+  consequence: Attempt counts across the cohort mix exact and approximate values with no marker; a mean of 4.2 attempts is
+    reported with no indication that 30% of values were idioms
+  p_typical: 0.03
+  grounded: inferred
+  evidence: '"current question count and answer types"; answer types are unspecified, so count or time answers have no parsing
+    rule'
+  already_specified: false
+  proposed: For count and time answers, store the source phrase and an exact/approximate flag; let the chatbot report the
+    share of approximate values
+  shallow: false
+  perspective: l10n
+- id: l10n-17
+  title: A player reading localised on-screen text aloud is credited with understanding it, with no way to separate reading
+    from thinking aloud
+  level: L3
+  cell:
+    stage: per-video-answers
+    speech-shape:
+    - player-reading-chat-or-overlay-aloud
+    - non-english
+    question-shape: answer-needs-visuals
+    data-element: screen-state
+    correctness-failure:
+    - perceptual-cause-attributed-to-verbal-option
+    - hallucinated-answer
+  object: Step 3 question 'Did the player notice the tutorial hint?' and Known problem 'Transcript loses visual information'
+  situation: 'A German player reads the hint ''Halte gedrückt, um zu zielen'' aloud word for word at 02:10, then says ''hä?''
+    and taps instead of holding'
+  consequence: 'The extractor marks ''noticed hint: yes, understood: yes'' from the verbatim reading; the actual failure (read
+    but not understood) is the one the studio is trying to find'
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"Transcript loses visual information."; reading on-screen text aloud puts it in the transcript without showing
+    comprehension'
+  already_specified: false
+  proposed: Match transcript lines against the game's localised string table and tag them as read-aloud; give the extractor
+    a distinct 'read aloud only' signal
+  shallow: false
+  perspective: l10n
+  also_from:
+  - design-18
+  - uxr-22
+- id: onboard-21
+  title: Studio expects 'step 4' granularity but the table holds one answer per 15-minute video
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element:
+    - tutorial-step
+    - timestamp
+    studio-question-type: compare-two-steps
+    question-shape:
+    - answer-changes-within-video
+    - answer-is-a-time
+    latency: under-2s
+    session-shape: 5-20-videos
+    chatbot-response-behaviour: invents-number
+  object: 'Step 3: ''The answers form a structured table per video'''
+  situation: The studio asks 'how long did players spend on step 4 versus step 5'; the first tutorial takes 6 minutes and
+    both steps fall in video 1 of 12.
+  consequence: A row per video cannot separate the two steps and has no timestamp field; the bot either refuses or invents
+    durations from one answer per video.
+  p_typical: 0.2
+  grounded: quote
+  evidence: '"The answers form a structured table per video."'
+  already_specified: false
+  proposed: Add an optional start/end offset and a step id to each answer row, with the step list supplied at onboarding.
+  shallow: false
+  perspective: onboard
+  also_from:
+  - uxr-16
+  variants_of:
+  - design-1
+- id: percep-1
+  title: Colour-only tutorial gate (green = open, red = locked) with a colour-blind player saying 'where do I go?' is stored
+    as 'instructions unclear'; the colour cue never reaches the table
+  level: L4
+  cell:
+    stage: per-video-answers
+    question-shape: perceptual-cause-not-verbalised
+    correctness-failure: perceptual-cause-attributed-to-verbal-option
+    data-element: screen-state
+    speech-shape:
+    - continuous-think-aloud
+    - silent-player
+    studio-question-type: cohort-why
+    scale: 500-players
+  object: churn question in the 'fixed set of questions with options, written per game target'; per-video answers table row
+  situation: Tutorial door is distinguished only by hue (green vs red, no icon, no label); a deuteranopic player (about 1
+    in 12 men) wanders 90 s saying 'where do I go? which one?' and quits
+  consequence: Extractor picks the closest verbal option ('instructions unclear' or 'lost interest'); the studio rewrites
+    instruction copy; the 8% of players who could not see the gate still quit after the fix
+  p_typical: 0.15
+  grounded: quote
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."'
+  already_specified: false
+  proposed: 'Assert: for a known colour-only step, option ''could not perceive the cue (visual)'' exists and is selected when
+    the transcript has ''where/which'' with no content words about the instruction; store answer_source=audio-only on every
+    visual-dependence question'
+  shallow: false
+  perspective: percep
+  also_from:
+  - design-6
+  - ds-34
+- id: percep-2
+  title: 'Low-contrast tutorial text (under 3:1 on a busy background) produces 40 s of silence then a quit; the silence is
+    read as ''lost interest'''
+  level: L3
+  cell:
+    stage: per-video-answers
+    speech-shape: silent-player
+    question-shape: unknowable-from-audio
+    correctness-failure: confident-no-evidence
+    data-element:
+    - null-vs-no
+    - answer
+    scale: 500-players
+  object: quit-reason question; transcript of the last tutorial video (spec item 2)
+  situation: 'Hint text rendered at 2.4:1 contrast over animated background; player squints, says nothing for 40 s, then closes
+    the app'
+  consequence: Row stores 'lost interest' with no evidence span; aggregate for 500 players counts a readability defect as
+    boredom; no column records the 40 s silence that preceded the quit
+  p_typical: 0.12
+  grounded: quote
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."'
+  already_specified: false
+  proposed: If the quit-reason evidence span is empty or is more than 30 s before the quit, store null plus trailing_silence_seconds;
+    never store a reason option from silence
+  shallow: false
+  perspective: percep
+  variants_of:
+  - uxr-1
+- id: percep-17
+  title: 'Audio-only tutorial cue (a chime) and a hard-of-hearing or muted-phone player: the ''noticed the cue'' answer cannot
+    separate ''did not hear'' from ''heard and ignored'''
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element:
+    - null-vs-no
+    - device-platform
+    speech-shape: silent-player
+    question-shape: unknowable-from-audio
+    capture-integrity: stereo-channel-only-game-audio
+    correctness-failure: null-treated-as-no
+  object: question 'did the player react to the cue'; per-video row
+  situation: Cue is a 0.3 s chime with no visual; player plays muted (common on mobile) or has hearing loss; says nothing
+  consequence: Stored No; the aggregate 'ignored the cue' includes every player for whom the cue did not exist; the recording
+    may even contain the chime from the game channel while the player heard nothing
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; whether game audio cues appear in the transcript
+    is not defined'
+  already_specified: false
+  proposed: Store game_audio_muted from device metadata and mark audio-only cues in the step registry; when muted, write null
+    with reason=cue-not-delivered
+  shallow: false
+  perspective: percep
+  variants_of:
+  - percep-20
+- id: percep-20
+  title: 'Instruction delivered by spoken game dialogue with subtitles off and the phone muted: the player never received
+    it, and the transcript has no trace that it was not delivered'
+  level: L3
+  cell:
+    stage: per-video-answers
+    question-shape: unknowable-from-audio
+    data-element:
+    - tutorial-step
+    - null-vs-no
+    speech-shape: silent-player
+    correctness-failure:
+    - confident-no-evidence
+    - null-treated-as-no
+  object: question 'did the player follow the instruction at step 2'; tutorial-step 2
+  situation: Step 2's only instruction is a voice line; the player has subtitles off and game audio muted; player wanders
+    for 2 minutes
+  consequence: Stored 'did not follow'; the cohort rate for step 2 blends players who heard it and players who could not;
+    the fix (always show subtitles in the tutorial) is never surfaced
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"What a transcript contains (speech only, on-screen text, events)"; whether game dialogue was delivered to the
+    player leaves no trace in a transcript of unspecified content'
+  already_specified: false
+  proposed: Step registry records delivery channel (visual, audio, both); when channel=audio and game_audio_muted or subtitles=off,
+    store null reason=instruction-not-delivered
+  shallow: false
+  perspective: percep
+  variants_of:
+  - percep-17
+- id: percep-32
+  title: Colour-matching tutorial puzzle and a colour-blind player saying 'they all look the same' is stored as 'difficulty
+    too high'; the designer is told to make the puzzle easier
+  level: L3
+  cell:
+    stage: per-video-answers
+    question-shape: two-options-both-partly-true
+    correctness-failure:
+    - forced-choice-bias
+    - perceptual-cause-attributed-to-verbal-option
+    studio-question-type: recommendation-what-should-we-change
+    data-element: tutorial-step
+  object: difficulty question for the match-3 tutorial step; 'difficulty too high' option
+  situation: Step 4 requires matching red and green gems; protan player says 'they all look the same, this is impossible'
+    and quits after 3 minutes
+  consequence: Both 'too hard' and 'could not perceive' are partly true; only one can be stored; the recommendation is a difficulty
+    nerf for the 92% who could see the gems
+  p_typical: 0.05
+  grounded: quote
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."'
+  already_specified: false
+  proposed: Allow a secondary cause per answer; add trigger phrases 'look the same', 'same colour', 'which is which' to a
+    perceptual option
+  shallow: false
+  perspective: percep
+  variants_of:
+  - percep-1
+- id: percep-34
+  title: Moderator points at the screen ('that one, the glowing one') with a gesture that is not in the audio; the player's
+    success is credited to understanding the cue
+  level: L3
+  cell:
+    stage: per-video-answers
+    speech-shape: moderator-speaking-or-leading
+    correctness-failure: moderator-words-attributed-to-player
+    data-element: moderator
+    question-shape:
+    - fits-an-option
+    - answer-needs-visuals
+  object: question 'did the player find the cue unaided'; transcript utterances from the moderator
+  situation: Moderator leans in and taps the screen; the audio holds only 'that one'; the player says 'oh, okay'
+  consequence: Answer 'found the cue' for a player who was physically shown it; the cohort's success rate for the step is
+    inflated by every moderated session
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Diarise the moderator; any step whose evidence span contains a moderator utterance within 10 s is stored as 'assisted'
+    rather than the success option
+  shallow: false
+  perspective: percep
+  variants_of:
+  - moderator-5
+- id: pipe-2
+  title: 'Off-by-one video_index when video 4 of 8 is missing: later answers are stamped with the position in the uploaded
+    list, not the capture order'
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - session-stitching
+    - upload-and-ingest
+    session-shape:
+    - missing-middle-video
+    - 5-20-videos
+    correctness-failure: answer-attached-to-wrong-video-index
+    data-element: video
+    processing-status: complete
+    studio-question-type: timeline-of-one-player
+  object: 'spec.md ''Unspecified'': ''how videos of one session are linked'''
+  situation: Session has 8 captured videos, video 4 never uploads; the remaining 7 are numbered 1..7 by arrival, so captured-video-5
+    is stored as index 4
+  consequence: 'A studio asking ''what happened in minutes 45-60'' (videos 4-5 at 15 min each) gets the answer from captured-video-6;
+    timeline answers shift by 15 min after the gap with no marker. Test: delete video 4, assert stored index of old video
+    5 is still 5 and a gap row exists.'
+  p_typical: 0.07
+  grounded: quote
+  evidence: '"how videos of one session are linked"'
+  already_specified: false
+  proposed: Store capture_seq from the recorder (not arrival order) and write an explicit 'missing' row for every absent seq
+    below max(seq).
+  shallow: false
+  perspective: pipe
+- id: pipe-12
+  title: A 40-second last video is answered with the same questions as a full one, so 'did the player finish the tutorial'
+    gets 'No' from a clip that never reached that step
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - session-level-aggregation
+    session-shape:
+    - last-video-under-1-minute
+    - 5-20-videos
+    question-shape: event-did-not-happen-in-this-video
+    data-element:
+    - answer
+    - video
+    correctness-failure: null-treated-as-no
+  object: fixed set of questions run 'over each transcript' (spec.md step 3)
+  situation: 'Session of 2h00m40s: 8 videos of 15 min plus a 40 s ninth; the ninth contains one sentence'
+  consequence: 'Per-video ''No'' answers from the 40 s clip drag session-level majority-vote rates; 1 of 9 videos is a fragment
+    weighted equally. Test: assert the answer for a clip under 60 s is not_applicable for questions needing more than 60 s.'
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos."; the last video
+    of a session is usually short but receives the same fixed questions'
+  already_specified: false
+  proposed: Store video_duration_s and let each question declare min_duration or aggregation weight.
+  shallow: false
+  perspective: pipe
+  also_from:
+  - stitch-16
+  variants_of:
+  - skeptic-4
+- id: pipe-23
+  title: 'One answer per video per question hides a mid-video change, such as ''confused at 03:00, understood at 10:00'''
+  level: L4
+  cell:
+    stage: per-video-answers
+    question-shape: answer-changes-within-video
+    data-element:
+    - evidence-span
+    - answer
+    - timestamp
+    studio-question-type:
+    - compare-two-steps
+    - timeline-of-one-player
+    scale: 500-players
+  object: '''The answers form a structured table per video'' (spec.md step 3)'
+  situation: Question 'Was the player confused about the jump mechanic?' (Yes/No/Unclear); the player is confused for 2 minutes,
+    then succeeds
+  consequence: 'Model picks Yes or No at random between runs; no start/end time stored, so ''how long were they stuck'' cannot
+    be queried. Test: schema allows at most one answer per (video, question) with no span.'
+  p_typical: 0.15
+  grounded: quote
+  evidence: '"The answers form a structured table per video."'
+  already_specified: false
+  proposed: Add span_start_s and span_end_s, and allow multiple rows per (video, question) for event-type questions.
+  shallow: false
+  perspective: pipe
+  also_from:
+  - design-13
+  - skeptic-34
+  - uxr-18
+- id: ops-3
+  title: Question Q5 fails extraction on 3 of 12 videos (LLM returned an option string not in the list) while Q1-Q4 and Q6-Q8
+    succeed; video status says 'extracted', no per-question status exists
+  level: L3
+  cell:
+    stage:
+    - per-video-answers
+    - job-orchestration-and-status
+    processing-status: extraction-partial-some-questions
+    batch-failure-mix: some-questions-failed-in-one-video
+    recovery-action: retry-one-question
+    correctness-failure: null-treated-as-no
+    data-element: answer
+  object: fixed set of questions with options per transcript (spec item 3)
+  situation: Model output for Q5 is 'Partially - the player found the menu later' which matches none of the 4 option ids;
+    the parser drops it and marks the video done
+  consequence: Q5 has 9 answers for 12 videos with no record that 3 failed; the only retry path is re-running the whole video,
+    which re-calls all 8 questions and can flip the 7 answers that were already stored
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target."; no per-question
+    status or invalid-option handling is described'
+  already_specified: false
+  proposed: Status per (video_id, question_id) with values ok / parse_failed / model_error; retry endpoint scoped to one (video_id,
+    question_id); daily count of parse_failed per question with alert above 2%
+  shallow: false
+  perspective: ops
+- id: ops-39
+  title: Retry of one video re-extracts all questions with temperature > 0, flipping answers that had already been read and
+    quoted
+  level: L3
+  cell:
+    stage: per-video-answers
+    recovery-action: retry-one-video
+    answer-afterlife: copied-into-deck
+    chatbot-response-behaviour: differs-on-re-ask
+    correctness-failure: inconsistent-across-videos
+    data-element: extraction-run-id
+    batch-failure-mix: some-questions-failed-in-one-video
+  object: per-video answers (spec item 3)
+  situation: Video 5 retried because Q8 failed; Q1-Q7 re-run too and 2 of 7 answers change
+  consequence: Player-level story in a deck no longer matches the table; on-call retry caused a data change nobody requested
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Retry targets only failed (video, question) pairs; extraction at temperature 0 with a fixed seed where the vendor
+    allows
+  shallow: false
+  perspective: ops
+  variants_of:
+  - ds-28
+- id: eval-6
+  title: Per-video scoring counts trivial 'event did not happen in this video' agreements as correct and inflates tutorial-churn
+    accuracy
+  level: L4
+  cell:
+    stage: per-video-answers
+    question-shape: event-did-not-happen-in-this-video
+    session-shape: 5-20-videos
+    data-element: video
+    correctness-failure:
+    - null-treated-as-no
+    - wrong-denominator
+  object: '''The answers form a structured table per video'''
+  situation: A 3-hour session has 12 videos; the tutorial happens in video 1; 'Did the player quit during the tutorial?' is
+    trivially 'No' in videos 2-12.
+  consequence: Accuracy reads 96% across 12 videos even if the one video that matters is wrong 50% of the time.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos."; tutorial questions
+    run on every video, so later videos agree trivially and no scoring rule is described'
+  already_specified: false
+  proposed: Report accuracy separately on 'event-present' videos and on sessions; exclude not-applicable videos from the headline
+    number.
+  shallow: false
+  perspective: eval
+  variants_of:
+  - skeptic-4
+- id: eval-16
+  title: Answers carry no evidence span, so hallucinated answers cannot be checked automatically
+  level: L4
+  cell:
+    stage: per-video-answers
+    data-element: evidence-span
+    correctness-failure:
+    - hallucinated-answer
+    - confident-no-evidence
+    studio-question-type: quote-me-evidence
+    transcription-subsystem: hallucinated-text-on-silence-or-music
+  object: '''The answers form a structured table per video'' (no evidence column)'
+  situation: Extractor answers 'player complained about controls' for a video where no such utterance exists.
+  consequence: No cheap automatic check exists; every hallucination needs a human to read 15 minutes of transcript.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"The answers form a structured table per video."; no evidence-span column is described'
+  already_specified: false
+  proposed: 'Require a verbatim quote + timestamp per non-null answer; nightly check: % of quotes not found by exact string
+    match in the transcript, alert above 2%.'
+  shallow: false
+  perspective: eval
+- id: eval-19
+  title: No test cases for moderator-led sessions; rate of answers credited to moderator words is unknown
+  level: L3
+  cell:
+    stage: per-video-answers
+    speech-shape: moderator-speaking-or-leading
+    correctness-failure: moderator-words-attributed-to-player
+    data-element: moderator
+    question-shape: answer-is-a-why
+  object: Transcript stage with no diarisation stated (spec step 2)
+  situation: Moderator says 'this menu is confusing, right?'; extractor answers 'player found menu confusing'.
+  consequence: Answers reflect the moderator's hypothesis; no eval slice exists to measure it.
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: 'Add 20 gold videos with a leading moderator; metric: % answers whose evidence span is a moderator utterance;
+    target 0.'
+  shallow: false
+  perspective: eval
+  variants_of:
+  - speech-14
+  - moderator-5
+- id: qauthor-2
+  title: A 'why did the player quit' question runs on all 12 videos of a session though quitting can only occur in the last
+    one
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element:
+    - question
+    - option
+    session-shape: 5-20-videos
+    question-shape:
+    - event-did-not-happen-in-this-video
+    - fits-no-option
+    correctness-failure: forced-choice-bias
+  object: 'step 3: ''The answers form a structured table per video.'''
+  situation: question 'Primary reason for leaving' is asked of video 3 of 12, where the player did not leave; options contain
+    no 'did not leave in this video' value
+  consequence: the LLM picks the nearest reason (for example 'frustrated by controls') on 11 of 12 videos, producing 11 false
+    churn reasons per session in the table
+  p_typical: 0.12
+  grounded: quote
+  evidence: '"The answers form a structured table per video." + "The targets are mostly detecting churn in the tutorial and
+    just after it."'
+  already_specified: false
+  proposed: give every event question an explicit 'did not occur in this video' option and a scope flag (any video / last
+    video only)
+  shallow: false
+  perspective: qauthor
+  variants_of:
+  - skeptic-4
+- id: player-10
+  title: Spoken 'stop recording' is transcribed and extracted as a churn signal instead of a consent withdrawal
+  level: L3
+  cell:
+    stage:
+    - per-video-answers
+    - recruitment-and-consent
+    speech-shape: continuous-think-aloud
+    question-shape: fits-an-option
+    session-shape: session-ends-mid-sentence
+    processing-status: extracting
+    data-element: consent-record
+    correctness-failure: forced-choice-bias
+  object: per-video answer to the tutorial-churn question
+  situation: 'At 41:20 the player says ''okay stop recording, I''m done''; video 3 ends there; the extractor picks the option
+    ''player expressed wish to leave the game''.'
+  consequence: Withdrawal of consent is counted as tutorial churn in the cohort and the player's later videos (4 and 5) are
+    still processed.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: A withdrawal-phrase detector (stop recording, delete this) routes the session to a human before extraction and
+    halts processing of later videos for that player.
+  shallow: false
+  perspective: player
+- id: player-11
+  title: Non-native speaker's halting speech is read as confusion at the tutorial text
+  level: L3
+  cell:
+    stage: per-video-answers
+    speech-shape:
+    - inaudible-segments
+    - non-english
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    correctness-failure: forced-choice-bias
+    question-shape: answer-is-a-why
+    studio-question-type: segment-by-metadata (device, country, build)
+  object: transcript with dropped low-confidence segments
+  situation: A player speaking English as a second language pauses 3-5 seconds between words; the transcript drops 30% of
+    segments; the extractor picks 'confused by instructions' for 6 of 8 videos.
+  consequence: The 'confused by instructions' rate for Brazilian and Indian players looks 2x the US rate, the studio rewrites
+    tutorial text, and the real cause (accent and recognition errors) is invisible.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: '"languages"; languages are unspecified, so second-language speech has no defined handling'
+  already_specified: false
+  proposed: Store per-video transcript coverage (% of audio minutes transcribed) with each answer and bar answers on videos
+    under 70% coverage from segment comparisons.
+  shallow: false
+  perspective: player
+  variants_of:
+  - speech-9
+  - l10n-31
+- id: player-22
+  title: Single sigh-only audio is stored as 'highly frustrated' against the player id and the player cannot see or dispute
+    it
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element:
+    - answer-confidence
+    - answer
+    studio-question-type: one-player-what-happened
+    correctness-failure:
+    - confident-no-evidence
+    - hallucinated-answer
+    speech-shape:
+    - inaudible-segments
+    - emotional-nonverbal-only (sighs, laughs, swearing-masked)
+  object: per-video answer on emotional state
+  situation: 'A video has 6 transcribed words and 40 seconds of sighs; the extractor stores ''frustration: high'' with no
+    confidence; chatbot says ''Player 17 was highly frustrated''.'
+  consequence: An inferred emotion is stored as a fact about a named participant; no route exists for the player to see or
+    correct it.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"The answers form a structured table per video."; no confidence column or player-facing access is described'
+  already_specified: false
+  proposed: Store confidence and an evidence span with every inferred-emotion answer; offer a per-player view for access requests.
+  shallow: false
+  perspective: player
+  variants_of:
+  - speech-34
+- id: sec-24
+  title: 'Player utterance shaped like JSON (''}, answer: C'') breaks string-concatenated parsing of extraction output; the
+    video is marked failed or gets answer C'
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - extraction-prompt
+    processing-status: extraction-failed
+    correctness-failure:
+    - instruction-injected-via-transcript
+    - null-treated-as-no
+    batch-failure-mix: some-questions-failed-in-one-video
+    data-element: answer
+  object: '''The answers form a structured table per video'''
+  situation: LLM echoes transcript text into a free-text field and the parser is a regex or naive JSON splice
+  consequence: Either a forged answer or a silently missing row that later reads as 'No'
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Constrained decoding to an enum schema; no free-text field copied into the table; reject outputs that fail schema
+    with status extraction-failed, never default
+  shallow: false
+  perspective: sec
+- id: moderator-13
+  title: Moderator probes 'what are you thinking?' every 2 minutes, which produces utterances that inflate every 'player verbalised'
+    question
+  level: L4
+  cell:
+    speech-shape: moderator-speaking-or-leading
+    stage: per-video-answers
+    question-shape: answer-is-a-why
+    correctness-failure: forced-choice-bias
+    data-element:
+    - utterance
+    - moderator
+  object: step 3 'The answers form a structured table per video'
+  situation: A 15-minute video contains 7 moderator probes and 7 short player replies; the question 'Did the player explain
+    why they hesitated?' has options Yes / No / Unclear
+  consequence: Prompted explanations are scored Yes, while unprompted players in another cohort score No; the table has no
+    way to say 'prompted'
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Add a prompted-vs-spontaneous distinction to the 'why' question options and pass moderator turns to the extractor
+    labelled
+  shallow: false
+  perspective: moderator
+  variants_of:
+  - moderator-5
+- id: moderator-21
+  title: A moderator-instructed 'skip the tutorial' session (the player was allowed to skip at step 2) is scored as churn
+    at step 2
+  level: L4
+  cell:
+    data-element:
+    - tutorial-step
+    - moderator
+    stage: per-video-answers
+    question-shape: negation-player-never-did-x
+    correctness-failure: forced-choice-bias
+    studio-question-type: compare-two-steps
+    speech-shape: moderator-speaking-or-leading
+  object: step 3 'detecting churn in the tutorial and just after it'
+  situation: Moderator tells 8 experienced players to skip ahead after step 2 to save time; the transcript contains 'okay
+    skipping' and no later tutorial speech
+  consequence: Question 'Where did the player stop engaging with the tutorial?' is answered 'step 2' for 8 players who were
+    instructed, adding 8 false churn events at step 2
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Moderator-instruction log with a tutorial-skipped-by-instruction flag, and a corresponding option on the churn
+    question
+  shallow: false
+  perspective: moderator
+- id: stitch-8
+  title: 'A stuck period that straddles a boundary (14:00 of video 2 to 03:00 of video 3) answers No to ''stuck more than
+    3 minutes?'' in both videos'
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - session-level-aggregation
+    question-shape:
+    - answer-spans-videos
+    - answer-is-a-time
+    session-shape: 5-20-videos
+    data-element: tutorial-step
+    correctness-failure: inconsistent-across-videos
+    studio-question-type: cohort-count
+  object: 'Per-video answers table: ''The answers form a structured table per video.'''
+  situation: 'Player is stuck on tutorial step 3 for 4 minutes: 1 minute at the end of video 2 and 3 minutes at the start
+    of video 3; question threshold is >3 minutes.'
+  consequence: Neither video meets the threshold; 'how many players got stuck >3 min at step 3' undercounts every player whose
+    stall crossed a 15-minute mark (about 1 stall in 5 for 4-minute stalls if stalls are uniform in time).
+  p_typical: 0.2
+  grounded: quote
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." + "The answers
+    form a structured table per video."'
+  already_specified: false
+  proposed: Duration questions are answered at session level from per-video start/end-of-state fields, or extracted on a window
+    spanning adjacent videos.
+  shallow: false
+  perspective: stitch
+- id: stitch-38
+  title: Per-video extraction of a 'player's skill level' question re-guesses from scratch every 15 minutes, so a 20-video
+    session gets 20 independent and drifting labels
+  level: L3
+  cell:
+    stage: per-video-answers
+    correctness-failure: inconsistent-across-videos
+    session-shape: 5-20-videos
+    question-shape: answer-depends-on-prior-video
+    data-element:
+    - answer-confidence
+    - answer
+    - player
+    studio-question-type: find-players-who
+  object: Fixed question set applied per video
+  situation: Question 'Is the player experienced with the genre? (Novice/Some/Expert)'; the player says 'I've played every
+    Souls game' in video 1 only.
+  consequence: Video 1 = Expert, videos 2-20 = Novice/Some by guess; segment 'experts quit at step X' depends on rollup and
+    on which videos were sampled.
+  p_typical: 0.05
+  grounded: quote
+  evidence: '"how videos of one session are linked" + "The answers form a structured table per video."'
+  already_specified: false
+  proposed: Mark questions as session-static in the registry; extract them once over the session (or carry forward the first
+    confident answer) instead of per video.
+  shallow: false
+  perspective: stitch
+  variants_of:
+  - extract-6
+- id: skeptic-4
+  title: 'Per-video rows for tutorial-only questions: in a 12-video session, 11 videos answer ''did not happen'', and a count
+    over rows uses videos (6,000) not players (500) as the denominator'
+  level: L4
+  cell:
+    stage: per-video-answers
+    session-shape:
+    - 5-20-videos
+    - 10-plus-hour-session
+    question-shape: event-did-not-happen-in-this-video
+    correctness-failure: wrong-denominator
+    data-element: null-vs-no
+    studio-question-type: cohort-count
+    scale:
+    - 500-players
+    - 1-player-10-hour-session
+  object: '''The answers form a structured table per video.'' + targets ''mostly detecting churn in the tutorial'''
+  situation: Question 'Did the player quit during the tutorial?' is run on every video of a 3-hour session; the tutorial lives
+    in video 1
+  consequence: Bot reports '4% of sessions quit in tutorial' when it divided 240 'Yes' by 6,000 video rows; true player rate
+    is 48%
+  p_typical: 0.12
+  grounded: quote
+  evidence: '"The answers form a structured table per video." + "A chatbot for the gaming studio answers the studio''s questions
+    from that table, so that a question over, say, 500 players is fast."'
+  already_specified: false
+  proposed: Store answers per session (or per tutorial window) for session-scoped questions; tag each question with its unit
+    (video, session, player) and assert the denominator unit in the SQL
+  shallow: false
+  perspective: skeptic
+  also_from:
+  - onboard-24
+- id: speech-21
+  title: 'Silent player and a visual-only question: forced-choice answer of ''No'' for ''did the player tap the highlighted
+    button?'''
+  level: L4
+  cell:
+    stage: per-video-answers
+    speech-shape: silent-player
+    question-shape: answer-needs-visuals
+    correctness-failure: forced-choice-bias
+    studio-question-type: cohort-count
+    data-element: answer
+  object: Owner statement 'Transcript loses visual information'
+  situation: A question about on-screen behaviour is asked of a transcript that contains only sparse remarks like 'ok' and
+    'hm'
+  consequence: The extractor guesses; the cohort-count answer 'only 31% tapped the button' is a function of how talkative
+    players were
+  p_typical: 0.3
+  grounded: quote
+  evidence: '"Transcript loses visual information."'
+  already_specified: false
+  proposed: Give every audio-answerable question an 'unknowable from audio' option and tag questions by the modality they
+    need
+  shallow: false
+  perspective: speech
+  variants_of:
+  - speech-1
+  - uxr-3
+- id: exec-18
+  title: Silent players (about 30% of a cohort) fall into 'other' or a forced choice, understating confusion in the headline
+  level: L3
+  cell:
+    speech-shape: silent-player
+    correctness-failure: other-option-overused
+    stage: per-video-answers
+    question-shape: unknowable-from-audio
+    studio-question-type: cohort-count
+    scale: 50-players
+    data-element: answer
+  object: per-video answer for 'why did the player stall?' with a transcript of 6 words
+  situation: 18 of 60 players in a pilot speak under 20 words in 15 minutes; extractor returns 'other' for 14 and a guess
+    for 4; the exec is told 'only 18% mention confusion'
+  consequence: Under-reporting by half; the quiet players are the exact churn risk group
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."; players who barely
+    speak give the questions almost nothing to answer from'
+  already_specified: false
+  proposed: Add 'not observable' as a first-class option and report it as its own bar in every cohort answer
+  shallow: false
+  perspective: exec
+  variants_of:
+  - speech-1
+- id: uxr-1
+  title: 'Silent final 60-120 s before quit: per-video answer for ''why did the player leave'' is taken from an utterance
+    minutes earlier, with no evidence-span check'
+  level: L4
+  cell:
+    stage:
+    - per-video-answers
+    - session-level-aggregation
+    speech-shape: silent-player
+    question-shape: perceptual-cause-not-verbalised
+    session-shape: last-video-under-1-minute
+    correctness-failure: confident-no-evidence
+    data-element: evidence-span
+  object: per-video answers table row for the last video of a session; churn question of the 'fixed set of questions with
+    options'
+  situation: Player stops talking 60-120 s before closing the game (the classic pre-quit silence); the last video is under
+    1 minute and contains no speech at all
+  consequence: Extractor either answers the quit-reason question for the last video from nothing (hallucinated option) or
+    the session aggregate inherits a reason from a joke made 4+ minutes earlier; the moment a researcher most wanted to watch
+    is the one with zero transcript content
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it."; the pre-quit moments are often silent
+    and no evidence-span rule is described'
+  already_specified: false
+  proposed: 'Assert in test: if the evidence span of a quit-reason answer ends more than 60 s before session end, answer is
+    stored as ''unknown - silent before quit'', and the trailing silence duration is a column'
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - percep-2
+- id: uxr-3
+  title: Repeated mis-taps on the wrong button produce no speech, or only 'huh?', so 'did the player understand the control'
+    is answered Yes
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element: screen-state
+    question-shape: answer-needs-visuals
+    speech-shape: silent-player
+    correctness-failure: perceptual-cause-attributed-to-verbal-option
+  object: fixed question about control comprehension; transcript of a tutorial video
+  situation: Player taps a non-interactive area 6 times before finding the real button, saying nothing or a single 'huh'
+  consequence: Answer row records 'understood control' or 'no issue'; the mis-tap pattern a researcher logged by watching
+    is unrecoverable because the screen is not in the transcript
+  p_typical: 0.15
+  grounded: quote
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."'
+  already_specified: false
+  proposed: Mark visual-only questions with answer_source=audio and allow option 'cannot tell from audio'; store input-event
+    counts if telemetry is ever joined
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - speech-21
+- id: uxr-8
+  title: Sarcasm ('oh great, another popup') is mapped to a positive sentiment option
+  level: L3
+  cell:
+    speech-shape: profanity-or-slang
+    question-shape: fits-two-options
+    stage: per-video-answers
+    correctness-failure: forced-choice-bias
+    data-element: answer
+  object: sentiment or 'how did the player feel about the tutorial popups' question options
+  situation: Player uses ironic praise 3 times in a 15-minute video with flat or annoyed prosody that speech-to-text does
+    not carry
+  consequence: Answer 'positive' for a video a researcher would code as annoyed; tone carried only by voice is stripped before
+    the LLM sees the words
+  p_typical: 0.11
+  grounded: inferred
+  evidence: '"Each video is converted to a transcript."; a text transcript drops prosody, so sarcasm reads literally'
+  already_specified: false
+  proposed: Golden-set test with 10 ironic utterances; require an evidence quote and allow option 'ambiguous tone'
+  shallow: false
+  perspective: uxr
+- id: uxr-11
+  title: 'Say-do gap: player says ''this is easy'' while failing the same step 3 times; table records ''tutorial clear'''
+  level: L3
+  cell:
+    stage: per-video-answers
+    question-shape: answer-needs-visuals
+    speech-shape: continuous-think-aloud
+    correctness-failure: perceptual-cause-attributed-to-verbal-option
+    studio-question-type: cohort-why
+    data-element: screen-state
+  object: tutorial clarity question; per-video answer
+  situation: Verbal self-report contradicts on-screen outcome (failure screen shown 3 times)
+  consequence: Researchers trust behaviour over self-report; the transcript-only pipeline can only trust self-report, so clarity
+    rates are inflated for confident-talking players
+  p_typical: 0.1
+  grounded: quote
+  evidence: '"Transcript loses visual information."'
+  already_specified: false
+  proposed: Tag each answer with source 'self-report' vs 'observed'; chatbot must say which when quoting a rate
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - percep-1
+- id: uxr-12
+  title: 'Post-session debrief recorded in the last video: retrospective ''I''d have quit because it was boring'' is stored
+    as the in-moment quit cause'
+  level: L3
+  cell:
+    stage:
+    - per-video-answers
+    - session-level-aggregation
+    question-shape: answer-is-a-why
+    session-shape: 2-4-videos
+    correctness-failure: answer-attached-to-wrong-video-index
+    data-element:
+    - evidence-span
+    - moderator
+    speech-shape: moderator-speaking-or-leading
+  object: quit-reason question; last video of session containing moderator debrief
+  situation: Moderator asks 'why would you stop playing here?' after gameplay ended; player gives a rationalised reason that
+    differs from what they said during play ('this camera is awful')
+  consequence: Answer row for the final video holds the debrief reason, and session aggregation picks it as the latest statement;
+    retrospective rationalisation overrides in-play evidence
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Session field 'gameplay_end_ts'; answers with evidence after it are stored in a separate debrief column
+  shallow: false
+  perspective: uxr
+- id: uxr-23
+  title: Deictic references ('this thing', 'over here', 'that one') cannot be resolved to a UI element without the screen
+  level: L3
+  cell:
+    question-shape: answer-needs-visuals
+    data-element: screen-state
+    stage: per-video-answers
+    studio-question-type: find-players-who
+    correctness-failure: hallucinated-answer
+    speech-shape: continuous-think-aloud
+  object: question 'Which UI element confused the player?' with options listing tutorial elements
+  situation: Player says 'what does this do?' 9 times in a video without naming the element
+  consequence: Extractor guesses an option; find-players-who 'were confused by the shop button' returns players whose 'this'
+    may have been the map
+  p_typical: 0.08
+  grounded: quote
+  evidence: '"Transcript loses visual information."'
+  already_specified: false
+  proposed: Add option 'unresolved reference'; or attach a single frame at each deictic utterance timestamp for a vision model
+    to resolve
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - percep-1
+- id: uxr-30
+  title: Player in video 7 refers back to a tutorial step from video 1 ('that thing at the start still makes no sense'); per-video
+    extraction cannot attribute it
+  level: L3
+  cell:
+    question-shape: answer-depends-on-prior-video
+    session-shape: 5-20-videos
+    stage: per-video-answers
+    data-element:
+    - tutorial-step
+    - utterance
+    correctness-failure: answer-attached-to-wrong-video-index
+  object: per-video answers; tutorial-step attribution
+  situation: Lingering confusion surfaces 90 minutes after the step that caused it
+  consequence: Answer lands on video 7 (post-tutorial) with no link to step; the 'just after tutorial' signal is credited
+    to a later mechanic
+  p_typical: 0.05
+  grounded: quote
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." + "how videos
+    of one session are linked"'
+  already_specified: false
+  proposed: Give the extractor a running session summary from prior videos and allow answers to reference an earlier step
+    id
+  shallow: false
+  perspective: uxr
+  variants_of:
+  - extract-6
+- id: uxr-36
+  title: Disengagement just after the tutorial (shorter utterances, flat narration, aimless play) has no observable in a categorical
+    per-video answer
+  level: L3
+  cell:
+    stage: per-video-answers
+    question-shape: perceptual-cause-not-verbalised
+    studio-question-type: cohort-why
+    data-element: utterance
+    session-shape: 2-4-videos
+    speech-shape: silent-player
+    correctness-failure: null-treated-as-no
+  object: '''just after'' the tutorial target; per-video answers'
+  situation: Player completes the tutorial then wanders for 10 minutes saying 'ok... ok... hm'
+  consequence: No question fires (no complaint stated), so the post-tutorial boredom churn the owner targets is answered 'no
+    issue'
+  p_typical: 0.06
+  grounded: quote
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it."'
+  already_specified: false
+  proposed: Per-video words per minute and mean utterance length stored; question 'did the player state a goal in this video?
+    yes/no'
+  shallow: false
+  perspective: uxr
+# counts: items=100 quote=22 inferred=45 speculative=33 already_specified_true=0 already_specified_false=100
