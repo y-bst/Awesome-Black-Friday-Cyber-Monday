@@ -1,0 +1,420 @@
+- id: "qauthor-1"
+  title: "First question set for a new game is written with 0 transcripts, so options reflect the PM's guess, not what players say"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: question, time-and-change: first-game-onboarded, scale: 0-players-new-game, question-shape: fits-no-option}
+  object: "step 3: 'a fixed set of questions with options, written per game target'"
+  situation: "PM writes the churn questions and 4-6 options for a new game before any session has been transcribed; no pilot of even 5 players is defined between authoring and the 500-player run"
+  consequence: "options miss the real churn reasons, the first 500 players are forced into 'other' or a wrong option, and the whole batch must be re-extracted after the first look at data"
+  p_typical: 0.20
+  grounded: quote
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "add a pilot step - run a draft question set on 5-10 transcripts, read the 'other' share and revise options before the full ingest"
+  shallow: false
+- id: "qauthor-2"
+  title: "A 'why did the player quit' question runs on all 12 videos of a session though quitting can only occur in the last one"
+  level: L3
+  cell: {stage: per-video-answers, data-element: question, session-shape: 5-20-videos, question-shape: event-did-not-happen-in-this-video, correctness-failure: forced-choice-bias}
+  object: "step 3: 'The answers form a structured table per video.'"
+  situation: "question 'Primary reason for leaving' is asked of video 3 of 12, where the player did not leave; options contain no 'did not leave in this video' value"
+  consequence: "the LLM picks the nearest reason (for example 'frustrated by controls') on 11 of 12 videos, producing 11 false churn reasons per session in the table"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "give every event question an explicit 'did not occur in this video' option and a scope flag (any video / last video only)"
+  shallow: false
+- id: "qauthor-3"
+  title: "No 'other / none of these' option is mandated, so a question where no option fits is answered with the closest wrong option"
+  level: L3
+  cell: {stage: answer-options, data-element: option, question-shape: fits-no-option, correctness-failure: forced-choice-bias, scale: 500-players}
+  object: "assumption: questions are multiple-choice with 3-6 options, answered once per video"
+  situation: "a churn question has 4 options, the real reason (e.g. 'could not find the pause menu') is none of them, over 500 players"
+  consequence: "500-player counts for the 4 options are inflated by players who belong to none of them; the chatbot reports 'most players quit because of X' with no 'unknown' share visible"
+  p_typical: 0.25
+  grounded: inferred
+  evidence: "questions are multiple-choice with 3-6 options, answered once per video by an LLM"
+  proposed: "reserve one option id per question for 'none of these' with an optional short free-text reason, and report its share beside every count"
+  shallow: false
+- id: "qauthor-4"
+  title: "When 'other' is mandated, a PM never reads its free text, so new churn reasons stay invisible"
+  level: L3
+  cell: {stage: answer-options, data-element: option, correctness-failure: other-option-overused, scale: 5000-players, studio-question-type: cohort-why}
+  object: "the 'other' option of any churn question in the answers table"
+  situation: "22% of 5000 players land on 'other' for 'reason for quitting'; the table stores only the option id, no reason text"
+  consequence: "the largest single bucket is unexplained and the PM cannot tell which new option to add; the chatbot answers 'cohort-why' with the top named option, which is the second-largest"
+  p_typical: 0.08
+  grounded: speculative
+  evidence: "none"
+  proposed: "store a 10-word reason string with every 'other' answer and cluster it monthly to propose new options"
+  shallow: false
+- id: "qauthor-5"
+  title: "Two options are both partly true for one video and the question is single-select"
+  level: L3
+  cell: {stage: answer-options, question-shape: two-options-both-partly-true, correctness-failure: forced-choice-bias, data-element: answer}
+  object: "assumption: 'answered once per video' with 3-6 options"
+  situation: "player says 'I don't get what the arrow means and also this is boring' - options 'instructions unclear' and 'lost interest' both apply"
+  consequence: "the LLM picks one by option order or wording; the other cause is lost from a table meant to detect tutorial churn, and which one wins is not reproducible"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "answered once per video by an LLM"
+  proposed: "per question declare single-select or multi-select; for multi-select store a list of option ids"
+  shallow: false
+- id: "qauthor-6"
+  title: "Option text renamed under the same option id silently changes the meaning of 6 months of stored answers"
+  level: L3
+  cell: {stage: question-set-registry, data-element: option, question-set-version-state: option-renamed-same-id, time-and-change: question-set-revised, correctness-failure: mixed-version-aggregation}
+  object: "the answers table stores option answers per video; no versioning of the question set is described"
+  situation: "option 'C: UI confusing' is reworded to 'C: could not find the next objective' while keeping id C; old rows still say C"
+  consequence: "a 12-month trend of C mixes two different meanings; a chart shows a step change on the rename date that is not a player change"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "option ids are immutable; a rename or redefinition creates a new option id and a mapping row in the question-set registry"
+  shallow: false
+- id: "qauthor-7"
+  title: "Question reworded under the same question id leaves old and new answers in one column"
+  level: L3
+  cell: {stage: question-set-registry, data-element: question-set-version, question-set-version-state: question-reworded-same-id, correctness-failure: mixed-version-aggregation, answer-afterlife: copied-into-deck}
+  object: "Constraints: 'the framework for generating the questions so that any type of question can be answered'"
+  situation: "'Did the player complete the first quest?' becomes 'Did the player complete the first quest without help?' at id Q4, after 200 of 500 players are extracted"
+  consequence: "the 'yes' rate for Q4 drops 18 points between cohorts for a wording reason; a deck slide copied last week quotes the old number with no version label"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "every wording change bumps question version; the table row carries question_id plus question_version"
+  shallow: false
+- id: "qauthor-8"
+  title: "A retired question leaves a column that is all null for new players and the chatbot reads null as No"
+  level: L3
+  cell: {stage: answers-table, data-element: null-vs-no, question-set-version-state: question-retired, chatbot-response-behaviour: mixes-null-with-no, correctness-failure: null-treated-as-no}
+  object: "step 4: 'A chatbot ... answers the studio's questions from that table'"
+  situation: "question Q9 retired after player 300 of 500; players 301-500 have no Q9 value"
+  consequence: "'what share did X' answers 60% yes of 500 when the true denominator is 300; or 'No' for 200 players who were never asked"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "write a 'not asked (question retired)' marker per row, distinct from 'asked, option No', and exclude it from denominators"
+  shallow: false
+- id: "qauthor-9"
+  title: "Question set is forked per game, so 'compare our two games' has no shared columns"
+  level: L3
+  cell: {stage: fixed-question-set, question-set-version-state: per-game-fork, studio-question-type: cross-game-or-cross-studio-benchmark, tenancy: one-studio-many-games, scale: 10-games-at-once}
+  object: "step 3: 'written per game target'"
+  situation: "a studio with 2 games asks 'which game loses more players in the first 10 minutes'; game A has Q1-Q8, game B was authored separately with Q1-Q11, with different option sets for 'reason for quitting'"
+  consequence: "the chatbot can only compare questions with the same id and options; it either refuses or silently maps non-equivalent options and returns a misleading ranking"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "written per game target"
+  proposed: "maintain a small core question block (completion, quit moment, quit reason) shared by all games, with per-game blocks on top"
+  shallow: false
+- id: "qauthor-10"
+  title: "A game update removes tutorial step 4 but the question 'Did the player finish the crafting step' stays in the set"
+  level: L3
+  cell: {stage: question-set-registry, data-element: tutorial-step, time-and-change: game-update-changes-tutorial, question-set-version-state: per-game-version-fork, studio-question-type: compare-two-versions}
+  object: "step 3: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  situation: "build 1.4 removes the crafting step; the PM keeps one question set for both builds; build 1.4 players are asked about a step that does not exist"
+  consequence: "build 1.4 gets 'No' or hallucinated 'Yes' for a step they never saw, so 'compare 1.3 vs 1.4 crafting completion' shows a crash from 80% to 5% that is an artifact"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "bind each question to a tutorial-step id and a build range; questions outside the range are 'not applicable', not asked"
+  shallow: false
+- id: "qauthor-11"
+  title: "A step the question set never asked about is the cause of churn, and the chatbot has nothing to say about it"
+  level: L3
+  cell: {stage: chatbot-answer, studio-question-type: question-about-a-step-the-set-never-asked, question-shape: question-not-in-set, chatbot-response-behaviour: says-no-data-correctly, data-element: tutorial-step}
+  object: "Known problems: 'The question set is small, so most of what is in the video and transcript is never captured.'"
+  situation: "studio asks 'do players struggle with the dodge-roll prompt in step 6'; no question mentions step 6"
+  consequence: "best case the bot says it has no data although 500 transcripts contain the answer; worst case it substitutes the nearest question ('struggled with controls') and reports it as the answer"
+  p_typical: 0.45
+  grounded: quote
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "when no question maps, bot states 'not in the fixed set', logs the question, and offers a targeted re-extraction over stored transcripts"
+  shallow: false
+- id: "qauthor-12"
+  title: "A 50-question set run in one prompt per video produces position bias and earlier answers leaking into later ones"
+  level: L3
+  cell: {stage: extraction-prompt, scale: question-set-of-50-questions, correctness-failure: forced-choice-bias, data-element: prompt-version, time-and-change: model-upgraded}
+  object: "Constraint: 'Ingestion time and cost are not a concern.'"
+  situation: "because cost is no concern the PM grows the set from 8 to 50 questions answered in a single call per video"
+  consequence: "answer quality drops for questions 30-50 (context fatigue); correlated errors appear (all 'frustrated' options chosen together); nobody measures it because there is no per-question accuracy"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "cap questions per call at a tested number (e.g. 8-10) and run groups as separate calls; compare 50-in-one vs 5x10 on 20 labelled videos"
+  shallow: false
+- id: "qauthor-13"
+  title: "Skip logic between questions is undefined, so a follow-up is answered when its parent was 'No'"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: question, question-shape: answer-depends-on-prior-video, correctness-failure: hallucinated-answer}
+  object: "step 3: 'a fixed set of questions with options'"
+  situation: "Q5 'Did the player see the tutorial popup?' = No on video 2, but Q6 'How did the player react to the popup?' still gets answered"
+  consequence: "Q6 contains an invented reaction for 100% of players who answered No on Q5; counts of reaction options include people who never saw the popup"
+  p_typical: 0.07
+  grounded: speculative
+  evidence: "none"
+  proposed: "add a 'depends_on: Q5=Yes' field to question definitions; when unmet the answer is 'not applicable'"
+  shallow: false
+- id: "qauthor-14"
+  title: "Count question 'how many times did the player die' has bucketed options and per-video values that cannot be summed to a session"
+  level: L3
+  cell: {stage: session-level-aggregation, question-shape: answer-is-a-count, session-shape: 5-20-videos, data-element: answer, correctness-failure: wrong-denominator}
+  object: "step 3: 'structured table per video'"
+  situation: "options are '0', '1-2', '3+' per video; a player has '1-2' on 6 videos"
+  consequence: "session total is anywhere from 6 to 12 or more; the chatbot's 'average deaths per player' is a made-up number and a 'cohort-count' question over 500 players cannot be computed from buckets"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "for count questions store an integer, not a bucket; define 'sum across videos' as the session rule"
+  shallow: false
+- id: "qauthor-15"
+  title: "'When did the player first get confused' is asked per video, but the table has no in-video offset and offsets reset per video"
+  level: L3
+  cell: {stage: per-video-answers, question-shape: answer-is-a-time, transcription-subsystem: timestamps-reset-per-video, data-element: timestamp, studio-question-type: timeline-of-one-player}
+  object: "Unspecified: 'how videos of one session are linked'"
+  situation: "video 4 of 9 answers 'confused at around 6 minutes'; the session offset of video 4 is not stored"
+  consequence: "'timeline of one player' cannot place the moment on the session clock (it is minute 51, not minute 6); a time answer becomes unusable for 'compare two steps' by time"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "how videos of one session are linked"
+  proposed: "time-type questions return an offset in seconds within the video and the table stores video_index plus video start offset"
+  shallow: false
+- id: "qauthor-16"
+  title: "No loop feeds studio questions the chatbot could not answer back into question authoring"
+  level: L3
+  cell: {stage: studio-feedback-loop, question-shape: question-not-in-set, chatbot-response-behaviour: says-no-data-correctly, time-and-change: a-year-of-data, studio-question-type: what-can-you-answer}
+  object: "Constraints: 'Their questions are not known in advance.'"
+  situation: "over 12 months the chatbot answers 'no data' to 140 distinct studio questions, 40 of them variants of 'why did players stop at the second boss'"
+  consequence: "the PM keeps authoring questions from intuition; the most-asked unanswerable question is never added; the framework goal 'any type of question' is not measured"
+  p_typical: 0.20
+  grounded: quote
+  evidence: "Their questions are not known in advance."
+  proposed: "log every unanswerable studio question with game, count and date; review top 10 monthly and turn them into candidate questions"
+  shallow: false
+- id: "qauthor-17"
+  title: "The target of 'any type of question' is stated but no taxonomy of question types the set must cover exists"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: question, studio-question-type: cohort-why, question-shape: answer-is-a-why, scale: 500-players}
+  object: "Constraints: '(b) the framework for generating the questions so that any type of question can be answered'"
+  situation: "PM must decide whether the framework covers count, time, why, who, sequence and sentiment questions; spec lists none; current question count and answer types are 'Unspecified'"
+  consequence: "authors write 8 'why' questions and no 'when' or 'how many' question; first studio asks a time question and the table has no column that answers it"
+  p_typical: 0.18
+  grounded: quote
+  evidence: "so that any type of question can be answered"
+  proposed: "write a 6-row taxonomy (count, time, why, who, sequence, sentiment) and require at least one core question per row per game target"
+  shallow: false
+- id: "qauthor-18"
+  title: "Visual-cause question has verbal options only, so the LLM attributes a visual failure to a verbal cause"
+  level: L3
+  cell: {stage: answer-options, question-shape: perceptual-cause-not-verbalised, correctness-failure: perceptual-cause-attributed-to-verbal-option, speech-shape: silent-player, data-element: screen-state}
+  object: "Known problems: 'Transcript loses visual information.'"
+  situation: "player misses a low-contrast tutorial arrow, says nothing for 90 seconds, then quits; question 'Why did the player stall?' offers 'boring', 'confusing text', 'controls', 'other'"
+  consequence: "LLM answers 'boring' or 'other' with confidence; the true cause (the arrow was invisible) is recorded as a motivation problem and the studio fixes the wrong thing"
+  p_typical: 0.20
+  grounded: quote
+  evidence: "Transcript loses visual information."
+  proposed: "add option 'cannot tell from audio (possible visual cause)' to every why question and report its share"
+  shallow: false
+- id: "qauthor-19"
+  title: "Question definitions carry no 'unknowable from audio' flag, so thresholds are measured by an LLM with no clock"
+  level: L3
+  cell: {stage: fixed-question-set, question-shape: unknowable-from-audio, speech-shape: silent-player, correctness-failure: hallucinated-answer, data-element: utterance}
+  object: "assumption: 'transcript is speech-to-text of the player's think-aloud plus any game audio; no on-screen text; no telemetry joined'"
+  situation: "option 'Player stuck for more than 2 minutes' for a player who stays silent for 3 minutes; the transcript has no utterances in that span"
+  consequence: "the LLM can only guess duration from the absence of text, answering 'No' (nothing said) or 'Yes' with no evidence; both are unfalsifiable"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "no on-screen text; no telemetry joined"
+  proposed: "reject options that state durations or counts unless a timestamped field supports them; mark such questions 'needs telemetry'"
+  shallow: false
+- id: "qauthor-20"
+  title: "'Just after the tutorial' has no boundary, so questions disagree on which videos are in scope"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: game-target, session-shape: 10-plus-hour-session, time-and-change: game-target-changes-beyond-tutorial, scale: 1-player-10-hour-session}
+  object: "step 3: 'detecting churn in the tutorial and just after it'"
+  situation: "a 10-hour session has 40 videos; the tutorial ends at minute 25 (inside video 2); the question set is run on all 40 videos"
+  consequence: "38 videos receive tutorial questions about a tutorial that is over; 'just after' is undefined (5 minutes? the first hour?), so the table cannot be sliced by tutorial vs post-tutorial"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "define scope per question as a video index range or a 'first N minutes after tutorial end' window and store it in the question definition"
+  shallow: false
+- id: "qauthor-21"
+  title: "Options authored in English are applied to a Japanese transcript without a stated option-language rule"
+  level: L3
+  cell: {stage: answer-options, data-element: option, speech-shape: non-english, transcription-subsystem: wrong-language-detected}
+  object: "Unspecified: 'languages'"
+  situation: "option 'Player says the controls are clunky' is matched against a Japanese transcript where the player says 'sono sousa wa muzukashii'"
+  consequence: "option semantics depend on the LLM's translation; accuracy for Japanese players is unmeasured, and a cohort split by country shows a difference that is a language artifact"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "Unspecified: ... languages"
+  proposed: "keep option ids language-neutral, write definitions in one language, and test each question on 5 non-English transcripts before onboarding"
+  shallow: false
+- id: "qauthor-22"
+  title: "Slang options like 'gg' or 'this is cooked' have no definitions in the option text"
+  level: L4
+  cell: {stage: answer-options, speech-shape: profanity-or-slang, transcription-subsystem: profanity-masked-by-vendor, correctness-failure: forced-choice-bias, data-element: utterance}
+  object: "option 'frustrated' of a sentiment question in the answers table"
+  situation: "player says 'gg this tutorial is cooked' on video 2; masked profanity shows as '****' in the transcript"
+  consequence: "the question 'player sentiment about tutorial' returns 'neutral' for this transcript while a human would mark 'frustrated'; test would be 'a transcript with 3 masked swear words yields frustrated'"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "add a one-line definition per option with 2 slang examples and a rule that masked words count as negative sentiment"
+  shallow: false
+- id: "qauthor-23"
+  title: "Questions about what 'the player' did are not scoped to the player's voice, so moderator hints produce 'Yes'"
+  level: L3
+  cell: {stage: fixed-question-set, speech-shape: moderator-speaking-or-leading, correctness-failure: moderator-words-attributed-to-player, data-element: moderator, question-shape: negation-player-never-did-x}
+  object: "assumption: 'transcript is speech-to-text of the player's think-aloud' (no speaker labels described)"
+  situation: "moderator says 'try the button on the left'; question 'Did the player need a hint?' is answered from text that has no speaker label"
+  consequence: "answer is 'No hint needed' when the moderator hinted (or 'Yes' when the player quoted the moderator); a 'never needed a hint' negation question reports 0 hints for 41 hinted sessions"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "transcript is speech-to-text of the player's think-aloud"
+  proposed: "add a question-level instruction 'answer only from the player's speech' and an explicit moderator-intervention question per session"
+  shallow: false
+- id: "qauthor-24"
+  title: "A new question added in week 6 forces a re-run of all existing videos with no rule for what the table shows while it runs"
+  level: L3
+  cell: {stage: rerun-and-backfill, recovery-action: backfill-after-question-set-change, time-and-change: rerun-in-progress-while-queried, processing-status: rerun-in-progress, scale: 50000-videos}
+  object: "Constraint: 'Ingestion time and cost are not a concern.'"
+  situation: "PM adds Q12 and backfills 50000 videos over 20 hours; at hour 8, 18000 rows have Q12 and 32000 do not; a studio asks about Q12 at 3am"
+  consequence: "Q12 counts reflect 36% of data with no marker; 'ingestion time is not a concern' is true for the batch but the studio query inside the window gets a partial answer"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "expose per-question coverage (rows answered / rows total) and have the bot say 'Q12 covers 36% of videos, backfill in progress'"
+  shallow: false
+- id: "qauthor-25"
+  title: "No pre-release test of a question set on labelled transcripts, so wording changes cannot be shown to help or hurt"
+  level: L3
+  cell: {stage: question-set-registry, data-element: prompt-version, time-and-change: question-set-revised, correctness-failure: stale-after-prompt-change, recovery-action: backfill-after-question-set-change}
+  object: "Constraint: '(b) the framework for generating the questions'"
+  situation: "PM edits 4 option texts and ships; there is no set of, say, 30 human-labelled videos to compare old vs new accuracy"
+  consequence: "agreement with human labels may fall from 82% to 70% for Q3 and nobody sees it until a studio disputes a number"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "the framework for generating the questions so that any type of question can be answered"
+  proposed: "keep 30 labelled videos per game target; block publishing a question change if agreement drops more than 5 points"
+  shallow: false
+- id: "qauthor-26"
+  title: "A game with no tutorial makes the churn question set meaningless and the spec has no rule for it"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: game-target, time-and-change: game-target-changes-beyond-tutorial, scale: 0-players-new-game, question-shape: event-did-not-happen-in-this-video}
+  object: "step 3: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  situation: "a new studio's game has no tutorial; onboarding applies the standard tutorial-churn set; questions like 'Did the player complete the tutorial' have no referent"
+  consequence: "every row answers 'No' or 'unclear'; first dashboard after ingest is 100% 'did not complete tutorial', and the studio loses trust at the first answer"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "onboarding checklist step that confirms the game target and drops questions whose object does not exist"
+  shallow: false
+- id: "qauthor-27"
+  title: "Positive tutorial signals are not in a churn-only question set, so 'what did players enjoy' returns nothing"
+  level: L3
+  cell: {stage: fixed-question-set, studio-question-type: cohort-why, chatbot-response-behaviour: substitutes-nearest-fixed-question, question-shape: question-not-in-set, data-element: game-target}
+  object: "step 3: 'detecting churn in the tutorial'"
+  situation: "studio asks 'which tutorial moments made players excited'; every option set is framed around problems and quitting"
+  consequence: "bot returns the nearest negative-framed answer (for example 'least frustrating step') or no data; delight moments in 500 transcripts are never captured"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "detecting churn in the tutorial"
+  proposed: "add 2 core positive-signal questions per game target ('moment of delight', 'moment of understanding')"
+  shallow: false
+- id: "qauthor-28"
+  title: "Two questions overlap in meaning (Q7 'confused' and Q19 'unclear instructions') and give contradictory answers for one video"
+  level: L3
+  cell: {stage: per-video-answers, data-element: question, correctness-failure: inconsistent-across-videos, question-set-version-state: single-version, scale: question-set-of-50-questions}
+  object: "answers table columns for two overlapping questions"
+  situation: "Q7 = 'Player was confused: Yes' while Q19 = 'Instructions were clear: Yes' on the same video"
+  consequence: "the studio sees contradictory figures (34% confused, 71% instructions clear) and the chatbot picks one by chance depending on wording of the studio's question"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "run a pairwise agreement check across questions on 30 videos and merge or define the difference in the question text"
+  shallow: false
+- id: "qauthor-29"
+  title: "Question text uses internal game names the player never says (e.g. 'Warden' vs 'the blue guy')"
+  level: L4
+  cell: {stage: extraction-prompt, data-element: question, speech-shape: continuous-think-aloud, correctness-failure: hallucinated-answer}
+  object: "question 'Did the player understand the Warden's attack warning?'"
+  situation: "the player calls the NPC 'the blue guy' for 12 minutes; the question names 'Warden'; test: a transcript that mentions only 'the blue guy' and no 'Warden'"
+  consequence: "the LLM answers 'not mentioned / No' for 100% of such players, so understanding of the Warden is underreported"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "add a per-game glossary of 3-5 player aliases per entity and inject it into the extraction prompt"
+  shallow: false
+- id: "qauthor-30"
+  title: "Option order is fixed per question, so the first option wins ties and a studio comparison of two question versions is biased"
+  level: L3
+  cell: {stage: answer-options, data-element: option, correctness-failure: forced-choice-bias, question-shape: two-options-both-partly-true, question-set-version-state: option-added}
+  object: "assumption: 'multiple-choice with 3-6 options'"
+  situation: "a fifth option is inserted at position 1 for Q3; 300 existing rows had the previous first option as the tie winner"
+  consequence: "share of the old option falls 9 points because of position, not behaviour; no rule says option order is randomised or recorded"
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "questions are multiple-choice with 3-6 options"
+  proposed: "record option order in the extraction run and randomise it per call; add new options at the end for the first comparison"
+  shallow: false
+- id: "qauthor-31"
+  title: "Answers store only an option id, so the quote behind 'confused' cannot be shown when the studio asks for evidence"
+  level: L3
+  cell: {stage: evidence-display, data-element: evidence-span, studio-question-type: quote-me-evidence, correctness-failure: confident-no-evidence, chatbot-response-behaviour: invents-number}
+  object: "step 3: 'The answers form a structured table per video.'"
+  situation: "the question set defines options but no 'evidence' field; a studio asks 'show me where players were confused in step 3'"
+  consequence: "bot can only list video ids; any quote it gives is re-generated from the transcript, not the one the extractor used, and may not exist"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "every question definition includes an evidence field of one verbatim quote (max 200 characters) plus a video timestamp"
+  shallow: false
+- id: "qauthor-32"
+  title: "Studio-authored extra questions would enter the shared registry with no tenant scope or review"
+  level: L3
+  cell: {stage: question-set-registry, tenancy: many-studios-shared-infra, data-element: studio-tenant, studio-question-type: cross-game-or-cross-studio-benchmark}
+  object: "Constraint: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  situation: "studio B asks to add its own 'did the player mention a competitor game' question; the registry has one namespace for all question ids"
+  consequence: "id collision with studio A's Q14, or studio B's question text visible to studio A; a core question's meaning changes for one studio only"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "namespace question ids by tenant and mark core questions read-only"
+  shallow: false
+- id: "qauthor-33"
+  title: "Rolling back to the old question set after a bad revision leaves rows from the bad version labelled as the old one"
+  level: L3
+  cell: {stage: question-set-registry, question-set-version-state: rollback-to-old-version, recovery-action: backfill-after-question-set-change, processing-status: superseded-by-rerun, batch-failure-mix: some-sessions-failed-in-cohort}
+  object: "Constraint: 'the framework for generating the questions'"
+  situation: "v3 is published, 120 of 500 players are extracted with v3, then v3 is rolled back to v2 and the 120 rows are not removed or re-extracted"
+  consequence: "120 rows hold v3 answers under v2 ids; the aggregate silently blends versions, and nobody can list which players they are"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "tag each row with question_set_version and mark rows from a rolled-back version 'invalid' until re-extracted"
+  shallow: false
+- id: "qauthor-34"
+  title: "Per-video 'Yes' to 'did the player finish the tutorial' is never reduced to one session value, so the session count is 1 to 12 per player"
+  level: L3
+  cell: {stage: session-level-aggregation, data-element: session, session-shape: 5-20-videos, question-shape: answer-changes-within-video, correctness-failure: duplicate-counted}
+  object: "step 3: 'The answers form a structured table per video.'"
+  situation: "video 2 says 'Yes, finished tutorial', videos 3 to 6 also say 'Yes' (player mentions it again while recalling it)"
+  consequence: "cohort-count 'how many players finished the tutorial' counts 5 rows for one player; a 500-player cohort reports 1900 finishers"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "The answers form a structured table per video."
+  proposed: "every question definition declares its session rule (any / all / first / last / max / sum) and the table exposes the session-level row"
+  shallow: false
+- id: "qauthor-35"
+  title: "A question set that targets one churn moment gives no coverage metric for how much of each transcript is captured"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: transcript, scale: 500-players, studio-question-type: what-can-you-answer, question-shape: question-not-in-set}
+  object: "Known problems: 'most of what is in the video and transcript is never captured'"
+  situation: "8 questions are run on 500 transcripts of about 4000 words each; no measure says which share of transcript content (topics, utterances) maps to any question"
+  consequence: "the PM cannot say whether adding 5 questions captures 10% or 40% more; no stopping rule exists for extending the set"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "sample 20 transcripts, tag every topic mentioned, and report the share of topics covered by at least one question"
+  shallow: false

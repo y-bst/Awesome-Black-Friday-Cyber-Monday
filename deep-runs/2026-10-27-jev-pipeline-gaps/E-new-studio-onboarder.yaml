@@ -1,0 +1,408 @@
+- id: onboard-1
+  title: "New game with 0 players has no question set row in the registry, so the first studio question gets an undefined reply"
+  level: L3
+  cell: {stage: question-set-registry, scale: 0-players-new-game, time-and-change: first-game-onboarded, studio-question-type: what-can-you-answer, chatbot-response-behaviour: says-no-data-correctly}
+  object: "Step 3: 'a fixed set of questions with options, written per game target'"
+  situation: "A CS person creates the studio's tenant on day 0 and the studio analyst opens the chatbot before any session is uploaded; the table has 0 rows and possibly 0 questions for this game target."
+  consequence: "The bot may return an empty result, a generic answer from another game's table, or a made-up one; the first impression of the product is an unspecified behaviour."
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "Define the 0-row reply: 'No sessions processed for <game> yet; question set v0 has N questions' and test it for N=0 and N>0."
+  shallow: false
+- id: onboard-2
+  title: "No stated time budget from signed studio to first queryable answer"
+  level: L4
+  cell: {stage: upload-and-ingest, time-and-change: first-game-onboarded, latency: "ingest-to-queryable (hours or days after session)", processing-status: queued, scale: 50-players}
+  object: "Constraints: 'Ingestion time and cost are not a concern.'"
+  situation: "The first 50 players record on Monday; each 3-hour session is 12 videos of 15 minutes (600 videos); the studio expects a demo on Tuesday."
+  consequence: "Nothing in the spec says how many hours from upload to a row in the table; CS cannot promise a date, and a queue of 600 videos behind another studio's backfill is invisible."
+  p_typical: 0.2
+  grounded: quote
+  evidence: "Ingestion time and cost are not a concern. Answering a studio's question must be fast."
+  proposed: "Set an ingest-to-queryable target (for example p95 under 24 hours for a session) and show per-session status to CS."
+  shallow: false
+- id: onboard-3
+  title: "Tutorial-less game: 'where in the tutorial did they quit' questions are forced into an option"
+  level: L3
+  cell: {stage: answer-options, question-shape: fits-no-option, correctness-failure: forced-choice-bias, data-element: tutorial-step, time-and-change: first-game-onboarded}
+  object: "Step 3: 'targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "A sandbox or open-world game has no tutorial; the standard churn question 'Which tutorial step did the player stop at?' with options Step 1 to Step 5 is copied from the template and run over 12 videos."
+  consequence: "The LLM must pick one of 5 steps or Other, so the table fills with invented steps and the studio sees a tutorial-drop-off funnel for a tutorial that does not exist."
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "Require every question to carry a 'not applicable to this game' option and a per-game applicability flag set at onboarding."
+  shallow: false
+- id: onboard-4
+  title: "Studio target is mid-game retention, but the set only covers 'tutorial and just after it'"
+  level: L3
+  cell: {stage: fixed-question-set, time-and-change: game-target-changes-beyond-tutorial, question-shape: question-not-in-set, studio-question-type: question-outside-game-target, recovery-action: backfill-after-question-set-change}
+  object: "Step 3: targets 'mostly detecting churn in the tutorial and just after it'"
+  situation: "In week 2 the studio asks 'why do players stop at level 8'; the 500 sessions already ingested were only asked tutorial-era questions."
+  consequence: "Answering requires re-running extraction over 500 players x about 8 videos = 4000 videos, or raw transcripts (the thing the table was built to avoid); no rule says which."
+  p_typical: 0.3
+  grounded: quote
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "Write the escalation rule: if the question is outside the set, offer a queued backfill with an ETA, and log the question for the next set revision."
+  shallow: false
+- id: onboard-5
+  title: "A 5-player pilot is reported as percentages with no sample size"
+  level: L4
+  cell: {stage: chatbot-answer, scale: 1-player, studio-question-type: cohort-count, correctness-failure: wrong-denominator, time-and-change: first-game-onboarded}
+  object: "Constraint: 'a question over, say, 500 players is fast'"
+  situation: "The pilot has 5 players, 2 of whom have sessions still transcribing; the analyst asks 'what share of players got lost in the first 5 minutes'."
+  consequence: "Bot answers '60%' (3 of 5) when the denominator is 3 completed sessions out of 5 enrolled; the studio takes a 5-person pilot as a finding."
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "a question over, say, 500 players is fast"
+  proposed: "Every count answer states 'n completed of N enrolled' and warns below a minimum n (for example 30)."
+  shallow: false
+- id: onboard-6
+  title: "Second game from the same studio reuses the tenant and the bot joins both games' tables"
+  level: L3
+  cell: {stage: answers-table, tenancy: one-studio-many-games, question-set-version-state: per-game-fork, studio-question-type: compare-two-steps, correctness-failure: right-answer-wrong-player}
+  object: "Step 3: 'written per game target'; Step 4: 'the answers form a structured table per video'"
+  situation: "A studio onboards game B after game A; both share question id 'tut_confusion' but with different option lists; the analyst asks about 'the tutorial' without naming a game."
+  consequence: "Rows from game A and B are summed under one question id, or the bot picks a game silently; no spec rule says whether game is a required filter."
+  p_typical: 0.07
+  grounded: speculative
+  evidence: "none"
+  proposed: "Make game_id a mandatory key on every row and make the bot ask which game when the studio has 2 or more."
+  shallow: false
+- id: onboard-7
+  title: "Question template copied from a previous studio's game carries that game's mechanic names and answers"
+  level: L3
+  cell: {stage: question-set-registry, question-set-version-state: per-game-fork, tenancy: many-studios-shared-infra, data-element: question, time-and-change: first-game-onboarded}
+  object: "Step 3: 'written per game target'"
+  situation: "To meet a 2-day onboarding, CS clones studio X's question set for studio Y; option text still says 'Forge screen' and 'Gold chest', terms studio X's players used."
+  consequence: "Studio Y sees option labels from a competitor's game (leak of studio X's design vocabulary), and the extraction LLM maps Y's players to X's words, producing wrong answers."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Clone only from a game-neutral template library and diff option text for game-specific nouns before activation."
+  shallow: false
+- id: onboard-8
+  title: "Studio edits options in week 1 after seeing first answers, leaving 3 versions in the table"
+  level: L4
+  cell: {stage: rerun-and-backfill, question-set-version-state: mixed-versions-in-table, scale: 500-players-x-3-question-set-versions, correctness-failure: mixed-version-aggregation, recovery-action: backfill-after-question-set-change}
+  object: "Step 3 answers 'form a structured table per video'; no version column is described"
+  situation: "Players 1-120 answered under v1, 121-300 under v2 (option 'Unclear UI' split into 'Unclear text' and 'Unclear icon'), 301-500 under v3; backfill of v1 rows is still running."
+  consequence: "'Unclear UI' count is computed over 120 rows, 'Unclear text' over 380, and the percentages sum to over 100% when the bot adds them."
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "none"
+  proposed: "Store question_set_version on each row; the bot filters to one version or states the mix; show backfill progress (rows at v3 / total)."
+  shallow: false
+- id: onboard-9
+  title: "Studio in Brazil or Japan: option text in English, speech in another language, no onboarding language check"
+  level: L3
+  cell: {stage: language-detection, speech-shape: non-english, question-shape: fits-an-option, correctness-failure: forced-choice-bias, transcription-subsystem: wrong-language-detected}
+  object: "Unspecified: 'languages'"
+  situation: "A Japanese studio onboards; 40% of its testers speak Japanese, 60% English; the question set is authored in English only."
+  consequence: "Transcript of Japanese speech is mis-detected as English for some of the 12 videos per session; answers skew to 'No complaint' and the studio sees fewer problems among Japanese players."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "Unspecified: ... languages"
+  proposed: "Onboarding form lists expected languages; an acceptance test runs 3 sample videos per language and reports transcript word error rate before go-live."
+  shallow: false
+- id: onboard-10
+  title: "New studio's playtest moderators lead players and no onboarding step trains or detects it"
+  level: L3
+  cell: {stage: recruitment-and-consent, speech-shape: moderator-speaking-or-leading, data-element: moderator, correctness-failure: moderator-words-attributed-to-player, time-and-change: first-game-onboarded}
+  object: "Step 2: 'Each video is converted to a transcript'"
+  situation: "Studio staff, not our playtest ops, run the first 20 sessions and say 'try tapping the left button' at minute 3; the transcript has no speaker label."
+  consequence: "The question 'Did the player find the next action unaided' answers Yes because the instruction is credited to the player; tutorial clarity looks 20 points better than reality."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "none"
+  proposed: "Moderator guide in the onboarding kit; diarisation or a moderator-present flag per session that the question runner receives."
+  shallow: false
+- id: onboard-11
+  title: "New game's anti-cheat or DRM yields a black capture while audio is fine, found only after 100 sessions"
+  level: L4
+  cell: {stage: video-capture, capture-integrity: video-black-or-frozen, processing-status: complete, question-shape: answer-needs-visuals, time-and-change: first-game-onboarded}
+  object: "Step 2: 'what is on screen is largely lost'"
+  situation: "Capture of the new game's exclusive-fullscreen window returns black frames; the speech transcript is normal, so every job ends in status complete."
+  consequence: "No one is told that the video holds no visual information; if visual analysis is added later it silently runs on 100 black sessions; CS discovers it when the studio asks for a clip."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "The owner's view: the transcript alone is not enough; what is on screen is largely lost."
+  proposed: "Onboarding smoke test: record 1 session and check mean frame luminance and frame-difference rate above thresholds; alert on sessions below them."
+  shallow: false
+- id: onboard-12
+  title: "Mobile game recorded via emulator or screen-cast: device-platform tag says PC"
+  level: L3
+  cell: {stage: build-and-metadata-tagging, data-element: device-platform, capture-integrity: wrong-window-captured, studio-question-type: compare-two-versions, correctness-failure: right-answer-wrong-player}
+  object: "Step 1: 'a player's gameplay session is captured as video'"
+  situation: "A mobile studio tests on a desktop emulator for convenience, and the upload form default device is 'PC'; 30 of 100 sessions carry the wrong tag."
+  consequence: "'Compare iOS and Android drop-off' includes touch-vs-mouse differences, and tap errors that exist only on real phones are missed."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Make device, build and game_version required fields with no default, with a validation list per studio set at onboarding."
+  shallow: false
+- id: onboard-13
+  title: "Music-heavy or voiced-NPC game: game audio dominates and the transcript is full of NPC lines credited to the player"
+  level: L3
+  cell: {stage: transcription, speech-shape: game-audio-dominates, transcription-subsystem: game-lyrics-or-npc-voice-transcribed-as-player, correctness-failure: transcription-hallucination-propagated, question-shape: unknowable-from-audio}
+  object: "Assumption: 'transcript is speech-to-text of the player's think-aloud plus any game audio'"
+  situation: "The new game has a fully voiced tutorial narrator speaking 60% of the first 10 minutes and the player says little."
+  consequence: "The question 'Did the player express confusion' reads the narrator's 'Don't worry, you can do it!' as player speech and answers Yes; the table fills with NPC confusion."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "transcript is speech-to-text of the player's think-aloud plus any game audio"
+  proposed: "Per-game audio setup in onboarding: record the mic and the game on separate channels, or tag NPC lines, and test with 1 sample."
+  shallow: false
+- id: onboard-14
+  title: "Casual mobile players never talk; 50 sessions yield an all-unknown table"
+  level: L4
+  cell: {stage: transcription, speech-shape: silent-player, scale: 50-players, processing-status: transcript-empty, correctness-failure: null-treated-as-no}
+  object: "Step 2: 'The owner's view: the transcript alone is not enough'"
+  situation: "A hyper-casual studio recruits 50 players, none instructed to think aloud; 42 of 50 transcripts are empty."
+  consequence: "The question 'Did the player say they were confused' stores No for 42 rows; the bot reports '16% confused' (8 of 50) with no sign that 84% of rows carry no signal."
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "none"
+  proposed: "Pre-onboarding fit check: sample 5 sessions and compute speech minutes per hour; if under a threshold (for example 5 minutes), warn the studio that this pipeline is speech-dependent."
+  shallow: false
+- id: onboard-15
+  title: "No acceptance test before go-live: CS cannot show the studio that 20 answers match a human's reading"
+  level: L3
+  cell: {stage: studio-feedback-loop, data-element: answer, correctness-failure: hallucinated-answer, answer-afterlife: disputed-by-studio, time-and-change: first-game-onboarded}
+  object: "Spec has no accuracy or review step between extraction and the table"
+  situation: "On day 3 the studio's UX lead watches 1 video and sees that the table says 'no confusion' where she saw a player stuck for 90 seconds."
+  consequence: "There is no sampling procedure, no labelled sample, no per-question accuracy, so CS cannot say whether it is 1 error in 10 or in 2; trust is lost with the first disputed row."
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "none"
+  proposed: "Onboarding step: studio labels 20 videos for each question; report agreement per question; block go-live below an agreed threshold."
+  shallow: false
+- id: onboard-16
+  title: "Day-1 'why do players leave' question is answered from general game knowledge"
+  level: L3
+  cell: {stage: chatbot-answer, studio-question-type: cohort-why, question-shape: answer-is-a-why, chatbot-response-behaviour: answers-from-general-game-knowledge, correctness-failure: confident-no-evidence}
+  object: "Constraint: 'Their questions are not known in advance.'"
+  situation: "The question set for the new game has 6 fixed questions with no free-text 'why'; the analyst asks 'why do players quit before level 2' with 30 players in the table."
+  consequence: "The LLM blends the table's 6 options with typical tutorial-churn reasons (too long, unclear UI) and produces a fluent paragraph with no row behind it."
+  p_typical: 0.25
+  grounded: quote
+  evidence: "Their questions are not known in advance."
+  proposed: "Require every claim in the reply to cite a question id and n rows; if none supports the 'why', say so and offer a queued extraction."
+  shallow: false
+- id: onboard-17
+  title: "Demo call: analyst asks for a benchmark against other games and the bot has other tenants' data in reach"
+  level: L3
+  cell: {stage: access-control, tenancy: cross-studio-benchmark-request, studio-question-type: cross-game-or-cross-studio-benchmark, scale: 0-players-new-game, chatbot-response-behaviour: answers-in-wrong-tenant-scope}
+  object: "Constraint: 'Buyers are gaming studios.' (plural, one pipeline)"
+  situation: "On the sales demo for a new studio (0 own players) CS loads a sample from studio X to show something; the prospect asks 'how does our tutorial compare to similar games'."
+  consequence: "Bot reads studio X's rows and reports 'similar games lose 35% in the first 5 minutes', which discloses studio X's data, or refuses with no definition."
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none"
+  proposed: "Demo data lives in a separate synthetic tenant; the bot's cross-tenant policy is written (refuse, or use only opted-in aggregates)."
+  shallow: false
+- id: onboard-18
+  title: "A 50-question set for a keen new studio: per-video extraction overruns context and some questions fail"
+  level: L4
+  cell: {stage: extraction-prompt, scale: question-set-of-50-questions, processing-status: extraction-partial-some-questions, batch-failure-mix: some-questions-failed-in-one-video, recovery-action: retry-one-question}
+  object: "Assumption: 'questions are multiple-choice with 3-6 options, answered once per video'"
+  situation: "The studio writes 50 questions x 5 options; a 15-minute video of continuous think-aloud is about 2,500 words, and the runner sends all 50 in one prompt; question 43 times out on 9 of 600 videos."
+  consequence: "9 videos have 49 answers and 1 missing; the table has no marker, so question 43's count is over 591 videos without saying so."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "questions are multiple-choice with 3-6 options, answered once per video"
+  proposed: "Cap questions per prompt (batch of 10), write a status per (video, question), and block counts that do not state coverage."
+  shallow: false
+- id: onboard-19
+  title: "Studio ships a build every 2 weeks during onboarding; tutorial changed but the question set is not forked"
+  level: L3
+  cell: {stage: build-and-metadata-tagging, time-and-change: game-update-changes-tutorial, question-set-version-state: per-game-version-fork, studio-question-type: compare-two-versions, data-element: build-id}
+  object: "Step 3: 'detecting churn in the tutorial'"
+  situation: "Build 1.4 removes tutorial step 3 and adds a new step 'Crafting'; the question options still list step 3 and not Crafting."
+  consequence: "Build 1.4 players who stall at Crafting land in Other or in step 4; 'compare 1.3 and 1.4' shows drop-off moving to the wrong step."
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "none"
+  proposed: "Tie question-set version to game_version at onboarding and raise a CS task when a new build tag appears without a matching set review."
+  shallow: false
+- id: onboard-20
+  title: "Options use the studio's internal screen names, which players never say aloud"
+  level: L3
+  cell: {stage: answer-options, speech-shape: continuous-think-aloud, question-shape: perceptual-cause-not-verbalised, correctness-failure: other-option-overused, data-element: option}
+  object: "Step 3: 'a fixed set of questions with options'"
+  situation: "Option 'Stuck at the Loadout screen' is the studio's term; the player says 'the weapon menu thing' or 'where do I pick my gun'."
+  consequence: "The extractor matches inconsistently; 'Other' absorbs 45% of answers for that question and the studio concludes the loadout is fine."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "none"
+  proposed: "Question authoring checklist: write each option with 3 phrases players actually used from the 5 pilot videos, and track the Other rate per question (alert above 25%)."
+  shallow: false
+- id: onboard-21
+  title: "Studio expects 'step 4' granularity but the table holds one answer per 15-minute video"
+  level: L3
+  cell: {stage: per-video-answers, data-element: tutorial-step, studio-question-type: compare-two-steps, question-shape: answer-changes-within-video, latency: under-2s}
+  object: "Step 3: 'The answers form a structured table per video'"
+  situation: "The studio asks 'how long did players spend on step 4 versus step 5'; the first tutorial takes 6 minutes and both steps fall in video 1 of 12."
+  consequence: "A row per video cannot separate the two steps and has no timestamp field; the bot either refuses or invents durations from one answer per video."
+  p_typical: 0.2
+  grounded: quote
+  evidence: "The answers form a structured table per video."
+  proposed: "Add an optional start/end offset and a step id to each answer row, with the step list supplied at onboarding."
+  shallow: false
+- id: onboard-22
+  title: "Studio's own player IDs collide with another studio's IDs or are reused between sessions"
+  level: L3
+  cell: {stage: build-and-metadata-tagging, data-element: player, session-shape: same-player-multiple-sessions, tenancy: many-studios-shared-infra, correctness-failure: right-answer-wrong-player}
+  object: "Unspecified: 'how videos of one session are linked'"
+  situation: "Studio uploads with its own player ids 1-500; studio X also used 1-500; one studio recycles id 17 for a second tester after the first dropped out."
+  consequence: "Player 17 appears with two different people's sessions in one cohort, so 'find players who' and per-player timelines mix two humans; cross-tenant IDs may share a key."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Unspecified: ... how videos of one session are linked."
+  proposed: "Generate internal player_id as (tenant, game, external_id, recruitment_batch) and reject duplicate external ids within a batch."
+  shallow: false
+- id: onboard-23
+  title: "Publisher onboards 10 games in a week; each needs its own set and there is no inheritance or shared core"
+  level: L3
+  cell: {stage: question-set-registry, scale: 10-games-at-once, question-set-version-state: per-game-fork, studio-question-type: cross-game-or-cross-studio-benchmark, tenancy: one-studio-many-games}
+  object: "Step 3: 'written per game target'"
+  situation: "10 games x 12 questions = 120 questions authored by hand, 10 near-duplicates of 'Where did the player stop in the tutorial'."
+  consequence: "Each game gets different option wording, so the publisher's question 'which of our games has the worst tutorial' compares non-comparable answers, and CS spends days on authoring instead of onboarding."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "A core question set shared by all games (version-pinned) plus per-game extension questions."
+  shallow: false
+- id: onboard-24
+  title: "10-hour strategy-game session: tutorial questions run on all 40 videos and null becomes No"
+  level: L4
+  cell: {stage: per-video-answers, scale: 1-player-10-hour-session, question-shape: event-did-not-happen-in-this-video, correctness-failure: null-treated-as-no, session-shape: 10-plus-hour-session}
+  object: "Step 1: 'A session can be n hours; each video is capped at 15 minutes'"
+  situation: "A 10-hour session is 40 videos; the tutorial is in video 1; the question 'Did the player finish the tutorial' is asked of videos 2-40 where no tutorial occurs."
+  consequence: "39 rows read 'No' or 'Not observed'; the count 'players who finished the tutorial' is 1 of 40 per player, and the churn rate is wrong by a factor of up to 40."
+  p_typical: 0.09
+  grounded: quote
+  evidence: "A session can be n hours; each video is capped at 15 minutes, so one session is many videos."
+  proposed: "Add a per-question scope (video index range or game phase) and an explicit 'not applicable' value distinct from 'No'."
+  shallow: false
+- id: onboard-25
+  title: "Studio's launcher, EULA and account creation happen before recording starts, so tutorial start is missing"
+  level: L3
+  cell: {stage: recruitment-and-consent, session-shape: tutorial-started-before-recording, data-element: timestamp, question-shape: answer-is-a-time, capture-integrity: audio-and-video-ok}
+  object: "Step 1: 'captured as video'"
+  situation: "The recording tool in the new studio's setup is started by the player after the first-time-user flow; first video begins at minute 4 of the tutorial."
+  consequence: "'How long until the first action' is measured from the recording start, not from the install; the studio compares it to its telemetry and finds a 4-minute discrepancy."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "none"
+  proposed: "Onboarding runbook states record-start point; a first-video check asks the extractor 'does this video include the game's first screen' and flags No."
+  shallow: false
+- id: onboard-26
+  title: "Multiplayer tutorial with a teammate or in-game guide: second speaker's words land in the transcript as the player's"
+  level: L3
+  cell: {stage: transcription, speech-shape: two-speakers, transcription-subsystem: game-lyrics-or-npc-voice-transcribed-as-player, correctness-failure: right-answer-wrong-player, data-element: utterance}
+  object: "Step 2: 'Each video is converted to a transcript'"
+  situation: "A co-op game onboarding places 2 testers in a voice channel for the 12-minute tutorial; one shouts 'I hate this part'."
+  consequence: "The question 'Did the player express frustration' answers Yes for both players' rows, though one never spoke, and per-player cohort counts double."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none"
+  proposed: "Game-profile flag 'multi-speaker'; one audio track per player at capture, or diarisation with the target player's voice sample."
+  shallow: false
+- id: onboard-27
+  title: "Analyst asks 'what can you answer' on day 1 and the bot has no catalogue of the game's questions"
+  level: L4
+  cell: {stage: chatbot-query-planning, studio-question-type: what-can-you-answer, chatbot-response-behaviour: substitutes-nearest-fixed-question, question-set-version-state: question-retired, fast-path-dependency: cold-start}
+  object: "Goal: improve 'the framework for generating the questions so that any type of question can be answered'"
+  situation: "Set has 12 active questions and 3 retired ones; the bot is asked 'what can you tell me about my tutorial'."
+  consequence: "The bot lists a retired question or a generic list; analyst asks a 13th question, gets the nearest fixed answer labelled as an answer to the 13th; time to realise the limit is more than 3 asks."
+  p_typical: 0.2
+  grounded: quote
+  evidence: "so that any type of question can be answered"
+  proposed: "Bot answers 'what can you answer' from the registry: active question text, option list, n rows each, and last updated; asserts 'not covered' otherwise."
+  shallow: false
+- id: onboard-28
+  title: "Studio revises the set during a live demo and the bot answers differently on re-ask while a rerun is in progress"
+  level: L3
+  cell: {stage: rerun-and-backfill, processing-status: rerun-in-progress, chatbot-response-behaviour: differs-on-re-ask, time-and-change: rerun-in-progress-while-queried, studio-question-type: follow-up-question}
+  object: "Constraint: 'Answering a studio's question must be fast.'"
+  situation: "At minute 10 of the onboarding call the studio changes option wording and CS triggers a backfill of 200 players; at minute 25 the analyst re-asks the first question."
+  consequence: "Counts differ (for example 38 vs 52) with no explanation, because 80 players are at the new version and 120 at the old."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Answering a studio's question must be fast."
+  proposed: "During a rerun the bot labels the answer 'partial: 80 of 200 players updated' and keeps a snapshot version id the analyst can pin."
+  shallow: false
+- id: onboard-29
+  title: "No path for a studio to flag a wrong row in week 1, and no manual override for CS"
+  level: L3
+  cell: {stage: studio-feedback-loop, studio-question-type: correction-that-is-wrong, recovery-action: manual-override-answer, answer-afterlife: disputed-by-studio, data-element: answer}
+  object: "Spec lists no correction or review path"
+  situation: "The studio's researcher says 'player 41 clearly said the instruction was unclear, your row says No'; CS has database access only through a rerun."
+  consequence: "A rerun may produce the same wrong row; an override edits the table, and the next backfill silently erases it."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "none"
+  proposed: "Override rows with an 'override' flag, an author and a reason, which survive reruns and are excluded from accuracy stats."
+  shallow: false
+- id: onboard-30
+  title: "Studio-sourced testers include minors and the consent form names no third-party chatbot"
+  level: L3
+  cell: {stage: recruitment-and-consent, data-element: consent-record, tenancy: one-studio-one-game, time-and-change: first-game-onboarded, answer-afterlife: cited-after-player-deletion}
+  object: "Step 1: 'A player's gameplay session is captured as video'"
+  situation: "A studio recruits from its Discord; 15 of 80 testers are under 18, and the studio's own consent covers 'research' only."
+  consequence: "Voice, speech and quotes enter the bot and the transcripts; a deletion request for one of them has no consent record to match against and no inventory of derived rows."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Onboarding checklist item: per-player consent and age flag stored with the session, blocking ingest when missing."
+  shallow: false
+- id: onboard-31
+  title: "Trial studio does not convert and its 600 videos, transcripts and conversation logs have no exit rule"
+  level: L3
+  cell: {stage: retention-and-deletion, tenancy: studio-offboarded, time-and-change: studio-offboarded, data-element: chatbot-conversation-log, answer-afterlife: exported-csv}
+  object: "Spec has no retention or offboarding statement"
+  situation: "A 30-day pilot ends; 40 players, 480 videos, transcripts, answer rows and 2 weeks of bot logs remain; the studio never asked for deletion."
+  consequence: "Player speech is stored with no end date, the studio may hold CSV exports, and CS cannot say what to delete or which derived aggregates cite it."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Offboarding runbook: list the 6 stores (video, audio, transcript, answers, aggregates, bot logs), delete in order, and confirm with a count of 0."
+  shallow: false
+- id: onboard-32
+  title: "Game-specific terms (character, item and boss names) are mis-transcribed and the options cannot match them"
+  level: L4
+  cell: {stage: transcription, transcription-subsystem: low-confidence-segments-dropped-silently, speech-shape: inaudible-segments, correctness-failure: transcription-hallucination-propagated, question-shape: fits-no-option}
+  object: "Step 2: 'Each video is converted to a transcript'"
+  situation: "A fantasy game with invented names ('Xal'tharok', 'Vym') is onboarded; speech-to-text has no custom vocabulary for it."
+  consequence: "Names become 'cell tharok', 'vim'; the answer to 'Which character did the player find confusing' is Other for 55% of rows, and any dropped low-confidence segments are not listed."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "none"
+  proposed: "Onboarding form field for a glossary (up to 100 terms) passed to the transcription and extraction steps, with a before/after check on 3 videos."
+  shallow: false
+- id: onboard-33
+  title: "Producer asks 'what should we change in the tutorial' and the bot has only a 12-question table to reason from"
+  level: L3
+  cell: {stage: chatbot-answer, studio-question-type: recommendation-what-should-we-change, scale: 50-players, chatbot-response-behaviour: invents-number, correctness-failure: confident-no-evidence}
+  object: "Unspecified: 'who at the studio asks and what they ask'"
+  situation: "The persona is unknown at onboarding; the first user is a producer, not an analyst, and asks for advice with 50 players of data."
+  consequence: "Bot generates ranked recommendations with percentages that are not in any row; a producer pastes it into a roadmap."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "Unspecified: who at the studio asks and what they ask"
+  proposed: "Onboarding step 1: record the asker roles (analyst, producer, designer) and 10 sample questions per role; test the bot against them before go-live."
+  shallow: false
+- id: onboard-34
+  title: "Studio test sessions by its own QA team are uploaded in the first week and count as players"
+  level: L3
+  cell: {stage: build-and-metadata-tagging, data-element: cohort, scale: 50-players, correctness-failure: wrong-denominator, studio-question-type: cohort-count}
+  object: "Step 4: 'a question over, say, 500 players'"
+  situation: "Of the first 50 sessions, 8 are the studio's developers walking through the tutorial in 90 seconds, quickly and silently, with no tag distinguishing them."
+  consequence: "'Median tutorial time' is 4 minutes lower and completion reads 100% for 16% of the cohort."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "a question over, say, 500 players"
+  proposed: "Required session type field (player, internal, test) set at upload; the bot's default filter is player only."
+  shallow: false

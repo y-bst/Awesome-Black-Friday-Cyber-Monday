@@ -1,0 +1,408 @@
+- id: cost-1
+  title: "A question-set revision forces re-extraction of every video: 500 players x 16 videos x 30 questions = 240,000 answer cells and nobody owns the budget"
+  level: L4
+  cell: {stage: rerun-and-backfill, data-element: extraction-run-id, scale: 500-players, time-and-change: question-set-revised, recovery-action: backfill-after-question-set-change}
+  object: "Spec constraint 'Ingestion time and cost are not a concern' versus step 3 'a fixed set of questions with options, written per game target'"
+  situation: "A PM rewords 6 of 30 questions. Session length 4 h = 16 videos per player; 500 players = 8,000 videos. Spec does not say whether all 30 questions or only the 6 changed are re-run."
+  consequence: "Full re-run is 240,000 question answers (8,000 videos x 30) per revision; re-run of only the 6 changed is 48,000. The cost is a 5x difference decided by an unwritten rule, repeated at every revision."
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "Write the rule: a revision re-runs only questions whose text or options changed, keyed by question id + version; record the estimated call count before launch."
+  shallow: false
+- id: cost-2
+  title: "'Cost is not a concern' has no ceiling, so a backfill that is 20x larger than expected is not detected"
+  level: L3
+  cell: {stage: rerun-and-backfill, data-element: question-set-version, scale: 500-players-x-3-question-set-versions, recovery-action: backfill-after-question-set-change, question-set-version-state: mixed-versions-in-table}
+  object: "Spec 'Unspecified' list: 'latency and cost limits per query'; constraint 'Ingestion time and cost are not a concern'"
+  situation: "Three versions of the question set are kept live for 500 players (8,000 videos): 3 x 240,000 = 720,000 answers. Spec gives no per-run or per-month spend limit, only the claim that cost is fine."
+  consequence: "A mistaken backfill (wrong game filter, 10 games instead of 1) runs to completion at 10x the expected bill; nobody is alerted because no limit exists."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "latency and cost limits per query"
+  proposed: "Define a dry-run call count and a hard spend cap per backfill job; require confirmation above the cap."
+  shallow: false
+- id: cost-3
+  title: "One LLM call per question re-sends the same 3k-token transcript 50 times for a 50-question set"
+  level: L4
+  cell: {stage: extraction-prompt, data-element: transcript, scale: question-set-of-50-questions, correctness-failure: inconsistent-across-videos, latency: batch-overnight}
+  object: "Step 3 'The transcript is run through a fixed set of questions with options'"
+  situation: "A 15-minute think-aloud video yields about 2,250 words (roughly 3,000 tokens). If each of 50 questions is a separate call, 150,000 input tokens per video; 8,000 videos = 1.2 billion input tokens. If instead all 50 go in one prompt, the output must hold 50 answers and the context shares attention across them."
+  consequence: "Spec does not say one call per question or per video. The choice sets the bill (50x on input without prompt caching) and also answer quality (cross-question interference in a single prompt)."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options"
+  proposed: "Specify one call per video with all questions batched in a structured-output schema, or one cached-prefix call per question, and measure both on 200 videos."
+  shallow: false
+- id: cost-4
+  title: "A 10-hour single-player session produces 40 videos; any session-level aggregation over the transcripts overflows the context window"
+  level: L4
+  cell: {stage: session-level-aggregation, data-element: session, session-shape: 10-plus-hour-session, scale: 1-player-10-hour-session, question-shape: answer-spans-videos}
+  object: "Known problem 'Long multi-video sessions' and step 1 'A session can be n hours; each video is capped at 15 minutes'"
+  situation: "10 h = 40 videos x about 3,000 tokens = about 120,000 tokens of transcript for one player. A question such as 'did the player ever return to the tutorial after quitting it' needs the whole session in one prompt."
+  consequence: "Either the aggregation call truncates silently at the model limit, or it is split into 40 per-video calls whose answers are then merged by an unspecified rule. Latency of one such session-level call is tens of seconds and the cost is 40x a per-video call."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "A session can be n hours; each video is capped at 15 minutes, so one session is many videos."
+  proposed: "Define the session-level answer as a rollup of per-video answers (any / first / last / count) computed in code, and mark questions that need a cross-video LLM call."
+  shallow: false
+- id: cost-5
+  title: "Chatbot p99 under concurrent studio users has no target; spec gives 'fast' but no number"
+  level: L4
+  cell: {stage: chatbot-answer, studio-question-type: cohort-count, scale: many-concurrent-studio-users, latency: p99-tail-under-concurrency, chatbot-response-behaviour: times-out}
+  object: "Constraint 'Answering a studio's question must be fast' and Unspecified item 'latency and cost limits per query'"
+  situation: "20 analysts at 3 studios ask cohort questions in the same minute. Each question runs plan + query + LLM summary. LLM provider rate limit applies to the whole account."
+  consequence: "Median may be 4 s but p99 can pass 30 s when requests queue on the shared rate limit; with no number written there is nothing to alert or load-test against."
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Answering a studio's question must be fast"
+  proposed: "State p50 under 5 s and p99 under 15 s for a cohort-count question at 20 concurrent users and add a load test at that figure."
+  shallow: false
+- id: cost-6
+  title: "Giving the whole answers table to the chatbot works at 50 players and breaks at 500: about 240,000 rows is millions of tokens"
+  level: L4
+  cell: {stage: chatbot-query-planning, data-element: answer, scale: 500-players, fast-path-dependency: table-fits-in-llm-context, chatbot-response-behaviour: silently-truncates-rows}
+  object: "Step 4 'A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast'"
+  situation: "500 players x 16 videos x 30 questions = 240,000 rows; at about 15 tokens per row that is 3.6 million tokens, far above any context window. At 50 players it is 360,000 tokens, also above most limits."
+  consequence: "If the chatbot loads rows into the prompt, rows are cut at the limit and the count reported to the studio is wrong with no warning; if it uses SQL instead, the spec does not say so."
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "answers the studio's questions from that table, so that a question over, say, 500 players is fast"
+  proposed: "Specify that the chatbot never reads rows into context, only aggregates from a query, and that any result over N rows returns counts, not rows."
+  shallow: false
+- id: cost-7
+  title: "Question not in the fixed set sends the chatbot back to raw transcripts, the exact path the spec said was too slow and too large"
+  level: L4
+  cell: {stage: chatbot-query-planning, studio-question-type: question-about-a-step-the-set-never-asked, scale: 500-players, fast-path-dependency: question-requires-raw-transcript-fallback, latency: minutes}
+  object: "Step 4 'Reading 500 transcripts per question was too slow and too much data' and Constraint 'Their questions are not known in advance'"
+  situation: "Studio asks 'how many players mentioned the shop before step 3'. No fixed question covers it. A fallback scan reads 8,000 transcripts x 3,000 tokens = 24 million tokens."
+  consequence: "One such question costs on the order of 24M input tokens and takes minutes; if three analysts ask similar questions the day's bill exceeds the entire cost of ingesting those players. The spec has no rule for allowing or refusing the fallback."
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Reading 500 transcripts per question was too slow and too much data"
+  proposed: "Add an explicit fallback tier with a stated row cap (e.g. 50 transcripts sampled), an estimated cost shown before running, and a label 'sampled' in the answer."
+  shallow: false
+- id: cost-8
+  title: "Table growth over a year turns a full-scan chatbot query from sub-second into tens of seconds with no index on game target and version"
+  level: L3
+  cell: {stage: answers-table, data-element: game-version, time-and-change: a-year-of-data, fast-path-dependency: index-on-game-target-and-version, latency: under-2s}
+  object: "Step 3 'The answers form a structured table per video'"
+  situation: "Table holds 240,000 rows per 500-player cohort per question-set version. After 12 monthly cohorts and 3 games: about 8.6 million rows. Queries filter by game-version and question id."
+  consequence: "Without a composite index on (game-target, game-version, question-id, session-id) each count scans all rows; the studio sees seconds where the spec promised 'fast'."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Name the table key and add a composite index; test count query latency at 10 million rows."
+  shallow: false
+- id: cost-9
+  title: "First-token latency hides a long plan phase: the chatbot streams text after 1 s but the number arrives after 20 s"
+  level: L4
+  cell: {stage: chatbot-answer, studio-question-type: compare-two-versions, latency: first-token-vs-complete-answer, chatbot-response-behaviour: answers-correctly, fast-path-dependency: text-to-sql-generated-correctly}
+  object: "Constraint 'Answering a studio's question must be fast'"
+  situation: "Plan step (1 LLM call, 3 s), SQL run (2 s), retry on SQL error (3 s + 2 s), summary call (4 s). If the UI streams a preamble sentence in under 1 s, a latency test measuring first token passes."
+  consequence: "Analyst waits about 14 s for the figure while the dashboard metric says 1 s; the target 'fast' is met on paper only."
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none"
+  proposed: "Measure time to complete answer with the number present, not time to first token; set the target on that."
+  shallow: false
+- id: cost-10
+  title: "Cached cohort aggregate is not invalidated by a re-run, so the chatbot answers fast and wrong"
+  level: L4
+  cell: {stage: aggregate-cache, data-element: cached-aggregate, time-and-change: model-upgraded, fast-path-dependency: cache-stale-after-rerun, latency: fast-but-stale}
+  object: "Step 4 'so that a question over, say, 500 players is fast'"
+  situation: "Cohort count 'players who quit at step 2' is cached at 61% for 24 h. Extraction model is upgraded and 500 players are re-extracted, giving 54%. The cache key is game + question id, not extraction run id."
+  consequence: "Studio sees 61% for up to 24 h after the table says 54%; two analysts comparing screenshots disagree."
+  p_typical: 0.08
+  grounded: speculative
+  evidence: "none"
+  proposed: "Key every cached aggregate by (table version, question-set version, cohort definition); invalidate on any run completion."
+  shallow: false
+- id: cost-11
+  title: "Chatbot is queried while a 3-day backfill is half done and returns a fast answer that mixes two prompt versions"
+  level: L4
+  cell: {stage: rerun-and-backfill, data-element: prompt-version, processing-status: rerun-in-progress, time-and-change: rerun-in-progress-while-queried, correctness-failure: mixed-version-aggregation}
+  object: "Constraint 'Ingestion time and cost are not a concern'"
+  situation: "Prompt change re-extracts 8,000 videos at 2,700 per day. After day 1, 2,700 rows are new and 5,300 are old. Studio asks 'what share of players quit at step 2'."
+  consequence: "The answer is computed over a blend of old and new prompt versions and carries no marker; because ingestion time was declared not a concern, a multi-day window of mixed data was never treated as a query-time problem."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "Serve queries from the last complete table version until the backfill finishes, then switch atomically; show 'table version N, complete' on the answer."
+  shallow: false
+- id: cost-12
+  title: "Silent or music-only video still gets transcribed and extracted: 30 question calls run on a hallucinated transcript"
+  level: L4
+  cell: {stage: transcription, data-element: transcript, speech-shape: silent-player, session-shape: video-with-no-audio-track, transcription-subsystem: hallucinated-text-on-silence-or-music, capture-integrity: no-audio-track}
+  object: "Step 2 'Each video is converted to a transcript'"
+  situation: "Silent player or missing audio track for a 15-minute video. Speech model emits filler text ('thank you for watching') for the silence. Extraction then runs all 30 questions over it."
+  consequence: "30 LLM calls spent on a transcript with no signal and 30 invented answer rows entered in the table; a cheap pre-check (audio energy under a threshold for 15 minutes) would skip both."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Add a voice-activity check before transcription; below 5% speech, write status 'no speech' and skip extraction."
+  shallow: false
+- id: cost-13
+  title: "Non-idempotent retry of a failed question doubles both the LLM spend and the row count"
+  level: L4
+  cell: {stage: job-orchestration-and-status, data-element: extraction-run-id, batch-failure-mix: retry-produced-duplicate, recovery-action: retry-one-question, correctness-failure: duplicate-counted}
+  object: "Step 3 'The answers form a structured table per video'"
+  situation: "Question 14 of 30 times out on 400 of 8,000 videos. A blanket retry re-runs the full video job; 29 questions that had succeeded are re-answered and inserted again."
+  consequence: "29 x 400 = 11,600 wasted calls and 11,600 duplicate rows; the count query now reports 1.05x for players who were retried."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "none"
+  proposed: "Key each answer row by (video id, question id, question-set version) with upsert and retry only missing keys."
+  shallow: false
+- id: cost-14
+  title: "Vendor deprecates the extraction model with a 60-day notice and re-extraction of a year of data hits provider rate limits"
+  level: L4
+  cell: {stage: rerun-and-backfill, data-element: extraction-model-version, time-and-change: extraction-vendor-deprecates-model, recovery-action: backfill-after-model-upgrade, scale: 50000-videos}
+  object: "Constraint 'Ingestion time and cost are not a concern'"
+  situation: "A year of data is 50,000 videos x 30 questions = 1.5 million calls. At a 500 requests per minute quota that is 50 hours of continuous running, competing with live ingest."
+  consequence: "The 'ingestion time is not a concern' assumption fails at the deadline: either old rows are served from a retired model version or the backfill starves new sessions."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "Estimate re-extraction hours at the provider quota, schedule it 30 days before cut-off, and reserve quota share for live ingest."
+  shallow: false
+- id: cost-15
+  title: "Transcription model upgrade chains into a full re-extraction: 8,000 videos re-transcribed, then 240,000 answers re-run"
+  level: L3
+  cell: {stage: transcription, data-element: transcription-model-version, time-and-change: transcription-model-upgraded, transcription-subsystem: transcription-model-version-differs-across-videos, recovery-action: backfill-after-model-upgrade}
+  object: "Step 2 transcript and step 3 table, derived one from the other"
+  situation: "Speech-to-text vendor ships a better model. Re-transcribing only new videos leaves one session with videos 1-8 on the old model and 9-16 on the new; re-transcribing all triggers re-extraction of every answer."
+  consequence: "Either a session mixes transcription versions (different punctuation, profanity handling, number formatting) or the full chain re-runs at 8,000 transcriptions + 240,000 extractions."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none"
+  proposed: "Store transcription-model-version on every transcript row and decide the policy: freeze per session or re-run the chain, with the cost stated."
+  shallow: false
+- id: cost-16
+  title: "Validating a model upgrade needs a second full table in parallel, which doubles storage and query surface"
+  level: L3
+  cell: {stage: rerun-and-backfill, data-element: extraction-model-version, time-and-change: model-upgraded, processing-status: superseded-by-rerun, fast-path-dependency: table-growth-over-a-year}
+  object: "Step 3 answers table per video"
+  situation: "To compare the old and new extraction model, QA needs both answer sets for the same 500 players: 2 x 240,000 rows. Spec has no concept of a shadow table or a version column."
+  consequence: "Either old answers are overwritten before comparison (no regression check possible) or both live in one table and every chatbot query must filter on version or it double counts."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Add extraction-run-id as a required column and a 'serving' pointer per game, so a shadow run never appears in chatbot queries."
+  shallow: false
+- id: cost-17
+  title: "Overnight backfill and a studio asking at 3am share one LLM quota, so the chatbot's p99 becomes minutes"
+  level: L4
+  cell: {stage: chatbot-answer, studio-question-type: cohort-why, time-and-change: studio-asks-at-3am, latency: batch-overnight, fast-path-dependency: concurrent-studio-load}
+  object: "Constraint 'Ingestion time and cost are not a concern' paired with 'Answering a studio's question must be fast'"
+  situation: "Backfill scheduled for the quiet overnight window saturates the provider rate limit for 6 hours. A studio in another time zone asks a question at 03:00 local to the data centre."
+  consequence: "Chatbot calls queue behind 1.5 million backfill calls and the answer takes minutes; the two stated constraints (cheap slow ingest, fast query) conflict at the shared quota."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Answering a studio's question must be fast."
+  proposed: "Give the chatbot a reserved quota or priority queue; throttle backfill to at most 70% of the rate limit."
+  shallow: false
+- id: cost-18
+  title: "Each follow-up question re-sends the previous result set, so token cost and latency grow every turn"
+  level: L4
+  cell: {stage: chatbot-answer, studio-question-type: follow-up-question, data-element: chatbot-conversation-log, latency: under-30s, chatbot-response-behaviour: differs-on-re-ask}
+  object: "Chatbot as 'LLM given the answers table (or a query over it) and the studio's question' (frame assumption)"
+  situation: "Turn 1 returns 200 rows (about 3,000 tokens). Turns 2 to 8 each append the history; by turn 8 the prompt holds about 24,000 tokens of earlier rows to answer 'and what about iOS?'."
+  consequence: "Turn 8 takes roughly 8 times the input cost of turn 1 and p95 latency rises from 5 s to above 15 s; old rows in context can also be quoted instead of re-queried."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Keep only the query and the aggregate in the conversation state, never raw rows; re-run the query on each follow-up."
+  shallow: false
+- id: cost-19
+  title: "A studio's raw-transcript fallback queries consume shared infrastructure with no per-tenant cost attribution or quota"
+  level: L3
+  cell: {stage: access-control, data-element: studio-tenant, tenancy: many-studios-shared-infra, fast-path-dependency: question-requires-raw-transcript-fallback, scale: many-concurrent-studio-users}
+  object: "Spec 'Buyers are gaming studios'; 'latency and cost limits per query' listed under Unspecified"
+  situation: "Studio A runs 40 open-ended questions in an afternoon, each triggering a 24M-token raw scan (cost-7). Studios B and C share the same provider account."
+  consequence: "B and C see slow answers; the bill for the afternoon cannot be charged to A because queries carry no tenant cost tag."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "latency and cost limits per query"
+  proposed: "Tag every LLM call with studio-tenant id, set a daily token budget per tenant and return a 'budget reached' message instead of queueing."
+  shallow: false
+- id: cost-20
+  title: "A video arrives 6 hours after its siblings, after the session-level aggregate and cached cohort numbers were computed"
+  level: L4
+  cell: {stage: session-level-aggregation, data-element: cached-aggregate, batch-failure-mix: late-arriving-video-after-aggregation, latency: ingest-to-queryable (hours or days after session), processing-status: uploaded-partial}
+  object: "Step 1 'each video is capped at 15 minutes, so one session is many videos'"
+  situation: "Video 16 of 16 uploads after a flaky connection, 6 hours after videos 1-15 were transcribed and the session aggregate was cached."
+  consequence: "Chatbot answers fast from a session aggregate built on 15 of 16 videos; 'did the player quit' reads No when the quit happened in video 16. Nothing marks the session as incomplete or triggers an aggregate rebuild."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "so one session is many videos"
+  proposed: "Mark a session complete only when expected video count is received; recompute the aggregate on every late arrival."
+  shallow: false
+- id: cost-21
+  title: "Row count for 'players who quit' includes sessions with only some questions extracted, with no status the chatbot can filter on"
+  level: L4
+  cell: {stage: answers-table, data-element: null-vs-no, processing-status: extraction-partial-some-questions, batch-failure-mix: some-questions-failed-in-one-video, chatbot-response-behaviour: mixes-null-with-no}
+  object: "Step 3 'The answers form a structured table per video'"
+  situation: "Question 14 timed out on 400 of 8,000 videos (5%). The 400 rows are absent. A count query 'share with answer = A' divides by 7,600 or 8,000 depending on the query."
+  consequence: "Percentages shift by up to 5% depending on denominator; analyst sees 'fast' answer with no hint that 400 videos are unanswered."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none"
+  proposed: "Write a row with status 'failed' or 'not run' for every (video, question) pair and report 'answered n of N' with every percentage."
+  shallow: false
+- id: cost-22
+  title: "Serial per-video extraction at 40 s each for a 50-question set takes 89 hours for 8,000 videos"
+  level: L4
+  cell: {stage: extraction-prompt, data-element: video, scale: 500-players, question-set-version-state: single-version, latency: batch-overnight}
+  object: "Constraint 'Ingestion time and cost are not a concern'"
+  situation: "50 questions per video, 40 s total per video, 8,000 videos run sequentially: 320,000 s = 89 hours. At parallelism 20 it is 4.4 hours."
+  consequence: "The word 'not a concern' covers hours but not days; a studio onboarding on Monday gets first answers on Friday if the pipeline runs serially, and there is no stated ingest-to-queryable target."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "State an ingest-to-queryable target (e.g. a 500-player cohort queryable within 24 h) and size the worker pool for it."
+  shallow: false
+- id: cost-23
+  title: "Evidence clip for a year-old answer sits in cold storage and takes minutes to restore when the studio asks to see it"
+  level: L4
+  cell: {stage: evidence-display, data-element: evidence-span, studio-question-type: quote-me-evidence, time-and-change: a-year-of-data, latency: minutes}
+  object: "Chatbot 'quote me evidence' request over stored video and transcript"
+  situation: "Videos older than 90 days are moved to archive tier for cost; analyst asks 'show me the clip where player 212 got stuck' on a 14-month-old session."
+  consequence: "Cold retrieval takes minutes to hours; chatbot either times out or answers without the clip while the original claim stays unevidenced. Spec says nothing about storage tiers or evidence retrieval time."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Keep transcript text and a 20-second clip around each answered span hot; archive only full videos."
+  shallow: false
+- id: cost-24
+  title: "A player deletion request invalidates cached aggregates, and recomputing every affected cohort multiplies cost for one player"
+  level: L3
+  cell: {stage: aggregate-cache, data-element: cached-aggregate, time-and-change: player-deletion-request, recovery-action: delete-and-propagate, processing-status: deleted-by-request}
+  object: "Aggregates built over per-video answer rows"
+  situation: "One player in 14 cohort aggregates across 3 question-set versions is deleted; each of 42 cached aggregates includes that player's 16 videos."
+  consequence: "42 aggregates must be rebuilt (or one player's counts subtracted) before the next chatbot query, or the chatbot keeps serving numbers that include deleted data; no rebuild-versus-subtract rule exists."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Store aggregates as sums with a per-player contribution so a deletion subtracts in constant time and invalidates only the named cohorts."
+  shallow: false
+- id: cost-25
+  title: "A publisher launches 10 games at once, each with its own question set, and a small studio's first cohort waits behind them"
+  level: L4
+  cell: {stage: upload-and-ingest, data-element: game-target, scale: 10-games-at-once, tenancy: one-studio-many-games, latency: ingest-to-queryable (hours or days after session)}
+  object: "Step 3 'written per game target'"
+  situation: "10 games x 500 players x 16 videos = 80,000 videos enter in one week; a FIFO queue serves them in upload order and a 50-player studio's cohort of 800 videos arrives behind them."
+  consequence: "The small studio waits about 10 times longer than its own volume implies; no priority, fairness or per-tenant concurrency limit is defined."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "Written per game target"
+  proposed: "Use per-tenant queues with round-robin scheduling and report expected completion time on the upload screen."
+  shallow: false
+- id: cost-26
+  title: "New game with 0 players: first answer waits for question authoring plus a full ingest, so time-to-first-answer is days"
+  level: L4
+  cell: {stage: question-set-registry, data-element: game-target, scale: 0-players-new-game, time-and-change: first-game-onboarded, latency: ingest-to-queryable (hours or days after session)}
+  object: "Step 3 'written per game target'; Unspecified 'current question count'"
+  situation: "A new studio uploads 200 sessions on day 1, but its question set is written on day 3 and re-extraction of 3,200 videos runs overnight."
+  consequence: "First chatbot answer on day 4 even though the video was available on day 1; onboarding time is dominated by the authoring dependency, not compute."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "written per game target"
+  proposed: "Ship a default tutorial-churn question set so extraction starts at upload and is refined later."
+  shallow: false
+- id: cost-27
+  title: "Precomputing aggregates for every device x country x build x version slice explodes to hundreds of thousands of cells"
+  level: L4
+  cell: {stage: aggregate-cache, data-element: cached-aggregate, fast-path-dependency: precomputed-aggregate-exists, studio-question-type: distribution-not-count, scale: 5000-players}
+  object: "Step 4 'so that a question over, say, 500 players is fast'"
+  situation: "To make every segment question instant, 4 device classes x 20 countries x 10 builds x 3 question-set versions = 2,400 slices x 30 questions x 5 options = 360,000 stored counts per game, mostly empty for small cohorts."
+  consequence: "Storage and refresh cost grow with metadata cardinality, and sparse slices with n=1 or 2 are served as percentages. A new metadata field (e.g. GPU) multiplies the count again."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Precompute only per-game, per-version totals; answer segment cuts with indexed queries and return n beside every percentage."
+  shallow: false
+- id: cost-28
+  title: "Text-to-SQL self-correction loops 3 times at 4 s each, breaking an under-2s expectation on a simple count"
+  level: L4
+  cell: {stage: chatbot-query-planning, studio-question-type: cohort-count, fast-path-dependency: text-to-sql-generated-correctly, latency: under-2s, chatbot-response-behaviour: times-out}
+  object: "Constraint 'Answering a studio's question must be fast'; frame assumption 'a query over it'"
+  situation: "The planner writes SQL against a 30-column answers table; the first query references a renamed option column and fails, the repair attempt fails on the join to question versions, the third succeeds. Each LLM turn is about 4 s."
+  consequence: "A count that should run in 100 ms returns after 12 s or hits a 30 s timeout; the user sees 'something went wrong' with no partial answer."
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none"
+  proposed: "Give the planner a typed query API (game, version, question id, filter) instead of free SQL and cap repair attempts at 1."
+  shallow: false
+- id: cost-29
+  title: "Same question asked twice returns different numbers; caching the chatbot answer fixes latency but freezes a wrong answer"
+  level: L4
+  cell: {stage: chatbot-answer, studio-question-type: cohort-count, chatbot-response-behaviour: differs-on-re-ask, fast-path-dependency: cache-hit, answer-afterlife: re-asked-after-rerun}
+  object: "Chatbot answer built from table plus studio question"
+  situation: "Analyst asks 'how many players quit before step 3' and gets 212; asks again an hour later and gets 198 because the planner chose a different filter. A response cache keyed on question text would return 212 for 24 h, including after a re-run changes the table."
+  consequence: "Caching hides the inconsistency in one case and serves stale data in the other; neither a determinism setting nor a cache key (table version + normalised query) is specified."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Cache the planned query keyed by table version, not the text answer, and run the query fresh each time."
+  shallow: false
+- id: cost-30
+  title: "Diarisation added to stop moderator words being credited to the player increases transcription cost and delays ingest-to-queryable"
+  level: L3
+  cell: {stage: transcription, data-element: utterance, speech-shape: moderator-speaking-or-leading, correctness-failure: moderator-words-attributed-to-player, latency: ingest-to-queryable (hours or days after session)}
+  object: "Step 2 'Each video is converted to a transcript'"
+  situation: "Speaker separation on 8,000 videos adds a second pass per video; a typical diarisation pass runs in about 0.3x real time, so 15 minutes of audio costs about 4.5 more minutes."
+  consequence: "Per cohort that is about 600 extra compute hours; if skipped, the moderator's 'try the button on the left' is read by extraction as the player's behaviour. The trade is made nowhere because cost is declared irrelevant."
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Decide per game whether sessions are moderated and enable diarisation only for those; record the flag on the session."
+  shallow: false
+- id: cost-31
+  title: "One failed video leads to 'rerun-whole-session', re-transcribing and re-extracting 16 videos to repair 1"
+  level: L4
+  cell: {stage: job-orchestration-and-status, data-element: session, batch-failure-mix: one-video-of-session-failed, recovery-action: rerun-whole-session, session-shape: 5-20-videos}
+  object: "Step 1 'one session is many videos'"
+  situation: "Video 9 of 16 fails transcription. If the only recovery unit is the session, videos 1-8 and 10-16 are re-run too: 16 transcriptions + 480 question calls instead of 1 + 30."
+  consequence: "Repair costs 16x what it should and, if model versions changed in between, the repaired session now mixes old and new transcripts."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none"
+  proposed: "Make video the retry unit, keyed by (session id, video index), and rebuild the session aggregate afterwards."
+  shallow: false
+- id: cost-32
+  title: "No per-stage cost and latency metering, so nobody can say which of 30 questions or which game drives the inference bill"
+  level: L3
+  cell: {stage: job-orchestration-and-status, data-element: question, question-set-version-state: per-game-fork, scale: 10-games-at-once, tenancy: one-studio-many-games}
+  object: "Unspecified list: 'latency and cost limits per query'"
+  situation: "A 'why did the player quit' question needs a 300-token answer while a yes/no question needs 5; 5 of 30 questions produce 70% of output tokens. Bill is only visible per provider account."
+  consequence: "Cost cuts are guesses; deleting the 5 verbose questions would cut output spend roughly 70%, but without per-question token counts no one finds them."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "latency and cost limits per query"
+  proposed: "Log input and output tokens and wall time per (video id, question id, run id) and report top 10 by spend weekly."
+  shallow: false
+- id: cost-33
+  title: "'What can you answer' at 50,000 videos needs coverage statistics computed on the fly across every question and version"
+  level: L4
+  cell: {stage: chatbot-query-planning, studio-question-type: what-can-you-answer, scale: 50000-videos, fast-path-dependency: cold-start, latency: under-30s}
+  object: "Constraint 'Their questions are not known in advance' and the fixed question set per game target"
+  situation: "Analyst's first message to a new session is 'what can you tell me about my players'. The chatbot must list question ids, coverage (answered n of N videos) and versions across 50,000 videos, from a cold connection."
+  consequence: "A full-table coverage count takes tens of seconds on the first call; the bot may instead list question titles from memory and claim coverage it has not checked."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Maintain a small coverage table (question id, version, answered count, total videos) updated at ingest and have the bot read only that."
+  shallow: false
+- id: cost-34
+  title: "Offboarded studio's data stays in hot storage and in cached aggregates, so cost continues after the contract ends"
+  level: L3
+  cell: {stage: retention-and-deletion, data-element: studio-tenant, time-and-change: studio-offboarded, tenancy: studio-offboarded, answer-afterlife: shared-link}
+  object: "Buyers are 'gaming studios' (spec constraints); no retention rule in spec"
+  situation: "A studio with 500 players (8,000 videos, about 24 million transcript tokens, 240,000 answer rows) leaves; no job expires its hot data, caches or shared links."
+  consequence: "Storage and cache cost continue indefinitely and shared links keep serving that studio's aggregates; no one is assigned to decide when the data is cold-archived or deleted."
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Define an offboarding job: revoke shared links at day 0, drop caches at day 7, archive at day 30, delete at the contract-stated date."
+  shallow: false

@@ -1,0 +1,579 @@
+- id: player-1
+  title: Deletion of player 212 removes answer rows but the cached cohort aggregate still counts that player
+  level: L4
+  cell:
+    stage: retention-and-deletion
+    data-element: cached-aggregate
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+    fast-path-dependency: precomputed-aggregate-exists
+    scale: 500-players
+  object: precomputed cohort aggregate behind the chatbot's fast answer over 500 players
+  situation: Player 212 of 500 requests deletion; their per-video answer rows are deleted, but the stored aggregate '38% quit at tutorial step 3' (190 of 500) was computed with their rows and is served unchanged.
+  consequence: The deleted player still shapes every number the studio sees; the deletion is incomplete and cannot be shown to the player or a regulator. Aggregate and table disagree by 1 player until the next recompute.
+  p_typical: 0.12
+  grounded: inferred
+  evidence: The answers form a structured table per video. / A chatbot for the gaming studio answers the studio's questions from that table
+  proposed: Every cached aggregate records the player ids it used or is keyed to a table version; deletion invalidates every aggregate that listed that player and recomputes before the next read.
+  shallow: false
+- id: player-2
+  title: 'Deletion request has no defined list of stores: video, transcript, answer rows, aggregate and chatbot conversation log'
+  level: L3
+  cell:
+    stage: retention-and-deletion
+    data-element: chatbot-conversation-log
+    answer-afterlife: cited-after-player-deletion
+    tenancy: many-studios-shared-infra
+    time-and-change: player-deletion-request
+  object: chatbot conversation log in the studio chatbot
+  situation: Three weeks before the request an analyst asked 'quote players who quit at step 3'; the chat log holds the player's verbatim sentence. Deletion removes the video, the transcript and the 15-20 answer rows, not the log.
+  consequence: The player's words stay readable in the studio's chat history and in any follow-up question that reuses that history; the deletion confirmation sent to the player is false.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: none
+  proposed: 'Write a dependency inventory (5 stores: video, transcript, answer rows, aggregate, conversation log) and a deletion job that reports a per-store result.'
+  shallow: false
+- id: player-3
+  title: A studio's CSV export of 500 players' answers cannot be recalled when one player deletes
+  level: L3
+  cell:
+    stage: export-and-share
+    data-element: answer
+    answer-afterlife: exported-csv
+    time-and-change: player-deletion-request
+    tenancy: one-studio-one-game
+  object: studio export of the answers table
+  situation: The studio exported 500 rows to its own drive on day 10; player 212 asks for deletion on day 40.
+  consequence: A copy of the player's answers (and any quote column) lives outside the pipeline with no way to find or delete it; the player was promised deletion.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Exports carry a pseudonymous id only, are logged per studio, and the studio contract obliges a deletion notice to be forwarded to every studio that exported that player.
+  shallow: false
+- id: player-4
+  title: Backfill started before a deletion request writes new answer rows for the deleted player after deletion
+  level: L4
+  cell:
+    stage: rerun-and-backfill
+    processing-status: superseded-by-rerun
+    recovery-action: backfill-after-model-upgrade
+    time-and-change: player-deletion-request
+    data-element: extraction-run-id
+  object: backfill job snapshot of the player list
+  situation: A model-upgrade backfill snapshots 500 player ids at 10:00; player 212 is deleted at 10:02; the job reaches that player's videos at 10:40 from a cached copy and writes 12 new answer rows.
+  consequence: The player's data is resurrected after deletion; the table lists them as 'complete' and the next aggregate counts them again.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: none
+  proposed: Backfill workers re-check a deletion list per video before writing, and a deleted-player tombstone blocks inserts for that player id.
+  shallow: false
+- id: player-5
+  title: Raw video that failed transcription or arrived as a duplicate upload is invisible to a deletion keyed on answer rows
+  level: L3
+  cell:
+    stage: retention-and-deletion
+    processing-status: transcription-failed
+    batch-failure-mix: one-video-of-session-failed
+    session-shape: duplicate-upload
+    data-element: video
+  object: video object of a session with 8 videos where 1 failed
+  situation: Video 5 of 8 failed transcription and has no transcript or answer rows; video 6 was uploaded twice under two video ids. A deletion that walks the answers table finds 6 of the 9 stored video files.
+  consequence: 3 recordings of the player's voice remain in storage after the player was told everything was deleted.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: A session can be n hours; each video is capped at 15 minutes, so one session is many videos.
+  proposed: Deletion walks storage by player and session id, not by answers-table rows; a nightly job lists video files with no matching live player.
+  shallow: false
+- id: player-6
+  title: Player says full name, home address or school aloud and the verbatim transcript carries it into answers and quotes
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape: continuous-think-aloud
+    data-element: utterance
+    studio-question-type: quote-me-evidence
+    scale: 500-players
+  object: transcript of a think-aloud video
+  situation: In minute 4 of a video a player says 'I'm Jamal, I go to Lincoln High, my address is...'; the sentence is in the transcript passed to the question runner and is retrievable by 'quote me evidence'.
+  consequence: A named, locatable person appears in a studio-facing answer; the studio sees personal data it never asked for and the pipeline has no scrub step.
+  p_typical: 0.12
+  grounded: inferred
+  evidence: What a transcript contains (speech only, on-screen text, events)
+  proposed: Run a PII detector on every transcript (names, addresses, school names, phone numbers) and redact before the transcript reaches the question runner and before any quote is stored.
+  shallow: false
+- id: player-7
+  title: No age or guardian consent field, so a minor's session is processed like an adult's
+  level: L3
+  cell:
+    stage: recruitment-and-consent
+    data-element: consent-record
+    speech-shape: continuous-think-aloud
+    scale: 5000-players
+    tenancy: many-studios-shared-infra
+  object: consent-record (not mentioned anywhere in the pipeline description)
+  situation: A player says 'my mom said I can play till 8' in video 2; the session carries no age, no guardian consent, and is included in a 5000-player cohort.
+  consequence: Data from an under-16 player enters a third-party studio's chatbot with no parental consent on file; the extraction questions treat it as ordinary speech.
+  p_typical: 0.12
+  grounded: speculative
+  evidence: none
+  proposed: Store age band and guardian-consent flag per player; exclude sessions without them from cohort queries and flag speech cues ('my mom') for review.
+  shallow: false
+- id: player-8
+  title: Consent for research use does not cover a third-party studio chatbot quoting the player
+  level: L3
+  cell:
+    stage: access-control
+    data-element: consent-record
+    studio-question-type: quote-me-evidence
+    tenancy: many-studios-shared-infra
+    chatbot-response-behaviour: answers-correctly
+  object: chatbot answers for the studio
+  situation: Player signed 'research use' only; the table row has no consent column; the studio analyst asks 'quote three players who hated the tutorial' and the chatbot returns 3 verbatim quotes with player ids.
+  consequence: The player's words reach a commercial audience beyond the signed scope; the studio cannot tell which rows are quotable.
+  p_typical: 0.15
+  grounded: inferred
+  evidence: A chatbot for the gaming studio answers the studio's questions from that table
+  proposed: Consent scope flags per player (aggregate-only, verbatim-quote, clip-share) copied onto each answer row; the chatbot query layer filters on them.
+  shallow: false
+- id: player-9
+  title: Player told the session lasts 30 minutes, capture continues for 3 hours and yields 12 videos
+  level: L3
+  cell:
+    stage: video-capture
+    data-element: consent-record
+    session-shape: 10-plus-hour-session
+    scale: 1-player-10-hour-session
+    processing-status: queued
+  object: session duration versus the 15-minute video cap
+  situation: Consent text says 30 minutes (2 videos); recorder keeps running for 3 hours (12 videos); the player forgot it was on and had a phone call in hour 2.
+  consequence: 10 videos exist outside what the player agreed to, are transcribed and extracted, and may hold private speech.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: A session can be n hours; each video is capped at 15 minutes, so one session is many videos.
+  proposed: Capture has a hard stop at the consented duration plus a 10-minute grace, and a visible recording indicator; videos past the stop are quarantined, not queued.
+  shallow: false
+- id: player-10
+  title: Spoken 'stop recording' is transcribed and extracted as a churn signal instead of a consent withdrawal
+  level: L3
+  cell:
+    stage: per-video-answers
+    speech-shape: continuous-think-aloud
+    question-shape: fits-an-option
+    session-shape: session-ends-mid-sentence
+    processing-status: extracting
+  object: per-video answer to the tutorial-churn question
+  situation: At 41:20 the player says 'okay stop recording, I'm done'; video 3 ends there; the extractor picks the option 'player expressed wish to leave the game'.
+  consequence: Withdrawal of consent is counted as tutorial churn in the cohort and the player's later videos (4 and 5) are still processed.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: A withdrawal-phrase detector (stop recording, delete this) routes the session to a human before extraction and halts processing of later videos for that player.
+  shallow: false
+- id: player-11
+  title: Non-native speaker's halting speech is read as confusion at the tutorial text
+  level: L3
+  cell:
+    stage: per-video-answers
+    speech-shape: inaudible-segments
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    correctness-failure: forced-choice-bias
+    question-shape: answer-is-a-why
+  object: transcript with dropped low-confidence segments
+  situation: A player speaking English as a second language pauses 3-5 seconds between words; the transcript drops 30% of segments; the extractor picks 'confused by instructions' for 6 of 8 videos.
+  consequence: The 'confused by instructions' rate for Brazilian and Indian players looks 2x the US rate, the studio rewrites tutorial text, and the real cause (accent and recognition errors) is invisible.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: languages
+  proposed: Store per-video transcript coverage (% of audio minutes transcribed) with each answer and bar answers on videos under 70% coverage from segment comparisons.
+  shallow: false
+- id: player-12
+  title: Mixed-language speech is mis-detected as English and the model invents words that are quoted as the player's own
+  level: L3
+  cell:
+    stage: language-detection
+    speech-shape: mixed-language
+    transcription-subsystem: wrong-language-detected
+    correctness-failure: transcription-hallucination-propagated
+    studio-question-type: quote-me-evidence
+  object: transcript of a Portuguese-English video
+  situation: A player switches between Portuguese and English; language is set to English for the 15-minute video; 40% of the transcript is phonetic nonsense or invented English.
+  consequence: The chatbot quotes a sentence the player never said, attached to a player id.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: languages (listed under Unspecified)
+  proposed: Detect language per segment, keep the original-language text beside any translation, and mark quotes from low-confidence segments as not quotable.
+  shallow: false
+- id: player-13
+  title: Household members and TV in the background are transcribed as the player, including first names of third parties
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape: background-tv-or-other-people
+    data-element: utterance
+    correctness-failure: right-answer-wrong-player
+    capture-integrity: audio-and-video-ok
+  object: utterance list in the transcript (no speaker label)
+  situation: A child shouts 'Dad, where's my charger, Mia took it' during minute 9; the transcript has no speaker turns and credits the whole line to the player.
+  consequence: People who never consented are stored by first name; the sentence feeds an answer like 'player was distracted at step 2'.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: Each video is converted to a transcript.
+  proposed: Diarise each transcript, keep only the primary speaker's turns for extraction, and drop or mask other speakers' names.
+  shallow: false
+- id: player-14
+  title: Moderator's remark about the player is stored as an utterance and used as evidence about the player's skill
+  level: L3
+  cell:
+    stage: transcription
+    data-element: moderator
+    speech-shape: moderator-speaking-or-leading
+    correctness-failure: moderator-words-attributed-to-player
+    question-shape: fits-two-options
+  object: transcript line from the moderator
+  situation: Moderator says 'he clearly doesn't play games' to a colleague in the room at 12:30; the extractor reads it as the player's skill level and chooses 'inexperienced player'.
+  consequence: A player is labelled by a stranger's passing comment; the row is shown to the studio as the player's behaviour.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: Moderator audio channel or a speaker role tag on utterances; extraction prompt reads player-role lines only.
+  shallow: false
+- id: player-15
+  title: Verbatim quote with profanity is shown with the player's id in a studio deck
+  level: L3
+  cell:
+    stage: studio-ui
+    studio-question-type: quote-me-evidence
+    answer-afterlife: copied-into-deck
+    speech-shape: profanity-or-slang
+    data-element: evidence-span
+  object: evidence span returned by the chatbot
+  situation: An analyst pastes 'this tutorial is f***ing garbage, I'm out' with player id P-0417 and device model into a deck presented to 80 people.
+  consequence: A player's rage is circulated under an identifying handle; the player agreed to a research session, not a presentation.
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: Quotes appear with a pseudonymous label only, no device model or handle; evidence display marks consent scope and carries a no-redistribution notice.
+  shallow: false
+- id: player-16
+  title: Studio staff download the full 15-minute video when the chatbot offers 'show me the clip'
+  level: L3
+  cell:
+    stage: evidence-display
+    studio-question-type: show-me-raw-transcript-or-clip
+    capture-integrity: audio-and-video-ok
+    tenancy: many-studios-shared-infra
+    data-element: video
+  object: raw video with player's voice behind the evidence link
+  situation: The evidence link returns the whole 15-minute video file (voice, any account name on screen) rather than a 20-second span, with no expiry.
+  consequence: The player's voice and on-screen data reach every studio user who can open the chat, forever.
+  p_typical: 0.07
+  grounded: speculative
+  evidence: none
+  proposed: Serve a 20-second clip around the evidence timestamp with a short-lived link, and log who opened it.
+  shallow: false
+- id: player-17
+  title: A 'find players who' question over 50 players returns a single identifiable person
+  level: L4
+  cell:
+    stage: chatbot-answer
+    studio-question-type: find-players-who
+    scale: 50-players
+    data-element: device-platform
+    chatbot-response-behaviour: answers-correctly
+  object: chatbot answer to a narrow slice
+  situation: Question 'who quit at step 2 on build 1.4.2 on Android in Brazil?' matches 1 of 50 players; the chatbot returns the id, the device and two quotes.
+  consequence: A single player is re-identified from metadata; the studio could contact them or match them to a customer account.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: Buyers are gaming studios.
+  proposed: Minimum cohort size of 5 for any slice; below 5 the chatbot says 'fewer than 5 players match' and gives no ids or quotes.
+  shallow: false
+- id: player-18
+  title: No retention period is stated, so 50,000 videos and transcripts are kept indefinitely
+  level: L3
+  cell:
+    stage: retention-and-deletion
+    data-element: transcript
+    time-and-change: retention-expiry
+    scale: 50000-videos
+    tenancy: many-studios-shared-infra
+  object: stored videos and transcripts
+  situation: Player was told data is kept 6 months; 14 months later all 50,000 videos and transcripts are still present because 'Ingestion time and cost are not a concern.'
+  consequence: Storage holds speech of players past the promise; no job checks expiry; the answers table cannot be separated from rows whose consent has lapsed.
+  p_typical: 0.1
+  grounded: quote
+  evidence: Ingestion time and cost are not a concern.
+  proposed: Per-player expiry date set at consent; a daily job deletes video and transcript at expiry and either deletes or marks answer rows.
+  shallow: false
+- id: player-19
+  title: Third-party transcription or extraction vendor holds player speech under a retention the player never agreed to
+  level: L3
+  cell:
+    stage: transcription
+    data-element: extraction-model-version
+    time-and-change: extraction-vendor-deprecates-model
+    recovery-action: backfill-after-model-upgrade
+    tenancy: many-studios-shared-infra
+  object: extraction model call that sends transcripts to a vendor
+  situation: The deprecated model is replaced by a vendor with a 30-day default log retention; a backfill sends 500 players' transcripts through it.
+  consequence: Player speech sits in a vendor's logs with no consent line for that vendor and no deletion path from the player's request.
+  p_typical: 0.08
+  grounded: speculative
+  evidence: none
+  proposed: Vendor register tied to consent text; any vendor swap requires a no-retention contract term before the backfill runs.
+  shallow: false
+- id: player-20
+  title: Offboarded studio keeps its table, chat logs and exports of 500 players
+  level: L3
+  cell:
+    stage: retention-and-deletion
+    tenancy: studio-offboarded
+    time-and-change: studio-offboarded
+    data-element: studio-tenant
+    answer-afterlife: shared-link
+  object: studio tenant's data after contract end
+  situation: Contract ends on day 0; on day 90 the table (500 players, 6,000 answer rows) and a shared link still resolve.
+  consequence: Players consented because of one studio relationship; their data stays reachable by a studio with no relationship.
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: 'Offboarding runbook: revoke links, delete or return the tenant''s rows and logs within 30 days, with a written certificate.'
+  shallow: false
+- id: player-21
+  title: Cross-studio benchmark joins the same player's behaviour across two studios' games
+  level: L3
+  cell:
+    stage: chatbot-query-planning
+    studio-question-type: cross-game-or-cross-studio-benchmark
+    tenancy: cross-studio-benchmark-request
+    session-shape: same-player-multiple-sessions
+    data-element: player
+  object: benchmark query over several studios' tables
+  situation: One tester plays game A (studio 1) and game B (studio 2); a benchmark counts them in both and the one-player slice reveals their pattern across studios.
+  consequence: Player's behaviour is combined across studios without consent to either; each studio can infer their other play.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Cross-studio queries return only counts of 20 or more from a de-identified table, never row-level data.
+  shallow: false
+- id: player-22
+  title: Single sigh-only audio is stored as 'highly frustrated' against the player id and the player cannot see or dispute it
+  level: L3
+  cell:
+    stage: per-video-answers
+    data-element: answer-confidence
+    studio-question-type: one-player-what-happened
+    correctness-failure: confident-no-evidence
+    speech-shape: inaudible-segments
+  object: per-video answer on emotional state
+  situation: 'A video has 6 transcribed words and 40 seconds of sighs; the extractor stores ''frustration: high'' with no confidence; chatbot says ''Player 17 was highly frustrated''.'
+  consequence: An inferred emotion is stored as a fact about a named participant; no route exists for the player to see or correct it.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: The answers form a structured table per video.
+  proposed: Store confidence and an evidence span with every inferred-emotion answer; offer a per-player view for access requests.
+  shallow: false
+- id: player-23
+  title: Locating all rows of one player needs a full scan because the table is indexed by game target and version
+  level: L3
+  cell:
+    stage: retention-and-deletion
+    fast-path-dependency: index-on-game-target-and-version
+    scale: 50000-videos
+    time-and-change: player-deletion-request
+    latency: minutes
+  object: answers table index
+  situation: 'Deletion or access request for player 212: no index on player id; 50,000 videos x 15 questions = 750,000 rows scanned.'
+  consequence: Each request takes minutes of table scan and is skipped when busy; requests pile up beyond the legal response window.
+  p_typical: 0.06
+  grounded: speculative
+  evidence: none
+  proposed: Add a player-id index and a secondary map from player id to video ids, session ids and aggregate ids.
+  shallow: false
+- id: player-24
+  title: Player id reused or swapped by the moderator makes a deletion remove or keep the wrong person's data
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    data-element: player
+    correctness-failure: right-answer-wrong-player
+    time-and-change: player-deletion-request
+    session-shape: same-player-multiple-sessions
+  object: player id tagged by the moderator at session start
+  situation: Moderator types P-088 for two different testers on one afternoon; player 1 requests deletion.
+  consequence: Either tester 2's data is erased, or tester 1's is left; both players' rows are mixed in 12 answer rows.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: how videos of one session are linked
+  proposed: Player id minted by the system at consent signing, printed on the consent record, and checked against the recording start.
+  shallow: false
+- id: player-25
+  title: Capture of the wrong window records personal messages and email while the game audio sounds normal
+  level: L3
+  cell:
+    stage: video-capture
+    capture-integrity: wrong-window-captured
+    data-element: screen-state
+    speech-shape: silent-player
+    processing-status: complete
+  object: video file captured from the wrong window
+  situation: Recorder captures the player's browser (email subject lines, DMs) for 20 minutes while game audio plays; the transcript looks valid, so the status is 'complete'.
+  consequence: Personal on-screen data sits in storage and nobody checks because the pipeline reads transcripts, not frames.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: Transcript loses visual information.
+  proposed: Take a frame every 60 seconds and test it against the game window signature; quarantine mismatching videos and notify the moderator.
+  shallow: false
+- id: player-26
+  title: Teammates' voice chat is recorded through game audio and transcribed with no consent from those speakers
+  level: L3
+  cell:
+    stage: audio-extraction
+    speech-shape: game-audio-dominates
+    capture-integrity: stereo-channel-only-game-audio
+    data-element: utterance
+    correctness-failure: right-answer-wrong-player
+  object: game-audio channel of the capture
+  situation: In a multiplayer tutorial 3 other humans talk over voice chat; their speech is in the same audio track and appears in the transcript as the player's sentences.
+  consequence: Non-participants are transcribed and stored; their frustration or reading of chat is credited to the player.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: Capture the microphone and the game output as separate tracks; transcribe only the microphone track.
+  shallow: false
+- id: player-27
+  title: Player reads chat or overlay aloud, putting other users' handles and messages into the table
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape: player-reading-chat-or-overlay-aloud
+    data-element: utterance
+    correctness-failure: instruction-injected-via-transcript
+    studio-question-type: quote-me-evidence
+  object: utterance that reads another user's chat message
+  situation: Player reads 'xX_dark_Xx says you are trash' at 22:10; handle and message are in the transcript and are returned as a quote.
+  consequence: 0.03
+  p_typical: speculative
+  grounded: none
+  evidence: Third-party users' handles and messages are stored and returned as the player's evidence.
+  proposed: Mask handles and quoted chat in the transcript; extraction prompt ignores read-aloud text.
+  shallow: false
+- id: player-28
+  title: Consent is given in English but the session is in a language the player may not fully read
+  level: L3
+  cell:
+    stage: recruitment-and-consent
+    data-element: consent-record
+    speech-shape: non-english
+    time-and-change: first-game-onboarded
+    transcription-subsystem: wrong-language-detected
+  object: consent record language versus session language
+  situation: Consent form is English only; the transcript language is detected as Japanese in video 1.
+  consequence: The player may not have understood the third-party studio sharing clause; consent is weak and nothing flags the mismatch.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: languages
+  proposed: Flag any session whose detected language differs from the consent language and route it to the moderator for re-consent before extraction.
+  shallow: false
+- id: player-29
+  title: A new question 'does the player sound under 18 / which accent / which gender' is backfilled across 500 players from voice alone
+  level: L3
+  cell:
+    stage: question-set-registry
+    recovery-action: backfill-after-question-set-change
+    question-set-version-state: option-added
+    studio-question-type: question-about-a-step-the-set-never-asked
+    data-element: question
+  object: the question-generation framework
+  situation: Studio asks for a quick extension and the 'any question' framework adds 3 questions on age, gender and nationality inferred from voice; backfill runs over 500 players (about 12,000 videos).
+  consequence: Sensitive attributes are inferred for people who never consented to that and stored as table values that cannot be removed individually.
+  p_typical: 0.09
+  grounded: inferred
+  evidence: the framework for generating the questions so that any type of question can be answered
+  proposed: Question registry marks forbidden categories (age, gender, health, ethnicity, religion) and blocks them at creation time.
+  shallow: false
+- id: player-30
+  title: Chatbot composes a plausible quote with a player id because the table stores option ids and no evidence span
+  level: L3
+  cell:
+    stage: chatbot-answer
+    studio-question-type: quote-me-evidence
+    correctness-failure: hallucinated-answer
+    chatbot-response-behaviour: invents-number
+    data-element: evidence-span
+  object: chatbot reply to 'quote me a player who hated step 3'
+  situation: The table holds {video, question, option}; no sentence text; the chatbot writes 'I can't follow the instructions (P-0231)'.
+  consequence: A real, identifiable player is credited with words they never said and the studio acts on a quote that does not exist.
+  p_typical: 0.12
+  grounded: inferred
+  evidence: The answers form a structured table per video.
+  proposed: Quotes only come from stored evidence spans with video id and timestamp; otherwise the bot says it has no verbatim evidence.
+  shallow: false
+- id: player-31
+  title: Transcription invents 'I hate this game' on silence or music and it is stored as the silent player's speech
+  level: L3
+  cell:
+    stage: transcription
+    speech-shape: silent-player
+    transcription-subsystem: hallucinated-text-on-silence-or-music
+    correctness-failure: transcription-hallucination-propagated
+    question-shape: unknowable-from-audio
+  object: transcript of a video with no speech
+  situation: A player says nothing for 15 minutes; menu music plays; speech-to-text emits 'Thanks for watching' and 'I hate this game' in 4 places.
+  consequence: A quiet player is recorded as hostile; the studio sees the player's silence as a negative statement.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: Each video is converted to a transcript.
+  proposed: Voice-activity check before transcription; transcripts for videos with less than 5% speech are marked 'silent' and skipped.
+  shallow: false
+- id: player-32
+  title: Player's session split by a crash into two player ids so a deletion removes only half the recordings
+  level: L3
+  cell:
+    stage: session-stitching
+    session-shape: session-split-by-crash-into-two
+    data-element: session
+    time-and-change: player-deletion-request
+    recovery-action: delete-and-propagate
+  object: two sessions that belong to one player
+  situation: A crash at hour 1 restarts capture; the restart gets a new session id and a new player id; deletion for the original id covers 4 of 9 videos.
+  consequence: 5 videos stay linked to a different id and are still queryable and quotable.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: how videos of one session are linked
+  proposed: Link sessions by consent id (not session id) and apply deletion on the consent id.
+  shallow: false
+- id: player-33
+  title: Deleted player's rows remain in the LLM context cache so the chatbot still answers from them
+  level: L3
+  cell:
+    stage: chatbot-query-planning
+    fast-path-dependency: table-fits-in-llm-context
+    latency: fast-but-stale
+    time-and-change: player-deletion-request
+    chatbot-response-behaviour: differs-on-re-ask
+  object: table pasted into the chatbot context
+  situation: The table (300 players) is pasted into a prompt cached for 24 hours; player 212 is deleted at 09:00; at 11:00 the chatbot still lists their answers.
+  consequence: The studio sees a deleted player's data for up to 24 hours; re-asking after the cache expires gives a different answer with no explanation.
+  p_typical: 0.05
+  grounded: speculative
+  evidence: none
+  proposed: Cache key includes a table version bumped on any deletion; the cache is flushed on deletion.
+  shallow: false
+- id: player-34
+  title: A studio disputing an answer requires the original recording while the player's deletion has erased it
+  level: L3
+  cell:
+    stage: studio-feedback-loop
+    answer-afterlife: disputed-by-studio
+    time-and-change: player-deletion-request
+    data-element: evidence-span
+    tenancy: one-studio-one-game
+  object: studio dispute of an answer
+  situation: The studio disputes 'players quit at step 3' after a shipped change; the contract needs evidence; 40 of 500 players deleted since, including 12 cited.
+  consequence: The studio cannot verify the answer and the player's deletion cannot be honoured at the same time; no rule says which wins.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  proposed: 'Contract rule: deletion wins; answers cite only aggregated counts and a table version, and the studio is told how many rows were removed.'
+  shallow: false

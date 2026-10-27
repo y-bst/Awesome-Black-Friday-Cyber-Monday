@@ -1,0 +1,408 @@
+- id: design-1
+  title: "Tutorial-step granularity is lost because one answer row covers a whole 15-minute video that spans several tutorial steps"
+  level: L3
+  cell: {stage: per-video-answers, data-element: tutorial-step, session-shape: 2-4-videos, question-shape: answer-is-a-why, studio-question-type: compare-two-steps}
+  object: "spec.md line 6: 'The answers form a structured table per video.'"
+  situation: "A 12-step tutorial runs across video 1 (steps 1-7) and video 2 (steps 8-12); the question 'why did the player struggle' is answered once per video with one option."
+  consequence: "The designer sees 'controls confusing' for video 1 and cannot tell whether it was step 2 or step 6; step-vs-step comparison is impossible because the table has no tutorial-step column."
+  p_typical: 0.45
+  grounded: quote
+  evidence: "The answers form a structured table per video."
+  proposed: "Add a tutorial_step key to the answers table (one row per question x video x step) and have the extractor emit a step id from a per-game step list."
+  shallow: false
+- id: design-2
+  title: "No within-video timestamp on answer rows, so timeline-of-one-player cannot be built"
+  level: L3
+  cell: {stage: answers-table, data-element: timestamp, studio-question-type: timeline-of-one-player, question-shape: answer-is-a-time, scale: 1-player}
+  object: "answers table row (one per video), spec.md line 6"
+  situation: "Designer asks 'walk me through player 17 minute by minute' for a 40-minute tutorial attempt over 3 videos."
+  consequence: "The bot can only list 3 per-video answer rows in video order; it cannot say the player stalled at 05:10 of video 2, so the designer cannot jump to the moment."
+  p_typical: 0.3
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Store each answer with start/end offsets in session time (video index x 900 s + offset) for the utterances that support it."
+  shallow: false
+- id: design-3
+  title: "Tutorial started before recording makes 'did not complete step 1' indistinguishable from 'step 1 not captured'"
+  level: L3
+  cell: {stage: video-capture, session-shape: tutorial-started-before-recording, data-element: tutorial-step, question-shape: event-did-not-happen-in-this-video, correctness-failure: null-treated-as-no}
+  object: "first video of a session; question 'which tutorial step did the player complete first'"
+  situation: "Recording starts 3 minutes after launch; the first video opens at step 3 of 12 and the transcript has no mention of steps 1-2."
+  consequence: "Extractor answers 'no steps completed' or 'step 1 not completed', inflating early-tutorial churn for that player and the cohort count."
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none"
+  proposed: "Record session start offset versus game launch in metadata and add an 'not observed' option to every step question."
+  shallow: false
+- id: design-4
+  title: "The final video of a quitter is where the churn reason lives, but a quit inside the last 40 seconds yields an empty transcript"
+  level: L3
+  cell: {stage: 15-minute-split, session-shape: last-video-under-1-minute, data-element: video, transcription-subsystem: empty-transcript-for-non-empty-video, correctness-failure: hallucinated-answer}
+  object: "last video of a session shorter than 1 minute"
+  situation: "Player says 'ugh forget it' and quits 40 seconds after the 15-minute split; the 40 s video has 6 words or nothing."
+  consequence: "The 'why did the player quit' question gets answered from 6 words or from nothing; the extractor picks 'lost interest' or 'other', and the one video the designer cares most about is the weakest evidence."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes, so one session is many videos."
+  proposed: "Merge a final video under 60 s into the previous video's transcript context for the quit-reason question."
+  shallow: false
+- id: design-5
+  title: "Silent players, the likeliest churners, get answered 'no confusion' because silence carries no negative signal"
+  level: L4
+  cell: {stage: transcription, speech-shape: silent-player, question-shape: unknowable-from-audio, correctness-failure: forced-choice-bias, data-element: answer}
+  object: "per-video answer to 'did the player express confusion in the tutorial'"
+  situation: "Player says 0 words in a 15-minute video and quits at minute 11; transcript is empty or only game audio."
+  consequence: "Test: for a 0-utterance video the answer should be 'unknown' with confidence null; instead options like 'no confusion expressed' read as 'no confusion', so silent quitters lower the cohort confusion rate."
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "Transcript loses visual information."
+  proposed: "Add an explicit 'cannot tell from audio' option and force it when the transcript has fewer than N player words."
+  shallow: false
+- id: design-6
+  title: "Colour-only or low-contrast tutorial cue produces a stuck silent player and the extractor picks 'instructions unclear'"
+  level: L3
+  cell: {stage: per-video-answers, question-shape: perceptual-cause-not-verbalised, correctness-failure: perceptual-cause-attributed-to-verbal-option, speech-shape: silent-player, data-element: screen-state}
+  object: "tutorial question option 'instructions unclear' versus a glowing-button cue the player never saw"
+  situation: "A colour-blind player hovers for 90 seconds on step 3 and mutters 'where do I go' once; the highlight is red on dark red."
+  consequence: "Table says 'instructions unclear'; the designer rewrites the text while the real cause (cue contrast) is in the picture and never captured."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "The owner's view: the transcript alone is not enough; what is on screen is largely lost."
+  proposed: "Add an option 'did not notice the cue (not verbalised)' and a per-step on-screen-state field from a vision pass."
+  shallow: false
+- id: design-7
+  title: "Mis-taps on a touch tutorial never reach the transcript, so device-segmented answers undercount touch problems"
+  level: L3
+  cell: {stage: per-video-answers, data-element: device-platform, question-shape: perceptual-cause-not-verbalised, correctness-failure: wrong-denominator}
+  object: "device-platform metadata and the 'what blocked the player' question"
+  situation: "Of 500 players, 200 are on phones; they tap the wrong zone 5 times and say nothing, while 300 desktop players complain aloud about key bindings."
+  consequence: "Chatbot reports 'controls confusing' 40% desktop vs 8% mobile; designer concludes mobile controls are fine."
+  p_typical: 0.08
+  grounded: speculative
+  evidence: "whether game telemetry is joined"
+  proposed: "Join input telemetry (taps per target, failed taps) per step and expose it as a second answer source."
+  shallow: false
+- id: design-8
+  title: "Tutorial step names differ between games and builds, so options listing steps cannot be reused or compared"
+  level: L3
+  cell: {stage: fixed-question-set, question-set-version-state: option-renamed-same-id, data-element: tutorial-step, time-and-change: game-update-changes-tutorial, studio-question-type: compare-two-versions}
+  object: "option list of the question 'which tutorial step did the player get stuck on' (written per game target)"
+  situation: "Build 1.3 has 'Dash tutorial' as step 4; build 1.4 inserts 'Dodge' as step 4 and moves 'Dash' to step 5, keeping the same option id."
+  consequence: "'Stuck on step 4' means Dash in 1.3 and Dodge in 1.4; compare-two-versions shows a 22-point fall in Dash difficulty that is an artefact."
+  p_typical: 0.08
+  grounded: quote
+  evidence: "a fixed set of questions with options, written per game target."
+  proposed: "Key options by stable step_id with a per-build mapping table, not by position or label."
+  shallow: false
+- id: design-9
+  title: "Game-update tutorial change leaves old and new build rows in one cohort with no game-version column"
+  level: L3
+  cell: {stage: answers-table, data-element: game-version, correctness-failure: mixed-version-aggregation, time-and-change: game-update-changes-tutorial, studio-question-type: compare-two-versions}
+  object: "answers table; 'Unspecified' list has no game-version field"
+  situation: "500 players, 320 on build 1.3 and 180 on 1.4 after the tutorial was reordered; the designer asks 'what is the tutorial drop-off'."
+  consequence: "Bot returns one blended 31% number; the designer cannot see that 1.4 dropped from 38% to 19%, the change they want to validate."
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "Unspecified: ... who at the studio asks and what they ask"
+  proposed: "Make game_version and build_id mandatory table columns and default chatbot answers to a per-version breakdown when more than one version is present."
+  shallow: false
+- id: design-10
+  title: "Sessions of 10+ hours produce ~40 videos that are mostly post-tutorial, yet every tutorial question runs on each and writes 'No' rows"
+  level: L3
+  cell: {stage: session-level-aggregation, session-shape: 10-plus-hour-session, question-shape: event-did-not-happen-in-this-video, correctness-failure: null-treated-as-no, scale: 1-player-10-hour-session}
+  object: "per-video rows for tutorial questions in a 10-hour session (about 40 videos of 15 minutes)"
+  situation: "Tutorial finishes in video 1; videos 2-40 get the tutorial questions answered anyway."
+  consequence: "39 rows of 'tutorial not seen' or 'No', which are counted as 'player did not struggle' in a cohort-count and swamp the 1 informative row."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "A session can be n hours; each video is capped at 15 minutes"
+  proposed: "Gate each question on a 'target phase present' pre-check and write 'not applicable' instead of a value."
+  shallow: false
+- id: design-11
+  title: "A tutorial step that happens only in video 2 gets 'No' answers from videos 1 and 3, and a cohort count of players who failed step 5 counts them"
+  level: L4
+  cell: {stage: session-level-aggregation, question-shape: event-did-not-happen-in-this-video, session-shape: 5-20-videos, correctness-failure: null-treated-as-no, studio-question-type: cohort-count}
+  object: "per-video answer to 'did the player fail step 5'"
+  situation: "Session of 6 videos, step 5 in video 2 only, failed there; videos 1, 3-6 answer 'No'."
+  consequence: "Test: count of players who failed step 5 should be 1 for this player; with per-video OR-less aggregation it is 1 yes and 5 no, and a per-row rate says 17% instead of 100% of attempts."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Aggregate by player with 'any video yes' for event questions and exclude not-applicable rows from the denominator."
+  shallow: false
+- id: design-12
+  title: "Churn has no defined event or window, so 'churn in the tutorial and just after it' cannot be computed from answers"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: game-target, session-shape: same-player-multiple-sessions, studio-question-type: cohort-count, time-and-change: game-target-changes-beyond-tutorial}
+  object: "spec.md line 6: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  situation: "Player quits at minute 14 of the tutorial but returns next day and finishes in session 2; another finishes the tutorial then never returns."
+  consequence: "Designer asks 'what percent of players churn in the tutorial'; the bot cannot say whether churn means session end, never-returning, or leaving before step 12, so three analysts get 3 different numbers."
+  p_typical: 0.15
+  grounded: quote
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "Define churn per game as 'last observed tutorial step id and no later session within 7 days' and store it as a derived column."
+  shallow: false
+- id: design-13
+  title: "One answer per video flattens a player who is confused at 03:00 and resolves it at 09:00"
+  level: L3
+  cell: {stage: per-video-answers, question-shape: answer-changes-within-video, data-element: answer, correctness-failure: inconsistent-across-videos}
+  object: "single-choice answer 'was the player confused about step 4' within one video"
+  situation: "Player says 'what is this' at 03:05, then 'oh I get it' at 09:20 in the same video."
+  consequence: "The answer is 'confused' or 'not confused' by chance of which utterance the LLM weights; the designer loses the fact that the step took 6 minutes, which is the useful finding."
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "none"
+  proposed: "Add a resolved_within_video boolean and a duration_to_resolve field, or split videos per tutorial step before extraction."
+  shallow: false
+- id: design-14
+  title: "'Why do players leave' resolves to the 'other' option because mechanic names are not enumerable as options"
+  level: L3
+  cell: {stage: answer-options, question-shape: fits-no-option, correctness-failure: other-option-overused, studio-question-type: cohort-why, data-element: option}
+  object: "options of the churn-reason question (3-6 options per question)"
+  situation: "Players say 'the roll thing', 'that slide move', 'the cover button'; only 5 fixed options exist: 'controls', 'difficulty', 'boredom', 'bug', 'other'."
+  consequence: "45% of 500 players land in 'other' or the coarse 'controls', so cohort-why returns 'controls 38%, other 45%' and names no mechanic."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "Add a free-text 'mechanic mentioned' field plus a per-game glossary mapping spoken names to mechanic ids."
+  shallow: false
+- id: design-15
+  title: "Player skips the tutorial with a skip button and no option covers 'skipped'"
+  level: L3
+  cell: {stage: answer-options, question-shape: fits-no-option, data-element: tutorial-step, speech-shape: silent-player, correctness-failure: forced-choice-bias}
+  object: "question 'which tutorial step did the player stop at'"
+  situation: "Player taps 'Skip tutorial' at step 2 and says nothing; options list step ids 1-12 and 'completed'."
+  consequence: "Extractor picks 'completed' or 'step 2', so skip-rate (a design-critical churn signal for a too-long tutorial) is invisible."
+  p_typical: 0.08
+  grounded: speculative
+  evidence: "none"
+  proposed: "Add 'skipped tutorial' option and a telemetry join on the skip event."
+  shallow: false
+- id: design-16
+  title: "Moderator hint ('try the button on the left') is credited to the player as self-discovery"
+  level: L3
+  cell: {stage: per-video-answers, speech-shape: moderator-speaking-or-leading, correctness-failure: moderator-words-attributed-to-player, data-element: moderator, question-shape: two-options-both-partly-true}
+  object: "question 'did the player discover the dash mechanic unaided'"
+  situation: "Moderator says 'press the left shoulder' at 04:30; transcript has no speaker labels."
+  consequence: "Answer 'discovered unaided' goes into the table; designer concludes the dash prompt works, when 1 of 1 successes was prompted."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "speech-to-text of the player's think-aloud plus any game audio"
+  proposed: "Diarise moderator versus player and add an 'prompted by moderator' option."
+  shallow: false
+- id: design-17
+  title: "Co-op or sibling whispering a hint is counted as the player's confusion"
+  level: L3
+  cell: {stage: transcription, speech-shape: two-speakers, correctness-failure: right-answer-wrong-player, data-element: utterance, question-shape: fits-two-options}
+  object: "transcript utterances without speaker labels in tutorial video"
+  situation: "A friend beside the player says 'no, click the other one, you are lost' twice in 15 minutes."
+  consequence: "Extractor records player-expressed confusion and 'sought help from another person'; the designer sees a 12% help-seeking rate that is partly a bystander."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Separate speakers by channel or voiceprint and tag utterances speaker=player|other before extraction."
+  shallow: false
+- id: design-18
+  title: "Player reading a tutorial popup aloud makes the extractor conclude the instruction was understood"
+  level: L3
+  cell: {stage: per-video-answers, speech-shape: player-reading-chat-or-overlay-aloud, question-shape: answer-needs-visuals, correctness-failure: hallucinated-answer, data-element: utterance}
+  object: "utterance 'press X to jump' read aloud from an on-screen prompt"
+  situation: "Player reads 'press X to jump' at 02:10 then fails the jump 4 times without speaking."
+  consequence: "Transcript shows the instruction text in the player's voice; extractor answers 'player understood the instruction', while the failure is invisible."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "no on-screen text"
+  proposed: "Mark read-aloud spans (utterances matching game UI strings) as 'reading' not 'comprehension'."
+  shallow: false
+- id: design-19
+  title: "NPC tutorial voice-over lines are transcribed as the player and answered as frustration"
+  level: L3
+  cell: {stage: audio-extraction, speech-shape: game-audio-dominates, transcription-subsystem: game-lyrics-or-npc-voice-transcribed-as-player, correctness-failure: transcription-hallucination-propagated, data-element: utterance}
+  object: "transcript lines from NPC voiceover like 'Having trouble? Try again!'"
+  situation: "Game audio and mic are mixed into one track; the NPC speaks 9 times in 15 minutes."
+  consequence: "The extractor reads 'Having trouble?' as the player's own words and picks 'player expressed frustration'; the count inflates by the number of voiced hints."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "speech-to-text of the player's think-aloud plus any game audio"
+  proposed: "Capture mic and game audio on separate tracks and transcribe only the mic track for player questions."
+  shallow: false
+- id: design-20
+  title: "Rage-quit swearing masked by the vendor removes the strongest frustration signal"
+  level: L3
+  cell: {stage: transcription, speech-shape: profanity-or-slang, transcription-subsystem: profanity-masked-by-vendor, data-element: utterance, studio-question-type: cohort-why}
+  object: "transcript text for the last 60 seconds before a quit"
+  situation: "Player says a 4-word swear phrase at step 6 and exits; vendor outputs '**** this'."
+  consequence: "The frustration option is weakened or replaced by 'lost interest'; distinguishing rage-quit from boredom is the churn question the designer asked."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Turn vendor profanity filtering off and keep a 'swearing present' flag per video."
+  shallow: false
+- id: design-21
+  title: "Non-English slang ('dame', 'this is cooked', 'gg') maps to the wrong English option"
+  level: L3
+  cell: {stage: language-detection, speech-shape: mixed-language, transcription-subsystem: language-flips-between-videos, data-element: option, correctness-failure: forced-choice-bias}
+  object: "English option labels versus Japanese or code-switched transcript"
+  situation: "A Japanese player says 'dame' ('no good') and then 'this is cooked' in English within one 15-minute video; language auto-detected per video flips between ja and en."
+  consequence: "The extractor picks 'neutral' for the Japanese portion; the designer's 'frustrated' rate is undercounted by non-English cohorts, 30% of players in a JP launch."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "Unspecified: ... languages"
+  proposed: "Fix transcription language per session and give the extractor a slang glossary per language."
+  shallow: false
+- id: design-22
+  title: "Quiet 90-second stall inside a talkative session is not a transcript event"
+  level: L3
+  cell: {stage: transcription, speech-shape: mic-muted-for-a-period, capture-integrity: mic-muted-for-a-period, question-shape: unknowable-from-audio, studio-question-type: one-player-what-happened}
+  object: "transcript window between two utterances 90 s apart at the step-3 screen"
+  situation: "Think-aloud player goes silent for 90 seconds at the same screen because the mic was muted or because they are stuck."
+  consequence: "The designer asks 'where did player 9 stall'; the table cannot distinguish muted mic from a real stall, and no per-utterance time gap is stored."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none"
+  proposed: "Store silence intervals of more than 30 s as explicit events with cause unknown or mic-muted when the capture flags it."
+  shallow: false
+- id: design-23
+  title: "Tutorial retries after a crash make the same player look like two churners"
+  level: L3
+  cell: {stage: session-stitching, session-shape: session-split-by-crash-into-two, data-element: player, correctness-failure: duplicate-counted, batch-failure-mix: all-succeed}
+  object: "two session ids for one player after a game crash at step 7"
+  situation: "Game crashes at 11:00; player restarts, repeats steps 1-7, finishes; recorded as sessions A and B."
+  consequence: "Session A answers 'quit at step 7', session B 'completed'; cohort-count says 1 churned and 1 completed out of 2 sessions rather than 1 completed out of 1 player."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "how videos of one session are linked"
+  proposed: "Link crash-split sessions by player id and a gap under 10 minutes into one logical session."
+  shallow: false
+- id: design-24
+  title: "Repeated failures on one step are reduced to a single option because the count is lost"
+  level: L3
+  cell: {stage: answer-options, question-shape: answer-is-a-count, data-element: tutorial-step, studio-question-type: distribution-not-count, correctness-failure: forced-choice-bias}
+  object: "question 'how many attempts did the player need for step 4'"
+  situation: "Player fails the dodge 6 times in one video; options are '1', '2-3', '4+'."
+  consequence: "4+ lumps 4 and 11 attempts; the designer cannot see a long tail, and the transcript counts only the attempts the player verbalised, so true attempts are unknown."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none"
+  proposed: "Source attempt counts from telemetry; keep the option buckets only as a fallback and label them 'verbalised'."
+  shallow: false
+- id: design-25
+  title: "Designer asks about a new tutorial hint added in build 1.5 that no fixed question covers"
+  level: L3
+  cell: {stage: fixed-question-set, studio-question-type: question-about-a-step-the-set-never-asked, question-shape: question-not-in-set, fast-path-dependency: question-requires-raw-transcript-fallback, latency: minutes}
+  object: "spec.md line 11: 'Their questions are not known in advance.'"
+  situation: "Build 1.5 adds a hint at step 6; the designer asks 'did players notice the new hint' across 500 players x 4 videos = 2000 transcripts."
+  consequence: "The table has no column, so the bot must fall back to raw transcripts (the 'too slow and too much data' path) taking minutes, or guess from a nearby question."
+  p_typical: 0.18
+  grounded: quote
+  evidence: "Reading 500 transcripts per question was too slow and too much data"
+  proposed: "Define the fallback: a background extraction job for the new question over stored transcripts, with an ETA shown and the answer pending."
+  shallow: false
+- id: design-26
+  title: "Chatbot substitutes the nearest fixed question when asked about a specific step"
+  level: L3
+  cell: {stage: chatbot-query-planning, chatbot-response-behaviour: substitutes-nearest-fixed-question, studio-question-type: compare-two-steps, question-shape: question-not-in-set, scale: 500-players}
+  object: "chatbot question 'is step 3 or step 5 harder'"
+  situation: "The set has only 'overall tutorial difficulty'; the bot answers with that number labelled as a step comparison."
+  consequence: "Designer receives 'difficulty: hard 44%' as if it were a comparison, with no flag that step-level data does not exist."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "none"
+  proposed: "Make the bot state the closest available question and say 'no step-level data' instead of presenting it as the answer."
+  shallow: false
+- id: design-27
+  title: "Recommendation requests are answered from general game knowledge rather than the table"
+  level: L3
+  cell: {stage: chatbot-answer, studio-question-type: recommendation-what-should-we-change, chatbot-response-behaviour: answers-from-general-game-knowledge, correctness-failure: confident-no-evidence, data-element: answer-confidence}
+  object: "chatbot reply to 'what should we change in the tutorial'"
+  situation: "Table shows 29% of 500 players quit with option 'other'; the bot recommends 'shorten the tutorial and add a progress bar'."
+  consequence: "Designer ships a progress bar on advice that came from generic knowledge, not from player data."
+  p_typical: 0.12
+  grounded: speculative
+  evidence: "none"
+  proposed: "Require every recommendation to cite the rows (count of players) it is based on and mark unsupported ones."
+  shallow: false
+- id: design-28
+  title: "'Find players who got stuck on step 4' returns player ids with no clip offset to watch"
+  level: L3
+  cell: {stage: evidence-display, studio-question-type: find-players-who, data-element: evidence-span, answer-afterlife: read-once-in-chat}
+  object: "evidence-span for per-video answers"
+  situation: "23 players match; each is in video 2 or 3 of a 4-video session; the designer wants 5 clips of 30 seconds each."
+  consequence: "The designer has to scrub 23 x 15-minute videos, which is the manual work the pipeline was meant to remove."
+  p_typical: 0.28
+  grounded: inferred
+  evidence: "Reading 500 transcripts per question was too slow and too much data"
+  proposed: "Store video id plus start/end second for each answer and have the bot return deep links."
+  shallow: false
+- id: design-29
+  title: "'Quote me the player who hated the tutorial' returns a paraphrase because the table stores no utterance"
+  level: L3
+  cell: {stage: evidence-display, studio-question-type: quote-me-evidence, data-element: evidence-span, correctness-failure: confident-no-evidence, chatbot-response-behaviour: invents-number}
+  object: "answers table row has no quote field"
+  situation: "Designer wants three verbatim quotes for a design review with 12 minutes of prep."
+  consequence: "Bot generates a plausible quote from the option label; the quote was never spoken and ends up on a slide."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "none"
+  proposed: "Store the supporting utterance text and offsets with each answer and forbid quoting anything not in that field."
+  shallow: false
+- id: design-30
+  title: "Percentages from a 5-player first playtest are reported without n"
+  level: L3
+  cell: {stage: chatbot-answer, scale: 0-players-new-game, time-and-change: first-game-onboarded, studio-question-type: cohort-count, correctness-failure: wrong-denominator}
+  object: "chatbot cohort answer on a new game's first 5 sessions"
+  situation: "Designer asks 'what percent got lost at step 3'; 2 of 5 players answered yes, 2 sessions are unprocessed."
+  consequence: "Bot says '40% got lost' with no n and no mention that 2 of 7 sessions are not yet extracted; the true figure is 2 of 5 processed."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "none"
+  proposed: "Always print n players, n sessions processed of n uploaded, and a low-sample warning below 30."
+  shallow: false
+- id: design-31
+  title: "Designer ships a tutorial change and re-asks while the re-extraction of new-build sessions is half done"
+  level: L3
+  cell: {stage: studio-feedback-loop, answer-afterlife: acted-on-tutorial-changed, processing-status: extraction-partial-some-questions, time-and-change: rerun-in-progress-while-queried, studio-question-type: compare-two-versions}
+  object: "answers table rows for the new build, 30 of 50 sessions complete"
+  situation: "Build 1.4 playtest of 50 players; 30 processed 2 hours after upload, 20 still queued; designer asks 'did it fix step 4'."
+  consequence: "Bot compares 1.3 (500 complete) with 30 of 50 of 1.4 and calls it a fix; the 30 processed are those that uploaded first, which may be the fastest players."
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "Show processed-vs-uploaded counts per version and refuse a version comparison until at least 80% of sessions are complete."
+  shallow: false
+- id: design-32
+  title: "Two options both partly true ('controls confusing' and 'too difficult') force a single label that sends the redesign the wrong way"
+  level: L3
+  cell: {stage: answer-options, question-shape: two-options-both-partly-true, correctness-failure: forced-choice-bias, studio-question-type: cohort-why, data-element: question}
+  object: "single-select question 'main reason for difficulty at step 4'"
+  situation: "Player says 'I do not get the roll and also the enemy hits too hard'."
+  consequence: "Extractor picks the first-listed option in about the same share of cases; option order decides whether the designer reworks controls or enemy damage."
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "none"
+  proposed: "Allow multi-select with a primary flag, and randomise option order in the extraction prompt."
+  shallow: false
+- id: design-33
+  title: "Tutorial transcript says nothing about which mechanic the player was on, so mechanic-level churn cannot be separated from step-level"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: game-target, studio-question-type: compare-two-steps, question-shape: unknowable-from-audio, correctness-failure: wrong-denominator}
+  object: "'game target' per game written by a person; no mapping of tutorial step to mechanic"
+  situation: "Steps 4 and 8 both use the dash; the designer asks whether the dash is the problem across the whole tutorial."
+  consequence: "No table column links a step to a mechanic, so the dash question needs a hand-built step list for each game; with 10 games at once that is 10 lists."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "written per game target"
+  proposed: "Add a per-game step-to-mechanic registry used at extraction time and in the bot's query planner."
+  shallow: false
+- id: design-34
+  title: "Churn just after the tutorial gets no questions when the tutorial ends at minute 20 and videos cut at 15"
+  level: L3
+  cell: {stage: 15-minute-split, time-and-change: game-target-changes-beyond-tutorial, session-shape: 2-4-videos, data-element: game-target, question-shape: answer-depends-on-prior-video}
+  object: "spec.md line 6: 'churn in the tutorial and just after it'"
+  situation: "Tutorial ends at 20:00; video 2 (15:00-30:00) mixes tutorial end and first post-tutorial play; 'just after' has no stated length (5 minutes? first session?)."
+  consequence: "Question applied to video 2 either reads the whole video as tutorial or as post-tutorial; the boundary is not a stored field, so post-tutorial churn is inconsistent across players whose tutorial ended at 14:50 vs 20:00."
+  p_typical: 0.07
+  grounded: quote
+  evidence: "churn in the tutorial and just after it"
+  proposed: "Store a tutorial_end offset per session and run phase-specific questions only on the matching span."
+  shallow: false

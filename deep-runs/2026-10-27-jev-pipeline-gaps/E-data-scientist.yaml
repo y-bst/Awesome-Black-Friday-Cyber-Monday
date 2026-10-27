@@ -1,0 +1,456 @@
+- id: ds-1
+  title: "Answers table has no way to distinguish a missing answer from the option 'No', so cohort percentages use an undefined denominator"
+  level: L4
+  cell: {stage: answers-table, data-element: null-vs-no, correctness-failure: null-treated-as-no, processing-status: extraction-partial-some-questions, studio-question-type: cohort-count}
+  object: 'Step 3: "The answers form a structured table per video."'
+  situation: "500 players, 40 videos have extraction-partial-some-questions (question 7 failed) and the row stores empty; the studio asks how many players were confused at step 2"
+  consequence: "Empty cells are counted as 'No' (or dropped) silently, so the confused share is reported as e.g. 31% of 500 when the valid denominator is 460 (33.7%); the chatbot cannot say which"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: 'Spec states only "structured table per video"; no mention of missing-value coding'
+  proposed: "Add an explicit status column per (video, question) with values answered / failed / not-applicable and make every aggregate report n_answered next to n_total"
+  shallow: false
+- id: ds-2
+  title: "Unit of analysis is the video row but studio questions are about players, so long sessions are over-weighted in cohort counts"
+  level: L4
+  cell: {stage: session-level-aggregation, data-element: player, session-shape: 10-plus-hour-session, correctness-failure: duplicate-counted, scale: 500-players, studio-question-type: cohort-count}
+  object: 'Step 1: "each video is capped at 15 minutes, so one session is many videos"; Step 3 table is "per video"'
+  situation: "Question 'Did the player express frustration?' counted over rows; a 10-hour player contributes 40 rows, a tutorial quitter contributes 1"
+  consequence: 'Rate of frustrated rows (e.g. 22%) is dominated by the longest sessions, the opposite of the tutorial-churn population the targets are about; chatbot reports it as if it were a share of players'
+  p_typical: 0.12
+  grounded: inferred
+  evidence: '"The answers form a structured table per video."'
+  proposed: "Define one roll-up rule per question (any-video, first-video, last-video, max) stored in the question registry and compute player-level rows before any cohort count"
+  shallow: false
+- id: ds-3
+  title: "Right-censoring ignored for 'time until' questions, because timestamps restart per 15-minute video"
+  level: L4
+  cell: {stage: per-video-answers, question-shape: answer-is-a-time, transcription-subsystem: timestamps-reset-per-video, session-shape: 5-20-videos, studio-question-type: compare-two-steps, capture-integrity: clock-drift-between-videos}
+  object: 'Step 1: "each video is capped at 15 minutes"; question type answer-is-a-time'
+  situation: "Studio asks median time to first confusion; 12 of 50 players never get confused and the offset of video k is not stored, so per-video times (0-15 min) are not session times"
+  consequence: "Median is computed only on players who were confused (survivorship) and from in-video offsets, giving e.g. 6 min instead of 51 min; non-confused players appear nowhere"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Store video_index and start_offset_sec per video, answer times as session-absolute, and carry an 'event never occurred, observed until T' flag so survival estimates are possible"
+  shallow: false
+- id: ds-4
+  title: "Selection of the 500 players is not recorded, so every cohort rate is a rate for an unknown sampling frame"
+  level: L3
+  cell: {stage: recruitment-and-consent, data-element: cohort, scale: 500-players, studio-question-type: cohort-count, answer-afterlife: copied-into-deck, tenancy: one-studio-one-game}
+  object: 'Constraint: "answering a studio''s question must be fast" over "500 players"; Unspecified: "who at the studio asks"'
+  situation: "Players are recruited playtesters who agreed to think aloud; studio reads 'only 9% quit in the tutorial' in a deck"
+  consequence: "Think-aloud volunteers churn less than the live install base (real D1 tutorial drop-off is commonly far higher), yet the number is quoted as a population rate with no frame, recruitment source or response rate attached"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: 'Spec lists no recruitment or sampling information; "Unspecified" section names no cohort definition'
+  proposed: "Attach recruitment channel, invite count and completion count to each cohort and have the chatbot print them with any rate"
+  shallow: false
+- id: ds-5
+  title: "Silent players produce 'no problem' answers, so silence is read as absence of confusion and silent-share differs between cohorts"
+  level: L4
+  cell: {stage: per-video-answers, speech-shape: silent-player, data-element: answer, question-shape: unknowable-from-audio, studio-question-type: compare-two-versions, correctness-failure: forced-choice-bias, processing-status: transcript-empty}
+  object: 'Assumption: "transcript is speech-to-text of the player''s think-aloud plus any game audio"'
+  situation: "Build 1.4 cohort was briefed to think aloud, build 1.5 cohort was not; 35% of 1.5 videos have empty or near-empty transcripts"
+  consequence: "Extractor answers 'No issues' or 'Other' on empty transcripts, so 1.5 appears 20 points better than 1.4; an artefact of talking, not of the tutorial"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: '"transcript is speech-to-text of the player''s think-aloud"'
+  proposed: "Store speech_seconds and word_count per video and have comparisons refuse or stratify when the talk-rate differs between groups by more than a set margin"
+  shallow: false
+- id: ds-6
+  title: "Empty transcript from a silent or muted video is coded as an answer instead of a not-assessable state"
+  level: L4
+  cell: {stage: per-video-answers, processing-status: transcript-empty, data-element: transcript, transcription-subsystem: empty-transcript-for-non-empty-video, capture-integrity: mic-muted-for-a-period, correctness-failure: null-treated-as-no}
+  object: 'Step 2: "Each video is converted to a transcript" then Step 3 "The transcript is run through a fixed set of questions"'
+  situation: "A 15-minute video whose mic was muted for 9 of 15 minutes produces a 40-word transcript; all questions are still run"
+  consequence: "Every one of the 10 questions gets a forced answer from 40 words, adding 1 row of noise per such video to the cohort distribution; no field marks the row as low-information"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "none"
+  proposed: "Add per-video transcript_words and speech_coverage_pct; questions below a minimum (for example 100 words) store 'not assessable' not an option"
+  shallow: false
+- id: ds-7
+  title: "Different question-set versions are pooled in one cohort count with no version column to stratify by"
+  level: L4
+  cell: {stage: answers-table, data-element: question-set-version, question-set-version-state: question-reworded-same-id, correctness-failure: mixed-version-aggregation, scale: 500-players-x-3-question-set-versions, studio-question-type: compare-two-versions}
+  object: 'Step 3: "a fixed set of questions with options, written per game target"'
+  situation: "Question q4 reworded from 'Did the player understand the jump tutorial?' to 'Did the player complete the jump tutorial unaided?' after player 200; same id q4, 3 versions across the 500 players"
+  consequence: "Pooled 'yes' rate (e.g. 58%) mixes two constructs; version-to-version comparison shows an effect that is the rewording"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: '"fixed set of questions" implies stability; no versioning is mentioned'
+  proposed: "Make (question_id, question_set_version, prompt_version) part of the row key and block pooling across versions unless the registry marks them equivalent"
+  shallow: false
+- id: ds-8
+  title: "Model upgrade creates a step change in a year-long trend that is read as player behaviour"
+  level: L4
+  cell: {stage: answers-table, data-element: extraction-model-version, time-and-change: model-upgraded, studio-question-type: trend-over-time, scale: 5000-players, correctness-failure: mixed-version-aggregation, latency: ingest-to-queryable (hours or days after session)}
+  object: 'Step 3 "answered once per video by an LLM" (frame assumption) with no model version in the table description'
+  situation: "Extraction model swapped in month 7; monthly 'confused at step 2' share goes 24% to 31% between months 6 and 7 with no game update"
+  consequence: "Studio attributes the 7-point rise to a tutorial change and rolls it back; extractor-version drift is not recorded so it cannot be ruled out"
+  p_typical: 0.1
+  grounded: speculative
+  evidence: "none"
+  proposed: "Store extraction_model_version on every row and have the chatbot annotate trend answers with version change points; run a bridge sample of 200 videos through old and new models at each upgrade"
+  shallow: false
+- id: ds-9
+  title: "No per-answer confidence, so cohort estimates carry no uncertainty and small subgroups look as solid as large ones"
+  level: L4
+  cell: {stage: chatbot-answer, data-element: answer-confidence, studio-question-type: cohort-count, scale: 50-players, chatbot-response-behaviour: answers-correctly, answer-afterlife: copied-into-deck, correctness-failure: confident-no-evidence}
+  object: 'Constraint: "Answering a studio''s question must be fast" and the answers table holds only answers'
+  situation: "Analyst asks for the share of Android players who found step 4 confusing; 50 players, 11 on Android, 4 confused"
+  consequence: "Bot says '36% of Android players' (4/11, 95% interval about 11% to 69%); exec pastes 36% in a deck; sample size and interval never shown"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: 'Frame objective: "numbers with no sample size"; spec has no confidence field'
+  proposed: "Chatbot must append n and an interval to every proportion and decline a comparison when n per group is under 30"
+  shallow: false
+- id: ds-10
+  title: "LLM labelling error on a rare option biases prevalence upward and nothing stores a confusion matrix to correct it"
+  level: L4
+  cell: {stage: per-video-answers, data-element: option, question-shape: fits-an-option, correctness-failure: hallucinated-answer, scale: 5000-players, studio-question-type: distribution-not-count}
+  object: 'Step 3: "options" per question; frame assumption "answered once per video by an LLM"'
+  situation: "Option 'rage quit' truly occurs in 2% of videos; extractor has 95% specificity and 80% sensitivity on it"
+  consequence: "Observed share = 0.8*0.02 + 0.05*0.98 = 6.5%, over 3 times the real 2%; studio sees a phantom rage-quit problem; there is no per-question confusion matrix to deflate it"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Keep a labelled audit sample per question, store sensitivity and specificity per option, and publish corrected prevalence with its interval for options under 10% prevalence"
+  shallow: false
+- id: ds-11
+  title: "Other-option share is not tracked, so a question whose 'Other' exceeds a third of rows is still reported as a distribution"
+  level: L4
+  cell: {stage: answer-options, data-element: option, correctness-failure: other-option-overused, question-shape: fits-no-option, studio-question-type: distribution-not-count, question-set-version-state: single-version}
+  object: 'Step 3: "a fixed set of questions with options"; Known problem: "The question set is small, so most of what is in the video and transcript is never captured."'
+  situation: "Question 'Why did the player stop?' with 5 named options plus Other; 41% of 3,000 video rows are Other"
+  consequence: "The chatbot reports the top named option 'unclear objective: 28%' as the leading cause when the majority of the mass is uncharacterised; the 59% named share is silently renormalised to 100% in the chat summary"
+  p_typical: 0.1
+  grounded: quote
+  evidence: '"The question set is small, so most of what is in the video and transcript is never captured."'
+  proposed: "Compute Other share per question per refresh and make the chatbot lead with it whenever above 20%; flag the question for option revision"
+  shallow: false
+- id: ds-12
+  title: "Option order bias in single-choice extraction splits two both-partly-true options arbitrarily and shifts distributions"
+  level: L4
+  cell: {stage: answer-options, question-shape: two-options-both-partly-true, correctness-failure: forced-choice-bias, studio-question-type: distribution-not-count, question-set-version-state: option-added, data-element: option}
+  object: 'Frame assumption: "questions are multiple-choice with 3-6 options, answered once per video"'
+  situation: "Player says 'I do not see the button and also the text is confusing'; options A 'cannot find UI' and B 'instructions unclear'; adding option F in position 2 moves a third of ties"
+  consequence: "A 7-point shift between A and B across versions with no change in players; share of each option is a mixture of true prevalence and tie-break rule"
+  p_typical: 0.06
+  grounded: speculative
+  evidence: '"3-6 options"'
+  proposed: "Allow multi-select or primary plus secondary for questions flagged as overlapping, and run each question with shuffled option order on a 10% sample to measure order sensitivity"
+  shallow: false
+- id: ds-13
+  title: "Churn outcome is not in the table, so 'tutorial churn' rates cannot be computed from the answers"
+  level: L3
+  cell: {stage: fixed-question-set, data-element: game-target, studio-question-type: compare-two-steps, question-shape: unknowable-from-audio, scale: 500-players, session-shape: session-ends-mid-sentence}
+  object: 'Step 3: "The targets are mostly detecting churn in the tutorial and just after it." Unspecified: "whether game telemetry is joined"'
+  situation: "Studio asks what percentage churned at step 3; the only evidence a player left is that the last video ended, and a session that ends mid-sentence may be a recording limit not a quit"
+  consequence: "Churn rate is guessed from last-video position by the LLM, with unknown error; no ground-truth outcome variable exists to validate any why-answer against"
+  p_typical: 0.12
+  grounded: quote
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it."'
+  proposed: "Join a per-session outcome (completed tutorial, quit at step k, still playing) from telemetry or moderator log as a column alongside answers"
+  shallow: false
+- id: ds-14
+  title: "Step-level conditional rates use all players as denominator instead of players who reached the step"
+  level: L4
+  cell: {stage: chatbot-query-planning, studio-question-type: compare-two-steps, data-element: tutorial-step, correctness-failure: wrong-denominator, question-shape: event-did-not-happen-in-this-video, scale: 500-players}
+  object: 'Step 3 table "per video" with no tutorial-step column'
+  situation: "500 players, 410 reached step 3 and 190 reached step 6; 38 were confused at step 6; studio compares step 3 and step 6 confusion"
+  consequence: "Bot divides by 500 giving 7.6% where the conditional rate is 20% (38/190); the apparent step 6 problem is understated by a factor of 2.6 while step-3 is overstated relative to it"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none"
+  proposed: "Add 'reached step' as its own question and make step-level rates conditional on it by default"
+  shallow: false
+- id: ds-15
+  title: "One player with several sessions or a crash-split session is counted as several players"
+  level: L4
+  cell: {stage: session-stitching, data-element: player, session-shape: session-split-by-crash-into-two, correctness-failure: duplicate-counted, scale: 500-players, studio-question-type: cohort-count, batch-failure-mix: all-succeed}
+  object: 'Unspecified: "how videos of one session are linked"'
+  situation: "500 session ids from 460 distinct players; 25 sessions were split by a crash into two session ids"
+  consequence: "Cohort count of 'confused at step 2' counts 40 players twice; share is inflated by roughly 5-9%, and independence assumed by any later interval is false because repeat sessions are correlated"
+  p_typical: 0.07
+  grounded: quote
+  evidence: '"how videos of one session are linked" is listed under Unspecified'
+  proposed: "Make player_id the cohort unit with session_id nested, and define in the registry the merge rule for crash-split sessions and repeat plays (first play only for tutorial questions)"
+  shallow: false
+- id: ds-16
+  title: "Non-idempotent retry writes duplicate answer rows that double-weight the retried videos"
+  level: L4
+  cell: {stage: job-orchestration-and-status, batch-failure-mix: retry-produced-duplicate, recovery-action: retry-one-question, data-element: extraction-run-id, correctness-failure: duplicate-counted, processing-status: complete}
+  object: 'Step 3: "The answers form a structured table per video."'
+  situation: "3% of 50,000 videos (1,500) timeout on question 5 then retry; the retry inserts a second row instead of replacing the first"
+  consequence: "Row count for q5 is 51,500; counts are inflated on exactly the videos that are slow, a non-random subset (long transcripts), which skews the distribution not just the total"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Key rows on (video_id, question_id, question_set_version, prompt_version) with upsert, and keep a retry count column"
+  shallow: false
+- id: ds-17
+  title: "Table mixes old and new prompt versions during a backfill that reached 470 of 500 players"
+  level: L4
+  cell: {stage: rerun-and-backfill, processing-status: rerun-in-progress, correctness-failure: mixed-version-aggregation, data-element: prompt-version, time-and-change: rerun-in-progress-while-queried, recovery-action: backfill-after-question-set-change}
+  object: 'Constraint: "Ingestion time and cost are not a concern"'
+  situation: "Prompt v2 rerun is at 470 of 500 players; the 30 remaining players are the most recently recruited, and all are in the new build"
+  consequence: "Studio comparing build 1.4 vs 1.5 compares v2-labelled 1.4 players against v1-labelled 1.5 players; the prompt effect is perfectly confounded with build and cannot be separated afterwards"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"Ingestion time and cost are not a concern" - which means reruns are expected, but no atomic swap or cutover is described'
+  proposed: "Publish a rerun only when coverage equals 100% of the cohort, via a versioned table with an atomic pointer swap; chatbot reads only the pointer"
+  shallow: false
+- id: ds-18
+  title: "Precomputed aggregate keeps serving after a rerun changed the underlying rows"
+  level: L4
+  cell: {stage: aggregate-cache, data-element: cached-aggregate, fast-path-dependency: cache-stale-after-rerun, latency: fast-but-stale, chatbot-response-behaviour: differs-on-re-ask, time-and-change: question-set-revised}
+  object: 'Step 4: "so that a question over, say, 500 players is fast"'
+  situation: "Aggregate 'share confused per step' computed Monday; Tuesday rerun changes 60 players answers; Wednesday question is served from cache"
+  consequence: "Studio gets 27% on Wednesday from cache, then 31% after the cache expires, same question, with no table version in the answer to explain the change"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: '"answers that change when asked twice" (perspective notes) and "fast" is the stated priority'
+  proposed: "Key every cached aggregate on table_version and invalidate on any write; include table_version and computed_at in the answer text"
+  shallow: false
+- id: ds-19
+  title: "Late-arriving video changes a player's session-level label after the cohort aggregate was published"
+  level: L4
+  cell: {stage: session-level-aggregation, batch-failure-mix: late-arriving-video-after-aggregation, data-element: session, correctness-failure: stale-after-prompt-change, processing-status: uploaded-partial, session-shape: missing-middle-video}
+  object: 'Step 1: "one session is many videos"'
+  situation: "Session of 12 videos aggregated with 9 uploaded; the player appears to quit at minute 135; videos 10-12 arrive 2 days later showing the player continued and finished the tutorial"
+  consequence: "Churn at that step is overcounted by 1 player per late session until recomputation; with 8% of sessions late the churn rate is inflated by several points and the published number is not retracted"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Mark a session complete only when the expected video count (from the capture manifest) is received; otherwise exclude it from aggregates and report excluded count"
+  shallow: false
+- id: ds-20
+  title: "Missingness from transcription failure is not random, so dropped sessions bias the cohort toward quiet, clean-audio, English players"
+  level: L4
+  cell: {stage: transcription, processing-status: transcription-failed, batch-failure-mix: some-sessions-failed-in-cohort, speech-shape: game-audio-dominates, scale: 500-players, correctness-failure: wrong-denominator}
+  object: 'Step 2: "Each video is converted to a transcript."'
+  situation: "47 of 500 sessions fail transcription, concentrated in videos where game-audio-dominates and non-English players"
+  consequence: "Cohort is 453 players with the loudest-game and non-English players under-represented (about 9.4% lost, but 25% of the non-English group); the bot reports 'of 500 players' while computing over 453"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "none"
+  proposed: "Report coverage per segment (language, device, build) next to every rate and flag segments where coverage is below 90%"
+  shallow: false
+- id: ds-21
+  title: "Chatbot silently truncates a 5000-player table to fit its context window and computes counts on the first rows"
+  level: L4
+  cell: {stage: chatbot-answer, scale: 5000-players, chatbot-response-behaviour: silently-truncates-rows, fast-path-dependency: table-fits-in-llm-context, studio-question-type: cohort-count, latency: under-30s}
+  object: 'Assumption: "the chatbot is an LLM given the answers table (or a query over it)"'
+  situation: "5000 players x 8 videos x 12 questions is 480,000 cells; table is pasted into context; rows beyond the window are dropped"
+  consequence: "Count is computed on perhaps the first 10-20% of rows (ordered by insert time, so oldest build), reported as a whole-cohort count; truncation is not stated"
+  p_typical: 0.2
+  grounded: quote
+  evidence: '"(or a query over it)" - the spec does not say which; both are given as options'
+  proposed: "Never pass raw rows beyond a row limit; chatbot must call an aggregate tool and the tool returns n_rows_scanned and n_rows_total"
+  shallow: false
+- id: ds-22
+  title: "LLM does the arithmetic for counts and percentages, with no calculator or SQL check"
+  level: L4
+  cell: {stage: chatbot-answer, chatbot-response-behaviour: invents-number, fast-path-dependency: text-to-sql-generated-correctly, studio-question-type: distribution-not-count, scale: 500-players, correctness-failure: wrong-denominator}
+  object: 'Assumption: "the chatbot is an LLM given the answers table (or a query over it)"'
+  situation: "500 player rows pasted; the bot is asked for the split across 5 options and produces '42, 31, 14, 9, 6%' which sums to 102%"
+  consequence: "Percentages do not sum to 100, a count of 213 is reported where the table holds 198; error is invisible to the analyst unless they recount"
+  p_typical: 0.09
+  grounded: speculative
+  evidence: "none"
+  proposed: "Force all numeric answers through a deterministic query tool and compare each stated figure to tool output before replying"
+  shallow: false
+- id: ds-23
+  title: "Cohort-why answers inherit a spurious difference from running a comparison over many questions and segments"
+  level: L4
+  cell: {stage: chatbot-answer, scale: question-set-of-50-questions, studio-question-type: compare-two-versions, chatbot-response-behaviour: answers-correctly, data-element: cohort, fast-path-dependency: precomputed-aggregate-exists}
+  object: 'Step 3 fixed set of questions; Constraint: "Their questions are not known in advance."'
+  situation: "Analyst asks which of 50 questions differ between build 1.4 (n=40) and 1.5 (n=40); the bot returns the top 3 by gap, with no multiple-comparison adjustment"
+  consequence: "With 50 tests at alpha 0.05 about 2.5 false positives are expected under no true effect; the top 3 'differences' of 15+ points are likely noise but presented as findings"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: '"Their questions are not known in advance."'
+  proposed: "Chatbot reports the number of comparisons scanned and uses false-discovery-rate adjustment or labels the result exploratory when more than 5 questions were scanned"
+  shallow: false
+- id: ds-24
+  title: "Option renamed in place under the same id changes meaning in the year-long series"
+  level: L4
+  cell: {stage: question-set-registry, question-set-version-state: option-renamed-same-id, data-element: option, studio-question-type: trend-over-time, time-and-change: a-year-of-data, correctness-failure: mixed-version-aggregation}
+  object: 'Step 3: "written per game target"'
+  situation: "Option id 'q2_c' renamed from 'Could not find the button' to 'Did not understand what the button does' in month 5; the series is grouped by id"
+  consequence: "Monthly trend of q2_c is a continuous line with a hidden construct change; the studio reads the post-month-5 jump from 9% to 18% as the tutorial getting worse"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Registry rule that any change of option text retires the id and issues a new one; trend queries stop at version boundaries and say so"
+  shallow: false
+- id: ds-25
+  title: "Per-game question forks make 'confusion' non-comparable, yet the chatbot is asked for cross-game benchmarks"
+  level: L4
+  cell: {stage: chatbot-query-planning, tenancy: cross-studio-benchmark-request, question-set-version-state: per-game-fork, studio-question-type: cross-game-or-cross-studio-benchmark, data-element: game-target, chatbot-response-behaviour: substitutes-nearest-fixed-question}
+  object: 'Step 3: "a fixed set of questions with options, written per game target"'
+  situation: "Studio asks 'is our tutorial churn worse than the genre average?'; game A has 6 options on q1, game B has 4, and no mapping exists"
+  consequence: "Bot substitutes the nearest question and pools unlike distributions into an average with no common definition of 'confused'; it also raises the cross-tenant read problem"
+  p_typical: 0.1
+  grounded: quote
+  evidence: '"written per game target"'
+  proposed: "Define a small shared core of 5 questions with identical options across games for benchmarks; benchmark queries use only the core and name it"
+  shallow: false
+- id: ds-26
+  title: "Moderator prompts are credited to the player, inflating 'needed a hint' in sessions where the moderator talks more"
+  level: L4
+  cell: {stage: build-and-metadata-tagging, speech-shape: moderator-speaking-or-leading, data-element: moderator, correctness-failure: moderator-words-attributed-to-player, studio-question-type: compare-two-versions, session-shape: one-video}
+  object: 'Assumption: "transcript is speech-to-text of the player''s think-aloud"; no speaker labels are mentioned'
+  situation: "Moderator A leads (says 'try the left button') in 20% of videos; moderator B in 3%; moderator A ran most of the 1.5-build sessions"
+  consequence: "Answer 'player knew what to do' is true because the moderator said it; moderator identity confounds build comparison, and the table has no moderator column to adjust for"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: '"transcript is speech-to-text of the player''s think-aloud"'
+  proposed: "Record moderator_id per session, diarise speakers, and let extraction answer from player utterances only; show moderator-level rates as a check"
+  shallow: false
+- id: ds-27
+  title: "Build or version mis-tags contaminate version comparisons by a rate that nobody measures"
+  level: L4
+  cell: {stage: build-and-metadata-tagging, data-element: build-id, studio-question-type: compare-two-versions, correctness-failure: right-answer-wrong-player, scale: 500-players, session-shape: same-player-multiple-sessions}
+  object: 'Step 1: session captured as video; no tag step is described'
+  situation: "500 sessions, 4% (20) carry the wrong build tag because the moderator tagged by hand from memory; true effect between builds is 5 points"
+  consequence: "20 mislabelled players move each build's share by up to 2 points in the wrong direction, shrinking a 5-point true effect to about 3 or erasing it at n=250 per arm"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Read build id from the client binary or log, not from hand entry, and keep a mismatch audit of 5% of sessions"
+  shallow: false
+- id: ds-28
+  title: "Same video, same question gives a different option on a second run, and run-to-run disagreement is never measured"
+  level: L4
+  cell: {stage: per-video-answers, correctness-failure: inconsistent-across-videos, chatbot-response-behaviour: differs-on-re-ask, data-element: extraction-run-id, time-and-change: model-upgraded, answer-afterlife: re-asked-after-rerun}
+  object: 'Frame assumption: "answered once per video by an LLM"'
+  situation: "Each (video, question) is answered once; at temperature above 0 about 10% of ambiguous items flip on a rerun"
+  consequence: "Measurement noise is unknown; a rerun after a model upgrade moves cohort shares by 2-3 points with no real change; once-only answers give no way to estimate test-retest agreement or a kappa per question"
+  p_typical: 0.06
+  grounded: quote
+  evidence: '"answered once per video by an LLM" (frame assumption)'
+  proposed: "Run a 5% sample of videos 3 times per question, store agreement per question, and suppress comparisons whose gap is under the measured noise"
+  shallow: false
+- id: ds-29
+  title: "Event counts per video are summed across 15-minute boundaries, double-counting or losing events that straddle the cut"
+  level: L4
+  cell: {stage: 15-minute-split, question-shape: answer-is-a-count, transcription-subsystem: sentence-cut-at-15min-boundary, session-shape: 10-plus-hour-session, correctness-failure: duplicate-counted, data-element: video}
+  object: 'Step 1: "each video is capped at 15 minutes"'
+  situation: "Question 'How many times did the player say they were lost?' summed over 40 videos of a 10-hour session; a statement spanning minute 15:00 is heard in half in each file"
+  consequence: "Up to 39 boundaries per session where a single event can be counted twice or zero times; counts are also bounded by per-video LLM counting accuracy, which degrades above about 5 events"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: '"each video is capped at 15 minutes"'
+  proposed: "Overlap splits by 10 seconds and de-duplicate events by timestamp, or avoid per-video counts and ask presence-per-video, then count videos"
+  shallow: false
+- id: ds-30
+  title: "Recording starting after the tutorial began left-truncates exactly the stage the studio cares about"
+  level: L4
+  cell: {stage: video-capture, session-shape: tutorial-started-before-recording, data-element: tutorial-step, studio-question-type: compare-two-steps, correctness-failure: wrong-denominator}
+  object: 'Step 3: "The targets are mostly detecting churn in the tutorial and just after it."'
+  situation: "15% of 500 sessions start recording after step 1 or 2 of the tutorial was already played"
+  consequence: "First-step confusion is observed for only 85% of players and those missed may be the ones who struggled early and were restarted by the moderator; 'time to complete tutorial' is biased low for the 75 sessions"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Record first_observed_step per session and restrict step-level rates to sessions whose recording began at or before that step"
+  shallow: false
+- id: ds-31
+  title: "Duplicate upload is double-weighted, with no content hash to detect it"
+  level: L3
+  cell: {stage: upload-and-ingest, session-shape: duplicate-upload, data-element: video, correctness-failure: duplicate-counted, batch-failure-mix: retry-produced-duplicate, processing-status: complete}
+  object: 'Step 1: "one session is many videos"'
+  situation: "A player upload retried after a network timeout lands twice; 2% of 50,000 videos (1,000) are duplicates"
+  consequence: "Each duplicate is transcribed and answered, so duplicated players weigh double; because uploads fail on bad networks, duplication correlates with device and country and skews segment cuts"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Hash video content and key by (session_id, video_index); refuse a second row for the same pair"
+  shallow: false
+- id: ds-32
+  title: "Deletion requests alter denominators and cached shares after numbers were already quoted, and opt-outs may correlate with bad experiences"
+  level: L4
+  cell: {stage: retention-and-deletion, time-and-change: player-deletion-request, answer-afterlife: cited-after-player-deletion, data-element: cached-aggregate, recovery-action: delete-and-propagate, scale: 500-players}
+  object: 'Step 4: chatbot answers "from that table" for a studio'
+  situation: "12 of 500 players delete their data; a published 'confused at step 2: 31%' (155/500) is re-asked and returns 29.3% (136/464 after other drops)"
+  consequence: "Studio sees an unexplained change; if deleters were more often frustrated, the surviving cohort is biased low on churn and the bias is irreversible"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Cohort answers show as-of date and n; log deletion counts per cohort so a shift can be explained; keep aggregate-only counts of deleted rows where policy allows"
+  shallow: false
+- id: ds-33
+  title: "Non-English videos get systematically more 'No issues' or 'Other' answers, so country segmentation measures extractor accuracy"
+  level: L4
+  cell: {stage: language-detection, speech-shape: non-english, correctness-failure: other-option-overused, studio-question-type: cohort-why, data-element: device-platform, transcription-subsystem: wrong-language-detected, scale: 500-players}
+  object: 'Unspecified: "languages"'
+  situation: "80 of 500 players speak Portuguese or Japanese; options are written in English; accuracy on those videos is 15 points lower than English"
+  consequence: "Studio sees Brazil players as less confused (14% vs 29%) when they are merely less accurately labelled; no language column exists to stratify, and the chatbot splits by country as a proxy"
+  p_typical: 0.05
+  grounded: quote
+  evidence: '"languages" is listed under Unspecified'
+  proposed: "Store detected_language and per-language audited accuracy; the chatbot warns on any comparison across languages whose accuracy gap exceeds 5 points"
+  shallow: false
+- id: ds-34
+  title: "Perceptual causes are attributed to verbal options for a subpopulation, so cohort-why percentages are biased for colour-blind or low-vision players"
+  level: L4
+  cell: {stage: per-video-answers, question-shape: perceptual-cause-not-verbalised, correctness-failure: perceptual-cause-attributed-to-verbal-option, studio-question-type: cohort-why, speech-shape: continuous-think-aloud, data-element: screen-state}
+  object: 'Known problem: "Transcript loses visual information." and "what is on screen is largely lost"'
+  situation: "6% of players cannot see a red-on-green tutorial arrow and say 'where do I go?'; the extractor picks 'instructions unclear'"
+  consequence: 'Instructions unclear' is inflated by those 30 of 500 players with a visual cause; fixing the text does not fix the problem and the table cannot separate the two causes
+  p_typical: 0.06
+  grounded: quote
+  evidence: '"The owner''s view: the transcript alone is not enough; what is on screen is largely lost."'
+  proposed: "Add a 'cannot perceive cue' option, and for samples of 'instructions unclear' answers store a frame-based check to estimate the misattribution rate"
+  shallow: false
+- id: ds-35
+  title: "Transcription model hallucinates text on silence, so talk-rate covariates and silent-player detection are unreliable"
+  level: L4
+  cell: {stage: transcription, transcription-subsystem: hallucinated-text-on-silence-or-music, speech-shape: silent-player, correctness-failure: transcription-hallucination-propagated, data-element: utterance, processing-status: transcribed}
+  object: 'Step 2: "Each video is converted to a transcript."'
+  situation: "Silent 15-minute video returns 'Thanks for watching' and similar repeated filler; the transcript has 12 words"
+  consequence: "Word count suggests a minimally talkative player and the extractor treats filler as speech; a talk-rate covariate used in ds-5 style stratification is wrong for every silent video"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Run voice-activity detection first and compute speech_seconds from it rather than from transcript length"
+  shallow: false
+- id: ds-36
+  title: "Questions the table could not answer are not logged, so coverage of the fixed question set cannot be measured"
+  level: L4
+  cell: {stage: studio-feedback-loop, studio-question-type: question-about-a-step-the-set-never-asked, chatbot-response-behaviour: says-no-data-correctly, question-shape: question-not-in-set, data-element: question, scale: 10-games-at-once}
+  object: 'Constraint: "Their questions are not known in advance." and Owner goal "(b) the framework for generating the questions so that any type of question can be answered"'
+  situation: "Over 10 games and a month, 400 studio questions hit the bot; 140 get 'I do not have that data' and are not stored in a structured way"
+  consequence: "The coverage rate (65% answerable) is not computed and there is no ranked list of the unmet questions to drive the question-generation framework; question authors work from guesses"
+  p_typical: 0.08
+  grounded: quote
+  evidence: '"so that any type of question can be answered"'
+  proposed: "Log each studio question with an answerable flag and the nearest question id; report coverage by game weekly and the top 20 unmet topics"
+  shallow: false
+- id: ds-37
+  title: "With one to three players the bot fills gaps from general game knowledge and presents percentages from tiny n"
+  level: L4
+  cell: {stage: chatbot-answer, scale: 1-player, time-and-change: first-game-onboarded, chatbot-response-behaviour: answers-from-general-game-knowledge, studio-question-type: cohort-why, answer-afterlife: copied-into-deck, correctness-failure: confident-no-evidence}
+  object: 'Frame: "time to first answer" for a new game; Unspecified: "who at the studio asks and what they ask"'
+  situation: "First week of a new studio, 3 players recorded, studio asks 'why do players quit the tutorial?'"
+  consequence: "Bot answers 'two thirds of players quit because the objective is unclear' (2 of 3) or draws on how similar games behave; a confidence-free 67% enters a roadmap meeting"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "none"
+  proposed: "Set a minimum n (for example 20) below which the bot shows counts only, labelled anecdotal, and refuses to generalise from outside the table"
+  shallow: false
+- id: ds-38
+  title: "Rollback to an old question-set version leaves rows from both versions with newer timestamps, and the 'latest per player' rule is undefined"
+  level: L4
+  cell: {stage: question-set-registry, question-set-version-state: rollback-to-old-version, processing-status: superseded-by-rerun, data-element: question-set-version, scale: 500-players-x-3-question-set-versions, recovery-action: backfill-after-question-set-change}
+  object: 'Step 3: "a fixed set of questions with options, written per game target"'
+  situation: "500 players have answers under v1, v2 and v3; v3 is rolled back to v1 text; 1,500 player-version answer sets exist for 500 players"
+  consequence: "A query without a version filter triples counts (1,500 sets); 'latest' by timestamp picks the rolled-back v3, 'latest by version number' picks the wrong one; the studio gets 3x or a mixed number depending on bot's SQL"
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "none"
+  proposed: "Registry marks exactly one version as active per game; every query is scoped to the active version and states it"
+  shallow: false
