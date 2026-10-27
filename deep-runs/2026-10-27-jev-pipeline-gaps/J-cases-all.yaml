@@ -1,0 +1,575 @@
+- id: fillB-1
+  title: '''How many players churned in the tutorial?'' is answered ''112 of 500 (22%)'' with no line saying which of three churn readings the planner used'
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." -- churn is the named target, but no churn definition and no rule that the reply states the definition it used'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  case_a: Churn is the one target the spec names ('The targets are mostly detecting churn in the tutorial and just after it'), so 'how many players churned in the tutorial?' is the first question every
+    studio will ask, and today the chatbot answers it with a bare '112 of 500 (22%)'. The same cohort supports at least three defensible readings (session ended before tutorial completion = 112, pressed
+    skip = 31, never returned for a second session = 64), and the reply gives no sign that one was chosen over the others. A studio that reads 22% as 'players lost for good' when the non-return figure is
+    13% will over-invest in tutorial fixes or misreport retention to its publisher, and because the number looks precise nobody will think to challenge it. This is high occurrence (every churn question),
+    invisible to the reader (detectability 5), and the fix is a reply template plus one disambiguation rule, scored cost 1.0, the cheapest item in the top 25. The spec says studio questions 'are not known
+    in advance', so the planner will keep meeting ambiguous wording; without a 'Computed as:' line naming question id, option and unit, every churn answer already given is unauditable after the fact. Each
+    additional studio onboarded before this lands adds answers that cannot be reconciled later, so it should ship before the next onboarding, not after.
+  case_b: 'The 112 / 31 / 64 split and the 22% vs 13% swing are the author''s invented illustration; the spec contains no churn definition, no question count and no statement that three competing churn
+    readings exist, and it says only that targets are ''mostly detecting churn in the tutorial and just after it'', which suggests one churn question (or a small family) written per game target by the team,
+    so the ambiguity may not exist in the stored set at all. Where it does exist, the framing is a product-owner decision about what a studio chatbot is, not a pipeline defect: churn definitions are agreed
+    with each studio at onboarding because the questions are ''written per game target'', so the studio already knows what the churn question means. A ''Computed as:'' line is a prompt or template tweak
+    that can be added in an afternoon after the first real studio complaint, with no data migration, because it reads existing question text and ids and does not touch ingestion; deferring it loses nothing.
+    The proposed clarifying-question step has its own cost: it slows an answer path whose stated constraint is that ''answering a studio''s question must be fast'', and it risks annoying analysts who asked
+    a plain question. Ambiguity of natural-language metrics is also ordinary in every analytics chatbot and is normally handled by a short definition note, not by blocking replies. The real fix (print the
+    definition) is cheap, reversible and rides on chat-3 and fillB-2, so it should be bundled there rather than treated as a separate must-fix-now item. Recommendation: defer, folded into the general ''state
+    the question used'' reply template.'
+- id: fillB-2
+  title: '''How many players got stuck at the crafting step?'' maps to the stored ''stuck more than 3 minutes?'' question and the reply never says ''3 minutes'''
+  evidence: '"Buyers are gaming studios. Their questions are not known in advance." -- studio words like ''stuck'' must be mapped to a fixed question whose threshold the reply does not show'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  case_a: The spec fixes the question set in advance while saying studio questions 'are not known in advance', which guarantees that studio vocabulary like 'stuck' gets mapped onto a stored question with
+    a hidden threshold, here 'no progress for more than 3 minutes'. The reply '87 players got stuck at crafting' never prints that threshold, so a designer who means 'retried the recipe 3+ times' silently
+    gets a different measure; a 2-minute stall with five retries counts as not stuck, and the true retry-based count could be double. The designer then sizes a crafting redesign on the wrong number, and
+    the error surfaces only after the redesign underperforms, if ever. Severity 4, occurrence 5 and detectability 5 all reflect that this happens on routine questions and is invisible in the output. The
+    proposed fix, printing the matched question's full text under every count and saying 'no stored question measures retries' when the wording names retries, is a template change with cost 1.0. Studios
+    trust a chatbot answer exactly as far as they can see what it measured, and right now they cannot see it at all. Fixing this before more studios rely on the chatbot is far cheaper than walking back
+    numbers already used in design decisions.
+  case_b: 'This is the same mechanism as fillB-1 and chat-3 with a different example: the chatbot maps a studio word (''stuck'') to a stored question and does not show the question wording. The specific
+    scenario (designer means 3+ retries, store has a 3-minute stall question, a 2-minute stall with 5 retries is missed) rests on an invented question and an invented studio intent; the spec gives no question
+    list, and a transcript of think-aloud speech with no telemetry could not measure retries in the first place, so a retry-based count would not exist to be ''double'' (the consequence''s ''if it existed''
+    concedes this). Any fix that prints the matched question text under every count is the same one-line template change as fillB-1, and once it exists, a designer who sees ''no progress for more than 3
+    minutes'' can judge the fit themselves, which is the whole remedy. Treating it as a separate item to fix now double-counts one gap three ways (fillB-1, fillB-2, chat-3) and inflates its priority. The
+    honest case is not that the problem is unreal but that it is one cheap, late-bindable template rule, not an independent blocker. Recommendation: defer or merge into chat-3; the evidence quoted (''Their
+    questions are not known in advance'') supports the general risk but not this particular threshold story.'
+- id: chat-3
+  title: Studio question with no matching fixed question gets silently answered with the nearest question's data ('camera complaints' answered from 'frustrated with controls')
+  evidence: '"Their questions are not known in advance." + "The question set is small, so most of what is in the video and transcript is never captured."'
+  grounded: quote
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'This is the most direct failure of the spec''s own design: the question set is small (''most of what is in the video and transcript is never captured'') and studio questions are ''not known in
+    advance'', so many studio questions will have no matching stored question, and the chatbot currently answers them anyway from the nearest one. An analyst asking ''how many players complained about the
+    camera?'' receives ''112 players (22%) complained about the camera'' when the figure actually counts control frustration, with no trace of the substitution. That is not an imprecise answer but a wrong
+    one stated as fact, which is the worst outcome for a product whose value is trusted answers across hundreds of players. The leaf was raised independently by four other perspectives (analyst, exec, qauthor,
+    skeptic), scores severity 5 and detectability 5, and is grounded in direct spec quotes rather than inference. The fix is small and mechanical: the planner outputs the question id(s) used, and below
+    a similarity threshold the reply says ''not tracked; closest tracked question is X'' with X''s wording verbatim. It also feeds goal (b) in the spec, because logging ''not tracked'' answers is exactly
+    the signal needed to decide which questions to add next. Every day this stays, the chatbot manufactures confident numbers for things the pipeline never measured.'
+  case_b: 'I cannot call this unreal: silently answering ''camera complaints'' with control-frustration data is a plausible failure for an LLM planner, the spec says questions are ''not known in advance''
+    and the question set is ''small'', and the leaf is marked as a direct quote with four independent perspectives agreeing. The strongest honest case for deferral is narrower. The 0.85 similarity threshold
+    is a made-up number, the 112 / 22% figures are illustrative, and the spec says the chatbot is ''an LLM given the answers table (or a query over it)''; a modern LLM given the table''s column names and
+    question wording will often itself say ''we track control frustration, not camera complaints'', so occurrence may be lower than the author assumes and the real rate is measurable only by testing the
+    actual bot. The fix is mostly prompt and reply-template work (cite the question ids used, say ''not tracked'' when no question matches) plus eval cases, none of which needs re-ingestion or schema change,
+    so it can be added after a short pilot without losing data. It overlaps with eval-13, which tests the same behaviour. If the team does only one reply-honesty fix before more studios rely on answers,
+    this is the one, but it is a days-sized prompt change, not a pipeline redesign. Recommendation: weak defer at best; if forced, accept the risk only for a first pilot with a stated limitation.'
+- id: fillB-5
+  title: '''Churned in the tutorial'' is answered from the churn question that pools ''the tutorial and just after it'', so post-tutorial quits are counted as tutorial quits'
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it."'
+  grounded: quote
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The scenario assumes the only churn question ''covers tutorial plus the first 10 minutes after it''; the ''10 minutes'', the 112 / 71 / 41 split and the ''first-mission screen no one opens''
+    are all invented, and the spec only says targets detect churn ''in the tutorial and just after it'', which describes the research goal of a studio engagement (the window of interest), not necessarily
+    the wording of a single pooled question. If the pooled question exists it was written that way on purpose by the question author for that game target, because ''tutorial and just after it'' is exactly
+    what the studio commissioned; a studio that asked for that window and gets that window is not being misled. Where a finer split is wanted, adding a second question is a normal question-set change, and
+    the spec''s own framing (ingestion cost is not a concern) means old videos can be re-run over the transcript later to backfill it, so deferring loses no data. The reply-disclosure half (''includes the
+    period just after the tutorial'') is the same template rule as fillB-1 and fillB-2. This is therefore a question-authoring choice per engagement, not a pipeline gap, and it is arguably the same defect
+    as fillB-1 (what does churn mean) seen from the other side. Recommendation: reject as a separate gap or defer; fold the disclosure into the shared reply template.'
+  case_b: The spec states the target as churn 'in the tutorial and just after it', and the stored churn question inherits that pooling, so a studio asking for tutorial-only churn is answered with a figure
+    that includes post-tutorial quits. In the leaf's cohort 41 of the 112 quitters left after the tutorial-complete screen, so the tutorial redesign is sized on 112 when only 71 quit inside it, and the
+    41 who left at the first-mission screen point at a problem no one will look at. This misdirects the exact decision the pipeline exists to inform, tutorial versus early-game investment, and it happens
+    on the most common question type (occurrence 5) with no visible cue (detectability 5). The cause is a question-definition choice, not a model limitation, and it is grounded in a direct spec quote. Splitting
+    the churn question into 'quit inside tutorial' and 'quit within N minutes after tutorial end' is a cost-2 change at ingestion, where the spec says time and cost 'are not a concern', and the interim
+    caveat line is near-free. Because re-running questions over stored transcripts gets more expensive with each studio's backlog, the split should be made before the next onboarding rather than retrofitted.
+- id: stitch-9
+  title: 'No rollup rule for contradictory per-video answers: ''completed tutorial'' is Yes in video 2 and No in videos 3-8 because the tutorial is never mentioned again'
+  evidence: '"The answers form a structured table per video." / "each video is capped at 15 minutes, so one session is many videos."'
+  grounded: quote
+  scores:
+    severity: 5.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 3.0
+  case_a: 'This is the hardest of the five to dismiss, and I will say so: if each video is answered independently, ''completed tutorial'' will plausibly be No in later videos because the event is absent
+    from their transcripts, and the spec says only that ''the answers form a structured table per video'' with ''how videos of one session are linked'' unspecified. The case for deferral is limited to timing
+    and cost. First, the 20% vs 80% swing is an assertion with no measured basis; the number depends on session length, on how often later videos mention the tutorial, and on how the chatbot aggregates,
+    and the spec names none of these. Second, the fix is a registry field per question (any / all / first / last / sum / max) plus an extra ''did not occur'' answer option, which is a metadata and prompt
+    change that can be applied by re-running extraction over stored transcripts, which the spec says is cheap (''ingestion time and cost are not a concern''), so deferral is reversible and no data is lost.
+    Third, the target is mostly the tutorial and just after it, which often fits within the first one or two 15-minute videos, so for much of the early use the multi-video rollup problem is small, and a
+    pilot restricted to first-video questions would sidestep it. Fourth, it overlaps with speech-1 and other ''absent vs No'' leaves, so a single ''unknown / not in this video'' answer option may close
+    several gaps at once. Recommendation: this one reasonably stays a keep for any cohort question over multi-video sessions; I can argue only for sequencing it right after the reply-honesty template work,
+    not for dropping it.'
+  case_b: 'The spec says ''each video is capped at 15 minutes, so one session is many videos'' and ''the answers form a structured table per video'', but defines no way to combine per-video answers into
+    a per-player or per-session answer, which is the unit every studio question is about. In an 8-video session where the tutorial is completed in video 2, videos 3-8 answer ''completed tutorial = No''
+    simply because the event is absent from their transcripts, so majority and last-video rollups say No while ''any'' says Yes. Cohort tutorial-completion rate can therefore swing between roughly 20% and
+    80% depending on which rollup the chatbot or its SQL happens to choose, and the choice is silent. That is the headline metric of the product''s primary target, and it is wrong in a way that grows with
+    session length, which the owner already names as a known problem (''Long multi-video sessions''). This leaf scores severity 5 and occurrence 5 and was raised independently by three other perspectives
+    (auditor, skeptic, extraction). The fix is well defined: each question declares its rollup (any / all / first / last / sum / max) in the registry, and the per-video answer distinguishes ''did not occur
+    in this video'' from No. That second part changes the stored schema, so every video ingested before it lands will need re-extraction, which is the strongest reason to do it now rather than later.'
+- id: l10n-3
+  title: Speech-to-text vendor masks profanity, so the strongest frustration signal is removed before the 'expressed frustration' question is asked
+  evidence: none
+  grounded: speculative
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  case_a: 'The spec says the fixed questions target ''churn in the tutorial and just after it'', and frustration at a tutorial step is the single most direct churn signal those questions can catch. Most
+    cloud speech-to-text vendors ship with profanity masking on by default, so a player who says ''what the f*** am I supposed to do here'' at 07:12 is stored as ''what the **** am I supposed to do here''
+    or has the word dropped. The extractor then reads a sanitised sentence and, with no emphatic marker, can answer ''No frustration'', which is exactly the player the studio most needs to hear about. The
+    masking is invisible in the stored transcript, so nobody reviewing answers can tell a calm player from a censored one, and the bias is one-directional: every swearing player is undercounted, in every
+    video, for every cohort. The spec itself lists ''languages'' and ''what a transcript contains'' as unspecified, so no one has confirmed the vendor setting, and because ingestion cost is explicitly not
+    a concern, re-transcribing is cheap now and gets more expensive in lock-in as the studio-facing table grows. The fix is a one-line ASR parameter plus a per-video profanity_masked flag, so a studio that
+    sees ''frustration at tutorial step 2: 18%'' today is being told a floor, not a measurement, and the flag lets us find and redo every video already processed before more chatbot answers rely on them.'
+  case_b: 'This leaf is graded speculative with no evidence at all: the spec never names an ASR vendor, and the common defaults (Whisper, Google Speech-to-Text, AWS Transcribe, Deepgram) do not mask profanity
+    unless asked to, so whether the problem exists at all is a one-minute config check, not a design gap. Its central claim, that the masking is ''invisible in the stored transcript'', is wrong for the
+    masking variant it quotes: ''what the **** am I supposed to do here'' carries visible asterisks, and an LLM extractor reading a question-shaped sentence with a masked expletive in the middle of a tutorial
+    will very likely still answer ''frustrated''. Profanity is also rarely the only frustration signal in a 15-minute think-aloud; the same player usually sighs, repeats, asks ''what do I do'' or quits,
+    all of which survive masking, so the claimed undercount ''by every swearing player'' overstates the effect. The fix is cheap whenever it is done: flip one ASR flag, and because the spec says ingestion
+    time and cost are not a concern, any affected videos can simply be re-transcribed and re-extracted later. It belongs in an ASR-config checklist item for the next onboarding, not on a must-fix-now list
+    ahead of gaps that are certain to occur.'
+- id: eval-13
+  title: Benchmark contains only answerable questions, so substituting the nearest fixed question is never caught
+  evidence: '"The question set is small, so most of what is in the video and transcript is never captured." + "Their questions are not known in advance."'
+  grounded: quote
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  case_a: The spec describes no benchmark or eval suite at all, so this leaf asks the team to change the composition of a test set that does not yet exist; it is a design note for when one is built, not
+    a gap in the running pipeline. The underlying failure, silent substitution of the nearest fixed question, is already carried by chat-3 and fillB-2 in this same top 25, and the fix there (the planner
+    says 'not covered by the question set' and prints the matched question text) removes the harm directly; an eval that measures the false-answer rate only tells you how often that harm happens. Building
+    unanswerable test items is cheap and can be added on the day an eval harness is written, with no loss of data or rework in the meantime, since nothing about the answers table changes. The 20% share
+    is arbitrary and the right ratio depends on what studios actually ask, which the spec says is not yet known, so fixing it now risks tuning to a guessed distribution. Defer it as a sub-item of the chat-3
+    fix rather than ranking it as an independent must-fix.
+  case_b: 'The spec states that ''their questions are not known in advance'' and that ''the question set is small, so most of what is in the video and transcript is never captured'', which together mean
+    that most real studio questions will fall outside the stored questions. The only defence against the bot answering those from the nearest stored question is an evaluation that checks for it, and a benchmark
+    built only from answerable questions cannot. Take ''How many players struggled with the crafting step?'' against a set that only covers the combat tutorial: the bot returns the combat number with full
+    confidence, and a benchmark with no unanswerable items scores that as correct or never tests it, so the team sees 100% and ships. This is a measurement gap, not a one-off bug: every later change to
+    the planner, embedding threshold or prompt is judged by a gauge that is blind to the dominant failure mode, so regressions cannot be seen and improvements cannot be credited. The studio that acts on
+    a confidently wrong crafting number (a redesign, a tutorial rewrite) pays for it, and the team learns of it only from a complaint. Adding at least 20% unanswerable items with the expected reply ''not
+    covered by the question set'' costs a few hours of question writing and has to exist before the planner is tuned further, otherwise every tuning decision is made against a misleading score.'
+- id: speech-1
+  title: 'Silent player: empty transcript flows into extraction and every ''did the player say/do X'' question is answered ''No'' instead of ''unknown'''
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target."; questions run regardless of transcript length, and no unknown/not-assessable state is described'
+  grounded: inferred
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  case_a: 'A 0-word transcript is the edge case of a think-aloud study, not the norm: the pipeline exists because players narrate, sessions are recorded for that purpose, and per the frame assumptions the
+    transcript also contains game audio, so truly empty transcripts should be rare and easy to spot. For many of the fixed questions ''No'' is arguably the correct literal answer (''Did the player express
+    confusion?'' -- they did not express it), and an LLM given an empty transcript with an ''Other'' or ''cannot tell'' option will often pick it unprompted, so the claimed systematic undercount is an inference
+    with no observed case behind it. The remedy is cheap to apply later: word count can be computed from stored transcripts at any time, and because the spec says ingestion cost is not a concern, extraction
+    for low-speech videos can be re-run with answer=NULL in a single backfill without losing anything now. It also duplicates analyst-24, which is the same root cause seen from the per-player side, so it
+    should be merged and handled with one abstain rule rather than counted as two urgent items. Accept as-is for now with a known caveat in onboarding notes, and fold the NULL-state rule into the next schema
+    change.'
+  case_b: 'The spec says the transcript ''alone is not enough'' and that the fixed questions are run on it once per video, with no unknown or not-assessable answer state described. A player who does not
+    think aloud produces a zero-word or near-zero-word transcript, and the fixed questions (for example ''Did the player express confusion at tutorial step 2?'') are still run, so the extractor must pick
+    from the options and ''No'' or ''Other'' is the natural pick. Those rows then enter the answers table as real negatives, indistinguishable from a talkative player who calmly completed the step. Silent
+    players are typically a large share of any think-aloud cohort and are plausibly the ones who quietly quit, so the cohort count ''how many players were confused'' is biased downward exactly where it
+    matters, and the studio reads silence as satisfaction. This is not recoverable downstream: once ''No'' is stored, the chatbot cannot distinguish absence of evidence from evidence of absence, and no
+    denominator of players-with-speech exists to report. The fix is cheap and purely at ingestion: skip extraction under a word-count threshold, write NULL with reason no_speech, and have the chatbot print
+    the speech-bearing denominator. Doing it before onboarding avoids wrong answers that cannot be repaired later without re-running the questions.'
+- id: chat-1
+  title: Cohort churn count over the per-video answers table counts video rows, not distinct players, so '% of 500 players who quit in the tutorial' uses ~4,000 rows as the denominator
+  evidence: '"The answers form a structured table per video." + "so that a question over, say, 500 players is fast."'
+  grounded: quote
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  case_a: The spec says 'the answers form a structured table per video' and that sessions run to n hours in 15-minute videos, so the unit of the table is the video while the unit of every studio question
+    is the player. A planner generating SQL over that table will, by default, COUNT(*) or COUNT(answer='quit') over video rows. With 500 players at about 8 videos each, the denominator becomes roughly 4,000
+    and a player who answered 'quit' in two videos is counted twice in the numerator, so the bot reports about 4% where the truth is about 30%, or more than 100% when numerator and denominator disagree
+    on the unit. The product exists to answer exactly this kind of cohort-percentage question quickly, so the headline use case is the one affected, and nothing in the reply signals the error because the
+    number looks plausible. A studio deciding whether to rebuild its tutorial on an order-of-magnitude-wrong churn rate pays the highest price, and the wrong number is stored in dashboards and slide decks.
+    The fix is a planner rule that every cohort count resolves to COUNT(DISTINCT player_id) over a session-level view, with a test asserting denominator equals distinct players in scope and the reply printing
+    'n = 500 players'. It is cheap, testable, and has to exist before any studio relies on a percentage from this bot.
+  case_b: I cannot make a strong case against this one. The best available argument is that the spec says only 'a structured table per video' and does not say the chatbot writes raw SQL against it; if the
+    chatbot is given a session- or player-level view, or the table already carries player_id and the planner prompt says 'count players', the double-counting never happens, and a single DISTINCT view is
+    a one-line fix that can ship at any time without re-ingestion. But the error it describes is likely, large (off by the videos-per-session factor), and invisible in a reply that just says '4%', so deferring
+    it is hard to justify.
+- id: analyst-24
+  title: Silent player's quit reason is answered confidently with no confidence or evidence indicator
+  evidence: '"the transcript alone is not enough; what is on screen is largely lost." -- a near-empty transcript still gets an answer; no abstain or confidence field is specified'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: This is the same root cause as speech-1 (near-empty transcripts are still forced into an answer) and should be merged into it rather than ranked as a separate must-fix; one rule, abstain or flag
+    below a word-count threshold, covers both. The scenario it uses, an analyst asking 'Why did player 301 quit?', is a single-player lookup, while the spec states the table exists for fast questions 'over,
+    say, 500 players', where one low-evidence row barely moves a cohort percentage. A player saying 4 words in 15 minutes of a think-aloud session is rare, and an extractor 'confidence' field is poorly
+    calibrated in practice, so storing it adds a column people will over-trust without making the answer more correct; the 50-word threshold is also arbitrary. Word count is derivable from the stored transcripts
+    at any time and extraction can be re-run at no constraint cost, so the 'low evidence' prefix can be added later without losing data. Defer and merge with speech-1.
+  case_b: 'The spec says ''the transcript alone is not enough; what is on screen is largely lost'', and for a player who spoke four words in fifteen minutes there is almost nothing to ground an answer to
+    ''Primary reason for leaving''. The question still has to be answered once per video from fixed options, so the extractor picks something such as ''Bored'', and no abstain, confidence or evidence field
+    is described anywhere in the pipeline. The chatbot then replies ''Player 301 quit because they were bored.'' in the same assured tone it uses for a player who explained their reasoning for ten minutes.
+    An analyst or designer reads that as a finding about player psychology and may quote it in a report, when it is closer to a coin flip over the option list. Aggregates inherit the problem: ''top reason
+    for leaving'' across 500 players is quietly dominated by guesses for silent players, shifting the distribution toward whatever option the model defaults to. Storing the transcript word count and extractor
+    confidence alongside every answer costs almost nothing at ingestion, where cost is not a concern, and lets the bot prefix ''low evidence (4 words spoken)'' or filter by evidence level. Without it, studios
+    cannot calibrate trust in any single-player answer, and trust once lost on a confidently wrong reply is hard to regain.'
+- id: extract-1
+  title: Per-video question 'Why did the player leave the tutorial?' has no 'not observed in this video' option, so video 7 of 12 (tutorial finished in video 2) still gets a reason picked
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." / "The answers form a structured table per video." / "each video is capped at 15 minutes, so one session is many
+    videos."'
+  grounded: quote
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  case_a: 'The spec''s own design guarantees this fires on every multi-video session: ''each video is capped at 15 minutes, so one session is many videos'', ''the answers form a structured table per video'',
+    and the targets are ''mostly detecting churn in the tutorial and just after it''. A 3-hour session has 12 videos, the tutorial lives in one or two of them, yet every video is asked ''Why did the player
+    leave the tutorial?'' with only content options A-D, so the extractor must pick a reason for 10 videos that contain no tutorial at all. Those 10 fabricated rows land in the same column as the 2 real
+    ones, so a cohort count of ''reason = unclear instructions'' can be inflated up to 10x per player, and the inflation grows with session length, which the owner already names as a known problem. The
+    studio designer who asks the chatbot ''what is the top tutorial churn reason?'' gets a ranking driven by long-session noise and reprioritises tutorial work on it. Because the bad values are well-formed
+    options, nothing downstream can filter them out later; every row ingested today without a NOT_APPLICABLE value is permanently contaminated and must be re-extracted. The fix is two reserved options plus
+    one labelled-set assertion (NOT_APPLICABLE >= 95% on videos with no tutorial speech), a one-day change to the question schema that must land before more studios'' tables are filled.'
+  case_b: 'This is real but it is the same defect as skeptic-8 (no abstain or not-observed option) and should be judged once, as a default in the question-authoring template, not as a separate urgent fix.
+    The 10x inflation figure assumes every non-tutorial video is asked the tutorial-churn question and that the extractor always picks a reason; the spec only says the targets are mostly tutorial churn
+    and just after it, and gives no question count, so the worst case is asserted, not shown. A reasonable default already covers much of it: any competent extraction prompt tells the model to answer from
+    the transcript and most models will pick an ''other'' or ''none'' style option if one exists, and the table can be filtered by the video index at query time, since videos are already ordered within
+    a session. Where the question is tutorial-scoped, a cheap pre-filter (only ask tutorial questions of videos 1..k, or gate on a one-line ''is the tutorial being played in this video'' question) fixes
+    it without redesigning options. Ingestion cost is stated as not a concern, so re-running extraction after adding the two options later is cheap and nothing is lost, because transcripts are retained.
+    The proposed 95% NOT_APPLICABLE acceptance test needs a labelled set that does not exist yet, so that part cannot start tomorrow and would stall the cheap part. Defer to the question-framework rework
+    the owner already wants, and ship the two reserved options there.'
+- id: ops-1
+  title: 'Session of 8 videos where 6 transcribe and 2 hit transcription-failed: no ''partial'' session status, and session-level aggregation still emits a session row as if all 8 were read'
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." -- implied: some videos of a session can fail transcription and no partial-session status exists'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The gap is plausible, but it is an operations and bookkeeping rule, not a correctness flaw in the pipeline design, and it is cheap to add later because no data is lost: failed videos can be re-transcribed
+    and the session re-aggregated at any time, since ingestion time and cost are explicitly not a concern. The evidence is inferred, not quoted; the spec says nothing about transcription failures, and the
+    2-of-8 failure scenario is a hypothetical that depends on vendor error rates the spec does not give. Most pipelines already have a per-job status and a retry queue by default, and a session that has
+    missing videos will usually show as a gap in video indices once anyone looks. The consequence also overstates the harm: a session row built from 6 of 8 videos is still real evidence, and the studio
+    question is about cohort trends over hundreds of players, where a few partial sessions move a percentage by little. Session-level ''quit during tutorial: No'' is also an aggregation choice that the
+    spec does not say exists; if sessions are not aggregated this early, the leaf is moot. It overlaps with ds-1, since a per-(video, question) status column would surface the missing videos too. Defer
+    until session stitching is designed; do not block studio onboarding on it.'
+  case_b: 'The spec says ''a session can be n hours; each video is capped at 15 minutes, so one session is many videos'', which makes partial failure a matter of when, not if: an 8-video session gives the
+    speech-to-text vendor eight chances to 5xx, and at hundreds of players per cohort some sessions will always be missing videos. Today there is no ''partial'' status, so when videos 3 and 7 fail, the
+    session-level answer ''player quit during tutorial: No'' is computed from 6 of 8 videos and stored as if complete, even though the missing 30 minutes may be exactly where the quit happened. The chatbot
+    then counts that session at full weight in a 500-player churn figure, and neither the studio analyst nor the JEV on-call engineer has any field that reveals the gap, so the error is invisible by construction.
+    Because ''ingestion time and cost are not a concern'', there is no excuse for silently accepting incomplete input: retrying a failed video is cheap, a wrong churn number given to a paying studio is
+    not. The fix is small and mechanical (videos_expected, videos_complete, session status = min over videos, aggregation flags coverage < 100%, retry keyed on session_id and video_index), but it must exist
+    before more data accumulates, because sessions already aggregated without these fields cannot be told apart from complete ones afterwards. Every onboarding that happens before this ships adds churn
+    numbers that may be quietly computed on three-quarters of the evidence.'
+- id: design-32
+  title: Two options both partly true ('controls confusing' and 'too difficult') force a single label that sends the redesign the wrong way
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." -- implied: single-choice options with no multi-cause rule are implied'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: This is a real property of single-choice questions, but it is a question-design matter that the question author controls, and not a pipeline defect. The spec says options are written per game
+    target, so the author can already write mutually exclusive options, add a combined option, or split the item into two questions; none of that needs a framework change. The claim that the extractor picks
+    the first-listed option in about the same share of cases is stated with no measurement, and the evidence is only implied from the word 'options'. Randomising option order in the prompt makes per-video
+    answers non-reproducible across re-runs and complicates the answers table, so the proposed fix has its own cost, and multi-select with a primary flag changes the table schema that the chatbot reads,
+    which is a heavy change for a case where the player mentions two causes in one sentence. The harm path, a designer reworking controls when enemy damage was the cause, runs through a human reading a
+    cohort chart with many players, where a mislabel on one video is diluted. Accept as-is for the first studios and revisit once the label agreement against human coders is measured; if the owner wants
+    the general framework improvement, this belongs inside it, so it is a duplicate of the broader question-framework work.
+  case_b: 'The spec says ''the transcript is run through a fixed set of questions with options'', and nothing defines what happens when a player gives two real reasons, which is the normal case in think-aloud:
+    ''I do not get the roll and also the enemy hits too hard'' names both controls and difficulty. A single-choice extractor must drop one, and LLMs systematically favour the first-listed option under ambiguity,
+    so the stored label is decided by the question author''s option order rather than by the player. That label is exactly what the studio''s designer acts on: the chatbot reports ''controls confusing''
+    as the top tutorial churn cause and the team spends a sprint reworking the roll input while the enemy damage that also drove players away stays untouched. Because the bias is consistent across all 500
+    players, it does not average out; it produces a confident, stable, wrong ranking that looks like signal. Nothing in the answers table records that a second cause was present, so the studio cannot recover
+    it later without re-reading transcripts, which is the very cost the table exists to avoid. Allowing multi-select with a primary flag and randomising option order in the prompt is a schema and prompt
+    change, cheap now and expensive after every studio''s historical table has been filled with order-biased single labels.'
+- id: skeptic-8
+  title: Multiple-choice with 3-6 options and no abstain option forces a pick when the transcript holds no evidence for any option
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." -- implied: no abstain or not-observed option is stated, so a pick is forced'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  case_a: The spec defines questions as 'a fixed set of questions with options, written per game target' and the frame says each has 3-6 options answered once per video by an LLM, with no abstain or 'other'
+    option, so the model is forced to pick even when the player's real reason (a phone call, a battery warning, dinner) is on no list. An LLM forced to choose will pick the most semantically nearby option,
+    typically 'boring', so every off-list cause is silently converted into a design verdict about the game. The owner already says 'the question set is small, so most of what is in the video and transcript
+    is never captured', which means off-list causes are not an edge case but the expected majority of the uncaptured mass. The studio then sees a cohort chart in which boredom is inflated by every interruption
+    and every unlisted reason, and may cut or re-pace tutorial content that was never the problem. Worse, with no 'not discussed' or 'other (free text)' bucket, JEV has no measurement of how often the option
+    list fails, so the question framework the owner wants to improve (goal b) has no feedback signal at all. Adding the two options and tracking their weekly share per question is a small change that both
+    stops the inflation and gives the question authors the data they need to grow the set; every week without it adds forced picks that cannot be distinguished from genuine answers.
+  case_b: This is the same underlying issue as extract-1 (no not-observed option), and only the 'off-list cause' half is distinct; the case for acting now is weaker than the priority suggests. The spec
+    does not say the options lack an 'other' choice; the evidence is inferred from silence, and well-written per-game question sets almost always end with 'other' or 'not stated', so the leaf may describe
+    a badly authored question, not a pipeline flaw. The scenario (a phone call as the reason for quitting) is a rare cause, and even if it is forced into 'boring', it shifts one player's tag; a cohort chart
+    across hundreds of players moves little unless off-list causes are common, and the spec gives no rate. Adding 'other (free text)' also adds a free-text column the chatbot must read and the table must
+    store, which conflicts with the goal of a compact structured table, and measuring the share of each option per question per week is a monitoring feature, not a fix. Because transcripts are kept and
+    ingestion cost is not a concern, adding the two options later and re-running extraction recovers everything. Merge into extract-1 as one item in the question-authoring template, and defer.
+- id: ds-1
+  title: Answers table has no way to distinguish a missing answer from the option 'No', so cohort percentages use an undefined denominator
+  evidence: '"The answers form a structured table per video." - no coding is given for a missing or failed answer'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The spec says ''the answers form a structured table per video'' and gives no coding for a missing or failed answer, so when question 7 fails extraction on 40 of 500 players'' videos, the cell
+    is empty and the chatbot''s SQL either counts it as ''No'' or drops it without saying so. The studio asking ''how many players were confused at step 2?'' then gets 31% of 500 when the valid figure is
+    33.7% of 460, and no reply can say which denominator was used because the table itself does not know. This is the core promise of the product, fast answers over hundreds of players, failing at its most
+    basic layer: every percentage the chatbot produces has an undefined denominator, and the error grows with each extraction failure, vendor outage, or new question added mid-cohort. The people harmed
+    are the studio analyst and exec who compare cohorts or builds week over week, since a shift in failure rate will masquerade as a shift in player behaviour. It also blocks the owner''s goal (a), improving
+    how the chatbot answers from the store, because no answer-quality work can be trusted while ''No'', ''failed'' and ''not applicable'' share one representation. A status column per (video, question)
+    and an n_answered next to every n_total is a cheap schema change today; after more studios'' tables are populated, backfilling which blanks meant failure versus absence is impossible.'
+  case_b: 'I cannot make a strong case that this is unreal: with no coding for failed or missing answers, a denominator problem is a plausible silent error, and a status column is cheap. The honest counter
+    is about timing and scale. The scenario assumes a partial extraction failure writes an empty cell, which is an implementation detail the spec does not state; if the pipeline writes rows only on full
+    success, or retries until all questions answer, the leaf disappears. The effect in the example is 31% against 33.7%, which is a small shift for a studio asking a broad cohort question, and the evidence
+    is inferred, not quoted. Adding a status column is cheap at any point because the table is rebuilt from retained transcripts, so deferring does not lock in bad data, and the denominator can be fixed
+    in the chatbot''s query layer before onboarding. It also overlaps with ops-1 and with the not-applicable handling in extract-1, so one table-level status design would cover all three and should be judged
+    once. Defer to the same schema change, not a separate urgent fix.'
+- id: privacy-1
+  title: Deletion request removes video and transcript but nothing defines removal of the per-video answer rows and the cached aggregate
+  evidence: '"The answers form a structured table per video." - no deletion path for answer rows is defined'
+  grounded: inferred
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  case_a: 'Defer: this is a compliance chore, not a pipeline gap that has to be fixed before onboarding. The spec never mentions a ''precomputed cohort count'' or any cached aggregate; it says the chatbot
+    ''answers the studio''s questions from that table'', so the aggregate half of this leaf is invented, and a count that is computed live from the table drops the player as soon as the rows go. The answer
+    rows are ''a structured table per video'', so they are almost certainly keyed by video id, and a foreign key with ON DELETE CASCADE (or one DELETE ... WHERE video_id IN (...) in the existing deletion
+    script) removes them in the same step that deletes the video and transcript. That is an hour of work and can be added when the first withdrawal arrives. Withdrawals from paid, recruited playtests are
+    rare, and none has been reported. A full deletion manifest with receipts across ''every extraction-run-id'' is a reasonable later hardening task. The honest weakness of this case is that once a withdrawal
+    does happen, keeping derived data about that player is a legal exposure no matter how rare it is, so the minimum cascade rule should be written down even if the manifest waits.'
+  case_b: 'A consent withdrawal is the one request that cannot be deferred, and the spec gives engineers nothing to execute it against. Step 3 says only that ''The answers form a structured table per video'',
+    so when player 212 of 500 withdraws, the obvious actions (delete the video file and the transcript) leave the 6 answer rows for that player intact, plus any precomputed cohort count that included them.
+    Those rows are exactly the derived data the studio chatbot reads, for example ''quit at tutorial step 3, frustrated'', so the player stays queryable and counted after the team has told them and the
+    studio that they were removed. The leaf''s consequence line states it directly: the deletion is incomplete and the cohort count still includes the player. The failure is invisible to the engineers who
+    ran the deletion, because nothing reports completion, and it compounds with every extraction run, since re-extraction under a new run-id adds more rows that no deletion job knows about. The exposure
+    falls on the studio and on the vendor as data controller, and it grows with every onboarding, because each new cohort adds players who will eventually withdraw. The fix (a per-player manifest covering
+    video, transcript, answer rows across all run-ids, cached aggregates with a stated recompute window, and a completion receipt) is cheap (cost_to_address 2) and has to exist before the table holds more
+    data, since retrofitting keys onto rows that already exist is the expensive path.'
+- id: fillA-21
+  title: WER is undefined on a reference with 0 words, so the ASR's invented text on silent or music-only minutes (about 30% of sampled videos) is never counted; no insertions-per-silent-minute metric exists
+  evidence: '"Each video is converted to a transcript." -- a transcript of a silent minute should be empty and no metric checks that it is.'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The pipeline''s trust in everything downstream rests on step 2, ''Each video is converted to a transcript'', yet no measurement step exists that could show whether the transcript invents text,
+    and the standard metric is structurally blind to the worst case. WER divides by reference word count, so on a reference with 0 words (a silent or music-only minute) it is undefined, and the sample either
+    drops those minutes or scores 0/0. About 30% of sampled videos contain such minutes, so the exclusion removes the exact condition under which speech recognisers emit ''Thanks for watching''-style hallucinations.
+    Silent players are not an edge case in a think-aloud study: they are the players who are stuck, confused or about to churn, which is the tutorial-churn target the fixed questions exist for. Those invented
+    words then flow into step 3, where an LLM answers the multiple-choice questions with confident options for a player who said nothing, and into the table the studio chatbot aggregates over hundreds of
+    players. Because the headline WER number looks healthy, no one has a reason to look, so the defect is both likely (occurrence 4) and undetectable by the current metric (detectability 5). The fix is
+    a separate insertions-per-silent-minute metric with a threshold (for example under 1 word per 10 minutes), which is cheap to add (cost_to_address 2) and must exist before studios rely on answers derived
+    from silent stretches.'
+  case_b: 'Defer: this leaf fixes a metric inside a measurement step that the leaf itself says does not exist (''No transcript-quality-measurement step ... exists''), so it is a second-order refinement
+    of work nobody has started. The ''30% of sampled videos'' figure has no source in the spec, which only says ''Each video is converted to a transcript''. Invented text on silence is a well-known ASR
+    failure, and the usual defaults handle it upstream: voice-activity detection before decoding, or dropping segments with a high no-speech probability. That removes the inserted text instead of just counting
+    it. Once the team builds a reference-transcript QA step, adding an ''insertions per non-speech minute'' column is one line in the scoring script. The spec also says ''Ingestion time and cost are not
+    a concern'', so if transcripts turn out to be polluted, every video can be re-transcribed and re-answered cheaply later. The fix does not have to land before the next studio relies on answers; it is
+    cheap to do afterwards.'
+- id: fillB-3
+  title: '''How many new players quit the tutorial?'' has three readings (first session ever, first session on this build, genre-new from screener) and the bot counts all 500 as new'
+  evidence: '"Buyers are gaming studios. Their questions are not known in advance." -- ''new players'' arrives as studio wording with no matching column, and no rule says a dropped qualifier is reported'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'This is a silent wrong answer on the most natural question a studio will ask, and the spec leaves it unhandled: ''Buyers are gaming studios. Their questions are not known in advance.'' ''How
+    many new players quit the tutorial?'' has at least three readings (first session ever, first session on this build, genre-new from the screener), and no column encodes any of them. In the leaf''s scenario,
+    120 of the 500 players are returning from an earlier build''s playtest, so the planner drops the qualifier and answers over all 500 without saying the filter was ignored. Returning players already know
+    the tutorial, so including them lowers the quit rate the studio believes is a first-time rate, and the studio may conclude the tutorial works better than it does. The reply never echoes the filter set
+    it applied, so the studio cannot see the dropped word, and nobody on the JEV side sees it either. Severity is high because the decision (rework the onboarding or not) is exactly what the product is
+    bought for, and detectability is 5 because nothing in the output signals the error. The fix is cheap: when any filter word maps to no column, the reply opens with a line such as ''Could not apply: new
+    players (no first-session field)'' and gives the unfiltered count only after it. This should ship before more studios rely on chatbot answers, since every studio uses qualifiers like ''new'', ''returning'',
+    ''mobile'' or ''paying'' and each one is a potential silent drop.'
+  case_b: 'Defer, or merge into the general ''state the interpretation and filters applied'' rule (see fillB-1), because this is one instance of that rule and not a separate gap. The 120 returning players
+    are a made-up scenario: the spec says the targets are ''mostly detecting churn in the tutorial'', and tutorial playtests normally recruit players who are new to the game, so for the main use case the
+    cohort is new by construction and the dropped qualifier changes nothing. Where returning players do exist, the real gap is missing player metadata (no first-session or build field), and the chatbot
+    cannot fix that by wording its reply. Telling an LLM to ''list any qualifier you could not map to a column'' is one line in the prompt and can be added whenever echoing filters is designed. Building
+    a dedicated rule for the word ''new'' ahead of that general fix is narrow work with little payoff.'
+- id: fillB-12
+  title: Answers table encodes 'not processed', 'not observed' and 'not applicable' as sentinel option ids ('-1', 'NA', 'X') with no data dictionary, and generated SQL counts them as answers
+  evidence: '"current question count and answer types" -- answer types and codes are unspecified, so the planner has no definition of missing-value codes'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  case_a: 'The chatbot''s headline numbers are computed by generated SQL, and the spec leaves the table''s semantics undefined: ''current question count and answer types'' is explicitly listed as unspecified.
+    The leaf''s scenario shows what that costs. The answers table encodes ''not processed'', ''not observed'' and ''not applicable'' as sentinel option ids (''-1'', ''NA'', ''X''), so the planner''s COUNT(*)
+    FILTER (WHERE option_id=''B'') * 1.0 / COUNT(*) over 4,000 rows includes 900 rows that are not answers. The studio sees 620/4,000 = 15.5% instead of 620/3,100 = 20%, a 4.5-point understatement from
+    a single missing exclusion. Nothing in the schema says ''-1'' and ''NA'' must be excluded, so each generated query decides on its own, and two phrasings of one question can return different rates, which
+    destroys the credibility of the table the whole architecture depends on. The number looks plausible, so no one is prompted to check it (detectability 5), and the error recurs on every rate query across
+    every question. The fix is a machine-readable dictionary per column, with allowed values, which codes mean missing and why, and a default denominator filter injected into the planner prompt. It is cheap
+    (cost_to_address 2) and must land before more studios build decisions on percentages from this table.'
+  case_b: 'Weak case for deferral, stated honestly. The specific failure depends on a schema the spec does not describe: the leaf''s own evidence is that ''current question count and answer types'' are
+    unspecified, and a sensible engineer would store ''not processed'' as a missing row or NULL rather than the code ''-1'', and ''not reached'' as a named option. Whether the chatbot writes SQL at all
+    is an assumption in the frame (''the answers table (or a query over it)''). If it does, the fix is a cheap view (answers_valid) or a few prompt lines listing the missing-value codes, and it can be added
+    at any time without re-ingesting anything. That said, if sentinel codes do exist, the result is a quietly wrong headline rate (15.5% against 20%) that nobody would notice, and the fix costs almost nothing.
+    I cannot make a strong case to defer it beyond ''check the schema first''.'
+- id: stitch-8
+  title: A stuck period that straddles a boundary (14:00 of video 2 to 03:00 of video 3) answers No to 'stuck more than 3 minutes?' in both videos
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." + "The answers form a structured table per video."'
+  grounded: quote
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'This gap is grounded directly in two spec sentences that together guarantee it: ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos'' and ''The answers
+    form a structured table per video.'' A duration question such as ''stuck more than 3 minutes?'' is answered once per video, so a stall that straddles a boundary is split. In the leaf''s example, a 4-minute
+    stall on tutorial step 3 puts 1 minute at the end of video 2 and 3 minutes at the start of video 3, and both videos answer ''No'' to a >3 minute threshold. The player who struggled most is therefore
+    recorded as never having been stuck, and ''how many players got stuck >3 min at step 3'' undercounts every such player. Under uniform timing, a 4-minute stall crosses a 15-minute mark about 27% of the
+    time, and in roughly half of those cases both fragments fall under 3 minutes; the leaf''s own estimate is about 1 in 5. The bias also grows with longer thresholds and hours-long sessions, because more
+    stalls span cuts. The undercount lands on the highest-value signal for the studio, the players stuck long enough to churn, and no query can repair it afterwards, since the per-video rows carry no state
+    that links adjacent videos. The fix (answer duration questions at session level from per-video start/end-of-state fields, or extract over a window spanning adjacent videos) changes the schema, so it
+    must be settled before the table grows further, while re-extraction is still affordable (ingestion cost is explicitly not a concern).'
+  case_b: 'Defer: the leaf overstates the effect, and the fix belongs to the session-stitching work the owner already lists under ''Long multi-video sessions''. Do the arithmetic for a 4-minute stall that
+    starts at a uniformly random time. It is lost only when the boundary splits it into two parts that are each 3 minutes or less, which means a start time inside a 2-minute window per 15-minute video:
+    about 13%, not ''about 1 stall in 5''. Stalls longer than 6 minutes always exceed 3 minutes in at least one video, so the bias only affects stalls of 3 to 6 minutes. Most tutorials, which are the main
+    target, fall in the first 15-minute video, before any boundary. An LLM estimating ''more than 3 minutes'' from think-aloud speech is already off by a minute or more, so the boundary error is within
+    the question''s own noise. The spec also says ''Ingestion time and cost are not a concern'', so once stitching exists (overlapping windows, or session-level duration fields), every stored transcript
+    can be re-run cheaply. That makes this cheap to fix later instead of urgent now.'
+- id: percep-29
+  title: Cohort 'why did they leave' distribution sums to 100% over verbal causes only, so the chatbot reports 0% for visibility causes and the absence reads as evidence
+  evidence: '"The question set is small, so most of what is in the video and transcript is never captured." / "Transcript loses visual information."'
+  grounded: quote
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'The spec itself says ''Transcript loses visual information'' and ''most of what is in the video and transcript is never captured'', yet the cohort ''why did they leave'' answer is normalised
+    to 100% over five verbal causes, so the table is structurally incapable of recording a visibility cause and the chatbot still reports a complete-looking distribution (''lost interest 41%, too hard 30%,
+    unclear 18%, bug 7%, other 4%''). The harm is not a missing number but a false one: a studio reading that breakdown concludes there are no visibility or UI-readability problems in the tutorial, which
+    is exactly the class of failure a think-aloud transcript cannot see. Tutorial churn is the named target of the whole pipeline, and ''why do players leave the tutorial'' is the first question every studio
+    will ask, so this fires on the headline use case rather than an edge case. Detectability is the worst score possible (5): nothing in the answer, the table or the chatbot signals that a cause class was
+    unobservable, so neither the studio nor JEV will notice until a playtest contradicts a shipped design decision. The fix is cheap and local to the answer layer: state which cause classes the question
+    set can observe, compute shares over ''reasons observable from speech'', and add an explicit ''not observable from speech'' row. Doing it now, before more studios onboard, prevents a library of confidently
+    wrong cause breakdowns from becoming the reference numbers studios quote internally and that JEV later has to walk back.'
+  case_b: This is mostly a presentation problem for the chatbot answer, not a pipeline defect, and it is cheap to fix later. The pipeline stores a per-video answer table; the percentages in the example
+    are a rendering choice made at query time, and a one-line caveat in the chatbot's system prompt ('percentages are over reasons observable from speech; visual causes are not captured') fixes it without
+    touching ingestion or any stored data, so nothing is lost by deferring. The scenario also depends on the question set having no visual option and no 'other' bucket that absorbs unobservable causes,
+    but the example itself already shows an 'other 4%' row and 'unclear 18%', which are exactly where unclassifiable cases land. The owner already names visual loss as a known problem, so the studio is
+    told in onboarding that the transcript is speech-based; this leaf adds a second, narrower instance of a gap that is already acknowledged and that the real fix (adding a visual channel to capture) will
+    remove at the source. Fixing the reply wording now, before that upstream change, risks building a caveat that becomes wrong or redundant once visual features exist. It is also near-duplicate of qauthor-18
+    and uxr-28, which cover the same missing-visual-cause root, so spending a separate fix on it double-counts. Occurrence is plausible but the harm requires a studio to infer absence of visibility problems
+    from silence, which a competent studio researcher accustomed to think-aloud data will usually not do. Defer; bundle with the one-time chatbot prompt and caveat work.
+- id: uxr-5
+  title: Think-aloud decays after the first 15-30 minutes, so videos 3-20 have sparse transcripts and per-video answers drift to 'no issue' over the session
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." -- implied: long sessions span many videos and narration density across them is not addressed'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'Narration decay is a well-known property of think-aloud studies and is not specific to this pipeline; studios that buy think-aloud data already expect it, and the effect sits in the source data,
+    not in anything the pipeline does wrong. The claim is also mostly an inference: the evidence quote says only that sessions span many videos and says nothing about narration density, so the numbers (120
+    wpm falling to under 20) are illustrative, not observed. The remedy is cheap and entirely downstream: words-per-minute can be computed from the existing transcript at any time, after the fact, for all
+    stored videos, because ingestion keeps the transcripts. Nothing is lost by deferring, and the flag can be added to the aggregation layer when someone first sees a suspicious trend. The primary targets
+    are the tutorial and the window just after it, which fall mostly in the first one to four videos of a session, where narration is still dense, so the biggest distortion lands outside the window the
+    owner cares about. Where the question asks something like ''did the player express frustration'', the answer on a sparse video is legitimately ''no evidence'', and a stricter fix of excluding low-wpm
+    videos could itself bias the sample towards talkative players. Defer until a real cohort shows the trend; the threshold of 30 wpm is arbitrary and would need calibrating on real data anyway.'
+  case_b: 'The spec says ''A session can be n hours; each video is capped at 15 minutes, so one session is many videos'', but nothing in the pipeline accounts for the well-known decay of think-aloud narration,
+    so by video 3-4 a player may be speaking under 20 words per minute against ~120 in video 1. Per-video LLM answers on a near-empty transcript default to ''no issue'' or ''not frustrated'', and when aggregated
+    by video index the cohort shows frustration falling steadily after the tutorial. That artefact lands precisely in the ''just after the tutorial'' window the owner names as a core target (''detecting
+    churn in the tutorial and just after it''), so the studio is told its post-tutorial experience is fine because players stopped talking, not because they stopped struggling. The error is invisible in
+    the answers table (detectability 5), occurs in essentially every long session (occurrence 4), and inverts the direction of a finding a studio would act on. The proposed fix is small and mechanical:
+    store words-per-minute per video at ingestion, which is already allowed to be slow and costly, and have aggregation exclude or flag sub-30-wpm videos as low-signal instead of counting them as ''no issue''.
+    Fixing it now matters because every cohort trend already computed over video index carries this bias, and each new onboarding adds more long sessions that dilute real post-tutorial signals with silent
+    videos.'
+- id: qauthor-18
+  title: Visual-cause question has verbal options only, so the LLM attributes a visual failure to a verbal cause
+  evidence: '"Transcript loses visual information." / "The question set is small, so most of what is in the video and transcript is never captured."'
+  grounded: quote
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'Why-questions such as ''Why did the player stall?'' offer only verbal causes (''boring'', ''confusing text'', ''controls'', ''other''), while the spec states plainly that ''Transcript loses visual
+    information'', so a player who misses a low-contrast arrow, goes silent for 90 seconds and quits is forced into a motivation or text category by the LLM. Multiple-choice extraction has no abstain path
+    here, so the model answers with apparent confidence and the table records a visual failure as ''boring'', which the studio then tries to fix with pacing or reward changes that cannot work. This is a
+    correctness gap in the core artefact the chatbot reads, not a presentation issue, and it recurs on every why-question for every game targeting tutorial churn, the pipeline''s main target. It also corroborates
+    a second independent finding (extract-23), so two perspectives reached the same failure from the question-authoring and extraction sides. Detection is effectively impossible downstream (score 5) because
+    a wrong option looks identical to a right one in the table. The fix is a one-line change to the question framework the owner already wants to improve (''the framework for generating the questions''):
+    add ''cannot tell from audio (possible visual cause)'' to every why-question and report its share. Doing it before more studios rely on chatbot answers stops misattributed causes from accumulating in
+    the store, which cannot be corrected later without re-running every video.'
+  case_b: 'This is a question-authoring convention, and the proposed fix, an option such as ''cannot tell from audio'', is a standard item in any well-written multiple-choice schema, so it is covered by
+    a reasonable default and is trivially cheap to add per question when a question is written. It has no pipeline-level cost: the option can be added to any single question in minutes and the affected
+    videos re-answered, since ingestion time and cost are explicitly not a concern in the spec. The scenario is also one specific example (a low-contrast arrow, 90 seconds of silence, then quitting) built
+    to be misclassified; a competent LLM answering with an ''other'' or ''cannot tell'' option present will often choose it when the transcript contains 90 seconds of silence, and silence is itself a signal
+    question authors can use. The example question list already contains an ''other'' option, which is the designed escape hatch. The underlying visual-blindness problem is acknowledged by the owner and
+    will be addressed upstream by capture changes, which makes this a symptom of an acknowledged gap rather than a new one, and it overlaps with percep-29 and extract-23. Mandating the option on every why
+    question and reporting its share is a good habit, but it is a guideline for the question-writing framework, not an urgent defect. Defer to the question-framework work.'
+- id: eval-1
+  title: No labelled gold set exists for any question in the per-game fixed question set, so per-question accuracy is unmeasurable
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." - no labelled correct answers are mentioned for any question'
+  grounded: inferred
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 3.0
+  case_a: 'The spec describes a ''fixed set of questions with options, written per game target'' run by an LLM over each transcript, but there is no labelled gold set for any question, so nobody at JEV
+    can say whether a given question is right 95% or 60% of the time. Every number the studio chatbot returns, from tutorial churn counts to cause breakdowns, inherits that unknown error rate, and studios
+    asking about 500 players have no way to tell a real effect from extraction noise. This is the precondition for evaluating every other gap in this list: without per-question accuracy, the team cannot
+    verify that fixes for visual causes, narration decay or churn definitions actually helped, nor detect regressions when prompts or models change. Occurrence is certain (5) because it applies to every
+    question for every onboarded game today. The spec explicitly allows ingestion cost and time to be high (''Ingestion time and cost are not a concern''), so labelling around 150 videos per question set
+    before go-live is within the stated budget and reuses videos that already exist. Doing it now, before the next studio onboarding, means the first numbers that studio sees come with a published accuracy
+    and interval instead of an implicit promise JEV cannot back if a studio challenges a result.'
+  case_b: 'The absence of a gold set is true of almost every early-stage LLM extraction product and is a process gap, not a defect in the pipeline''s behaviour; it does not by itself make any answer wrong.
+    The spec says nothing about whether labelling exists, so the claim is inferred from silence, and the leaf''s own grounding is ''inferred''. The prescribed remedy, 150 human-labelled videos for every
+    question for every game, is expensive and slow, which makes it a poor fit as an immediate must-fix: at per-game scale it would cost far more than the ingestion cost the owner says is not a concern,
+    and it would be done before a game''s question set has stabilised, so the labels would be wasted when questions are reworded. Accuracy can be measured later and cheaply on a sample of the questions
+    that studios actually rely on, once usage shows which ones matter, using a smaller set (30 to 50 videos) and a spot-check by the owner. The owner is also a domain expert who can eyeball outputs on a
+    handful of videos today, which gives a coarse sanity check. Every LLM-based product ships with unknown error rates; this is a good practice to schedule, not a gating blocker. Defer, and target it at
+    the few highest-traffic questions first.'
+- id: uxr-28
+  title: Unexpected issues outside the question set (e.g. a soft-lock seen by 40 of 500 players) are never captured; no free-text 'surprising observations' column
+  evidence: The question set is small, so most of what is in the video and transcript is never captured.
+  grounded: quote
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  case_a: 'The pipeline is deliberately built as a fixed-question table for fast answers, and the owner already names the small question set as a known problem and has explicitly stated the goal of improving
+    the framework so that any type of question can be answered, so this leaf largely restates an acknowledged limitation with one added proposal. The proposed open-ended ''notable problems'' extraction
+    is a product feature, not a bug fix: it is an additive column that can be added at any time and run retroactively over stored transcripts, because ingestion cost and time are not a concern, so there
+    is no data lost by waiting. Nothing about the current design prevents a studio from commissioning a researcher to watch the videos for emergent issues, which is the method the leaf says researchers
+    already use. The example (a soft-lock seen by 40 of 500 players) is vivid but it is a visual or game-state event, and the transcript-only input is exactly what the owner says loses visual information,
+    so a free-text extraction over speech would catch it only when players happen to say something, and would miss it when they stay silent; the benefit is therefore smaller than the proposal implies. Free-text
+    extraction also adds its own risks, such as noisy clustering and hallucinated problems, which need design work before they can be trusted. Defer to the question-framework redesign where open-ended capture
+    belongs.'
+  case_b: 'The owner names this as a known problem in the spec: ''The question set is small, so most of what is in the video and transcript is never captured.'' The consequence is concrete: an issue nobody
+    wrote a question for, such as a soft-lock hit by 40 of 500 players, never enters the answers table, and when a studio asks about it the chatbot answers from the nearest fixed question and the studio
+    concludes the issue does not exist. Usability research practice is that the most important findings are the ones researchers did not plan to look for, and the constraint that ''Their questions are not
+    known in advance'' means the fixed set will always lag what studios need. Because absence in the table is indistinguishable from absence in the game (detectability 5), the cost is silent and falls on
+    the studio that ships with a known-to-the-recordings bug. The fix fits the spec''s own trade-off: ingestion cost is acceptable, so add one open-ended per-video extraction of ''notable problems not covered
+    by the set'', store it as text plus embeddings, and run a weekly clustering report that also feeds candidate new questions into the question framework. Starting now means every video ingested from this
+    point carries that signal, rather than requiring a full re-run of all past videos once the gap is finally admitted.'
