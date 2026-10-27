@@ -1,0 +1,671 @@
+- id: uxrepo-1
+  title: "Highlight as the atomic stored unit: highlight(session_id, t_start_ms, t_end_ms, tags[], transcript_span, screen_text, source=auto|human, confidence) replaces the per-video answer row"
+  level: L4
+  cell: {part: store, representation: timestamped-observation-log, granularity: variable-length-moment-or-episode, evidence-form: clip, extraction-trigger: at-ingestion, reuse-scope-of-extraction: universal-primitives}
+  object: "spec.md item 3: 'The answers form a structured table per video'"
+  situation: "A studio asks 'why do players quit at tutorial step 3' and the answer table holds only the option letter chosen for 'reason_for_quit' per video, with no pointer back into the footage"
+  consequence: "The designer cannot watch the moment; every number in the table is unverifiable and, in research repositories, unverifiable numbers were the first feature researchers stopped opening"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow'; memo.md item 1: 'quote with timestamp as evidence'"
+  proposed: "highlights(highlight_id, session_id, player_id, game_id, build_id, t_start_ms, t_end_ms, step_id, tags[], transcript_span, screen_text, source, confidence, extractor_run_id); every answer cites highlight_ids"
+  shallow: false
+  mechanism: "Ingestion emits 8-40 s highlights wherever a tag fires (confusion, retry, menu hunt, quit intent); the answers table becomes a view counting highlights by tag and step; the chatbot answers with counts plus the highlight ids behind them"
+  example: "Ember Tactics, 500 players: 'quit at step 3' returns 91 players; each has a highlight 00:41:12-00:41:38 tagged [quit_intent, unit_select_confusion]; the designer clicks three and watches them in 90 s"
+  cost: M
+  depends_on: "a session-level millisecond clock across the 15-minute videos"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Every count has a clickable moment under it; the table today has option letters with nothing to watch"
+
+- id: uxrepo-2
+  title: "Clip-first answer contract in the chatbot: any numeric answer renders with up to 6 evidence clips (8-15 s each) inline; a number with zero clips is shown greyed with the label 'unverified'"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: clip-montage-n-examples, delivery-surface: chatbot, question-type: why, uncertainty-policy: answer-with-ci-and-n, user-segment: game-designer}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "The chatbot answers '34% of players were confused at step 3' from a precomputed aggregate; the designer asks the producer where that number came from"
+  consequence: "One wrong or unexplained percentage ends the studio's trust in the whole chatbot; a number with 6 clips beside it survives being wrong because the viewer sees the borderline cases"
+  p_typical: 0.30
+  grounded: quote
+  evidence: "memo.md item 3: 'each with an answer type and an evidence requirement'"
+  proposed: "Answer card = {claim, n, denominator, clips[<=6] sorted by confidence desc, 'see all 170' link}; renderer refuses to print a count whose highlight list is empty"
+  shallow: false
+  mechanism: "Query planner returns (count, denominator, highlight_ids[]); UI samples 6 highlights stratified by confidence (2 high, 2 mid, 2 low) so the viewer calibrates the tag; grey style and 'unverified' when highlight_ids is empty"
+  example: "'How many players mis-selected a unit in step 3?' -> '170 of 500 (34%)' with 6 clips; the two low-confidence clips show a player merely hovering, so the designer reads the true rate as nearer 28%"
+  cost: S
+  depends_on: "uxrepo-1 highlight store"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The number carries its own audit sample; the fixed table shows an option count with no footage"
+
+- id: uxrepo-3
+  title: "Universal 36-tag research taxonomy applied per utterance and per screen change at ingestion (confusion, misread-ui, wayfinding, retry, delight, frustration, quit-intent, reads-tooltip, ignores-tooltip, ...), with studio-defined tags layered on top"
+  level: L4
+  cell: {part: ingestion-extraction, representation: customer-defined-trackers-over-universal-primitives, reuse-scope-of-extraction: customer-defined-on-top-of-universal, question-origin: established-gur-frameworks-heuristics-pxi-mda, granularity: utterance, extraction-trigger: at-ingestion}
+  object: "spec.md item 3: 'a fixed set of questions with options, written per game target'"
+  situation: "A new studio onboards a city-builder; nobody has written questions for it yet and the first cohort of 120 sessions arrives tomorrow"
+  consequence: "With per-game questions the first cohort is captured by nothing; with a universal taxonomy 36 tags fire on day 0 and the studio's own tags (e.g. 'zoning_confusion') are added as rows, not as a schema change"
+  p_typical: 0.20
+  grounded: quote
+  evidence: "spec.md: 'per-game hand-written questions do not scale' (A-frame assumption); memo.md item 3 ontology 'pruned by the game target'"
+  proposed: "tags(tag_id, name, definition, positive_example_clip_ids[3], negative_example_clip_ids[3], scope=universal|studio|game, version); extractor prompt lists all tags in scope with their 3+3 example clips"
+  shallow: false
+  mechanism: "One multimodal pass per video emits highlights tagged from the universal list plus any studio/game tags in scope; tag definitions are few-shot from clips, not prose, which is how repository auto-taggers reached acceptable precision"
+  example: "Day 0 on Ember Tactics: 'which tutorial step has the most confusion tags per player' is answerable from the universal 'confusion' tag before the studio has written a single question; the answer is step 3 at 0.9 tags/player vs 0.2 elsewhere"
+  cost: M
+  depends_on: "nothing"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Covers the first cohort of every new game with the same 36 fields, so cross-game comparison and day-0 answers both work"
+
+- id: uxrepo-4
+  title: "Per-tag accept/reject loop: each auto-tag shown in the UI has accept and reject buttons; a tag whose rolling 30-day reject rate exceeds 30% is demoted to 'suggested' and excluded from counts"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, mechanism-type: human-in-the-loop, evidence-form: confidence-score, user-segment: ux-researcher, moment-in-journey: steady-state-weekly, uncertainty-policy: abstain-below-coverage}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "The 'delight' tag fires on sarcastic 'oh great' utterances; the studio's researcher rejects 14 of the first 30 she sees"
+  consequence: "Without the loop the chatbot keeps reporting 'delight at step 4: 22%' and the researcher stops reading it; with the loop the tag drops out of counts after 30 verdicts and the extractor gets 14 negative examples"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "memo.md evaluates against hand-labelled sessions once; no per-tag runtime feedback is specified"
+  proposed: "tag_verdicts(highlight_id, tag_id, user_id, verdict, ts); nightly job computes reject_rate per (tag_id, game_id); reject_rate>0.30 over n>=30 sets tag status='suggested'"
+  shallow: false
+  mechanism: "Every rendered clip exposes accept/reject per tag; verdicts feed (a) the tag status per game and (b) the few-shot negative examples in the next extractor version"
+  example: "Ember Tactics week 3: 'delight' demoted after 14/30 rejects; the chatbot now says 'delight is a suggested tag for this game (47% rejected), counts suppressed'; re-extraction with the 14 negatives brings reject rate to 9% in week 5"
+  cost: S
+  depends_on: "uxrepo-1 highlights; uxrepo-3 tag table"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A wrong question in the fixed table stays wrong forever; here a tag that researchers reject disables itself in one month"
+
+- id: uxrepo-5
+  title: "Weekly theme clustering over highlight embeddings: cluster all highlights of a game, name each cluster with 3 representative clips and a 12-word label, and surface clusters with n_players >= 15 as 'candidate themes'"
+  level: L4
+  cell: {part: question-generation, question-origin: emergent-topic-clustering-of-player-speech, mechanism-type: auto-discover-without-question, representation: clip-or-frame-embeddings, question-type: what-surprised-unknown-unknowns, extraction-trigger: scheduled-batch}
+  object: "spec.md constraint: 'Their questions are not known in advance'"
+  situation: "Nobody at the studio asked about the mini-map, but 60 of 500 players said a variant of 'where am I' during tutorial step 2 while panning the camera"
+  consequence: "The fixed table never captures it; a cluster of 60 highlights labelled 'camera disorientation in step 2' appears in the weekly theme list with 3 clips, before anyone types a question"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'most of what is in the video and transcript is never captured'"
+  proposed: "Embed (transcript_span + screen_text + tags) per highlight; HDBSCAN weekly per game; themes(theme_id, label, n_highlights, n_players, representative_highlight_ids[3], first_seen_week, status=candidate|accepted|dismissed)"
+  shallow: false
+  mechanism: "Scheduled batch, no question needed; a theme becomes a durable tag only when a studio user clicks accept, which also writes a new tag definition from the cluster's 3 clips"
+  example: "Week 2 digest for Ember Tactics lists 'camera disorientation, step 2, 60 players, 3 clips'; the designer accepts it; from week 3 it is a counted tag and 'did the mini-map fix work' is answerable pre/post"
+  cost: M
+  depends_on: "uxrepo-1 highlights with embeddings"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Finds the questions the studio did not know to ask; the fixed table only measures what was pre-written"
+
+- id: uxrepo-6
+  title: "Insight object saved from every chatbot answer the studio marks useful: insight(title, claim, n_players, denominator, supporting_highlight_ids[], build_id, author, created_at, status) searchable months later"
+  level: L4
+  cell: {part: store, representation: question-answer-bank-precomputed, query-path: cached-prior-answer, mechanism-type: reuse-or-cache-prior-work, moment-in-journey: steady-state-weekly, delivery-surface: chatbot}
+  object: "memo.md item 2: 'result is cached as a new field, so the question set grows from real use'"
+  situation: "In March the lead designer learned that 91 of 500 players quit at step 3 because of unit selection; in September a new designer asks the same thing and the chatbot recomputes from scratch and gets 88 because the extractor changed"
+  consequence: "Two numbers for one fact; in research repositories the saved insight with its clips is the unit people actually re-find, and the team's memory lives there rather than in recomputed answers"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md unspecified: 'who at the studio asks and what they ask'"
+  proposed: "Chatbot answer has 'save as insight'; insights are full-text searchable and listed before any recomputation when a new question's embedding is within cosine 0.92 of a saved insight's question"
+  shallow: false
+  mechanism: "A saved answer becomes an immutable object with its evidence highlight ids, the build version and the extractor run id; the planner checks insights first and offers 'here is what was found in March (build 1.2); recompute for build 1.4?'"
+  example: "September question 'why do players quit step 3' returns the March insight (91/500, 6 clips, build 1.2) in 200 ms and a button to re-run against build 1.4 sessions"
+  cost: S
+  depends_on: "uxrepo-1 highlights"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table stores extracted facts; this stores the studio's conclusions with their evidence, which is what gets re-read six months on"
+
+- id: uxrepo-7
+  title: "Insight staleness flag: every insight is pinned to a build_id; when sessions from a newer build are ingested, the insight is re-evaluated and labelled 'pre-fix (build 1.2)', 'persists in 1.4' or 'resolved in 1.4' with both counts"
+  level: L4
+  cell: {part: schema-evolution, question-type: did-the-fix-work-pre-post, moment-in-journey: new-build-version, extraction-trigger: on-game-update, scope: build-version-pair, evidence-form: contrast-vs-baseline}
+  object: "memo.md item 2: 'a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "The studio ships build 1.4 with a reworked unit-select tooltip; 80 new sessions arrive; the March insight still says 'step 3 unit selection confuses 18%'"
+  consequence: "Stale insights are the second reason researchers abandon repositories; the auto re-evaluation turns each insight into a pre/post test without anyone asking"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: targets are 'mostly detecting churn in the tutorial'; build versions are not mentioned in spec.md or memo.md"
+  proposed: "insight_evaluations(insight_id, build_id, n, denominator, computed_at); UI badge compares latest build to insight.build_id with a two-proportion z-test at n>=50 per side"
+  shallow: false
+  mechanism: "Build metadata on every session; on ingest of a new build, a job re-runs each accepted insight's saved query over the new build's sessions and writes a comparison row"
+  example: "March: 91/500 (18%) at build 1.2; after 80 sessions of 1.4: 6/80 (7.5%), badge 'resolved in 1.4, p=0.02, n=80'; the producer sees it in the Monday digest"
+  cost: S
+  depends_on: "uxrepo-6 insights; build-version-metadata on sessions"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no notion of a fact going stale; this makes 'did the fix work' automatic"
+
+- id: uxrepo-8
+  title: "Highlight reel renderer: for any tag x step filter, cut up to 12 clips of 8-15 s with a caption bar (player id, step name, t_session, tags) into one MP4 in under 3 minutes"
+  level: L4
+  cell: {part: export-integration, delivery-surface: clip-reel, evidence-form: clip-montage-n-examples, latency-tier: minutes, question-type: what-happened, user-segment: producer-exec}
+  object: "spec.md item 1: 'A player's gameplay session is captured as video'"
+  situation: "The producer needs to show the studio head why step 3 is being reworked and has a 10-minute slot on Thursday"
+  consequence: "A 2-minute reel of 12 players failing unit selection ends the argument; a table row does not, which is why reels were the single most used export in research repositories"
+  p_typical: 0.20
+  grounded: quote
+  evidence: "spec.md: 'each video is capped at 15 minutes, so one session is many videos' (clips must map session time back to video file and offset)"
+  proposed: "POST /reels {game_id, filter:{tag, step_id, build_id}, max_clips:12, pad_ms:2000} -> job id; ffmpeg concat with drawtext caption; stored 90 days"
+  shallow: false
+  mechanism: "Reel job selects highlights by filter, maps t_session to (video_id, t_video) via the session_videos offset table, cuts and concatenates; stratified sampling across players so no player appears twice"
+  example: "'Reel of step 3 quit moments, build 1.2' -> 12 clips, 12 distinct players, 2m 10s, ready in 140 s; opened 23 times by 7 studio staff in the first week"
+  cost: M
+  depends_on: "uxrepo-1 highlights; raw video retained (A-frame assumption)"
+  part: ui
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Produces the artifact studios actually forward; the table produces a number nobody forwards"
+
+- id: uxrepo-9
+  title: "Slack and Jira push of a highlight: 'send to Jira' creates an issue with a deep link that opens the player at t_session minus 5 s, the transcript span and the tags, so the bug or design ticket carries its clip"
+  level: L4
+  cell: {part: export-integration, delivery-surface: slack-jira-integration, evidence-form: quote-with-timestamp, user-segment: game-designer, question-type: technical-issue-bug-perf, mechanism-type: change-data-at-source}
+  object: "spec.md item 4: chatbot for the studio"
+  situation: "A designer finds 9 players who hit a soft-lock after opening the crafting menu during step 4 and needs engineering to fix it this sprint"
+  consequence: "Engineering gets a ticket with 9 timestamped clips instead of 'some players get stuck'; ticket round-trips drop and the evidence stays attached to the ticket after the chatbot session is forgotten"
+  p_typical: 0.10
+  grounded: inferred
+  evidence: "spec.md unspecified: 'who at the studio asks and what they ask'"
+  proposed: "Jira issue body: 9 lines of 'player 0412, session 00:58:02, https://jev/s/412?t=3477000, tags [soft_lock, crafting_menu]'; Slack message is the same with the first clip as a 10 s preview GIF"
+  shallow: false
+  mechanism: "Deep links are stable because highlight ids are immutable; the link resolves session time to video file and offset server-side"
+  example: "Ticket EMB-1187 'crafting menu soft-lock, step 4, 9 of 500 players' created from the chatbot in one click; engineering reproduces from clip 3 in 20 minutes"
+  cost: S
+  depends_on: "uxrepo-1 highlights; uxrepo-10 player"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table cannot be linked to from a ticket; a highlight can"
+
+- id: uxrepo-10
+  title: "Synchronised evidence player: click any quote or count and the video opens at t minus 5 s with a scrolling transcript, an OCR band of on-screen text and the fired tags on a timeline strip under the scrubber"
+  level: L4
+  cell: {part: chatbot-ui, query-path: clip-lookup, modality: on-screen-text-ocr, evidence-form: quote-with-timestamp, latency-tier: under-2s, user-segment: ux-researcher}
+  object: "spec.md item 2: 'what is on screen is largely lost'"
+  situation: "The researcher reads 'player said: I can't find the attack button' and wants to see whether the button was on screen"
+  consequence: "The transcript-only view cannot answer it; the OCR band shows 'ATTACK' was rendered at the bottom right for the full 12 s of the utterance, turning a 'missing button' story into a 'button not noticed' story"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md known problem: 'Transcript loses visual information'"
+  proposed: "Player component takes highlight_id; fetches video_id+offset, transcript rows within t-30s..t+30s, ocr_spans within the same window, tag timeline for the whole session"
+  shallow: false
+  mechanism: "All three tracks are keyed on the session clock; the player is a single HTML5 element with three synchronised side tracks; prefetch of the adjacent 15-minute video avoids the boundary stall"
+  example: "Step 3 quote at 00:41:12 opens video 3 at 11:07; OCR band reads 'SELECT A UNIT TO MOVE' while the player says 'what do I do'; the researcher tags it 'ignores_tooltip'"
+  cost: M
+  depends_on: "OCR track at ingestion; session_videos offset table"
+  part: ui
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Shows what was on screen next to what was said; the table has neither"
+
+- id: uxrepo-11
+  title: "Silence as a friction observation: any think-aloud gap over 20 s while the screen state is unchanged becomes a highlight tagged 'stall', with the on-screen step and the last utterance before the gap"
+  level: L4
+  cell: {part: ingestion-extraction, modality: silence-or-absence-of-speech, representation: time-series-signals-affect-pace-silence, question-type: how-long, granularity: variable-length-moment-or-episode, subject-domain: onboarding-tutorial}
+  object: "memo.md item 1: 'friction signal'"
+  situation: "A player goes quiet for 48 s on the step 3 unit-select screen, then quits; the transcript has nothing to extract from"
+  consequence: "Transcript-driven extraction records nothing for the most informative 48 s of the session; moderated-usability practice treats this silence as the strongest confusion signal there is"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'The transcript alone is not enough'"
+  proposed: "stall highlight: {t_start, t_end, duration_ms, screen_state_before, screen_state_after, last_utterance, next_utterance}; fired when speech gap >= 20000 ms AND screen-state classifier label unchanged"
+  shallow: false
+  mechanism: "Speech activity detector plus screen-state classifier run per video; the combination (no speech, no screen change) is a closed field, so 'median stall per step' is one SQL aggregate"
+  example: "'Where do players stall longest in the tutorial?' -> step 3: median 31 s, 212 of 500 players stalled >= 20 s; step 1: median 4 s; 6 clips of the longest stalls attached"
+  cost: S
+  depends_on: "screen-state classifier at ingestion"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Captures the players who said nothing, whom a transcript question cannot see"
+
+- id: uxrepo-12
+  title: "Unmoderated task segmentation: the screen-state classifier cuts each session into tutorial-step tasks with t_enter, t_exit, outcome in {completed, abandoned, skipped, timed_out} per player, like task timings in remote usability tools"
+  level: L4
+  cell: {part: session-stitching, representation: step-funnel-state-machine-per-player, granularity: tutorial-step, modality: screen-state-classifier, question-type: compare-steps, query-path: precomputed-aggregate}
+  object: "spec.md item 1: 'A session can be n hours; each video is capped at 15 minutes'"
+  situation: "Step 3 begins in video 4 and ends in video 5; the per-video table has one row per video with 'was step 3 completed' answered 'unclear' in both"
+  consequence: "Step completion and time-on-task, the two numbers every usability report starts with, are wrong whenever a step spans a video boundary, which for a 15-minute cap is roughly one step in four"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md known problem: 'Long multi-video sessions'"
+  proposed: "step_runs(player_id, session_id, step_id, t_enter_ms, t_exit_ms, outcome, attempts); built by a state machine over screen-state labels with a 3-frame hysteresis to suppress flicker"
+  shallow: false
+  mechanism: "Ingestion classifies screen state per 1 s; a per-player state machine on the session clock emits one row per step attempt; the funnel view is a GROUP BY step_id"
+  example: "Ember Tactics tutorial funnel: step 1 100%, step 2 96%, step 3 64%, step 4 61%; step 3 median time 9m 40s vs 2m elsewhere; 'abandoned' outcome lists 91 players with clips"
+  cost: M
+  depends_on: "screen-state classifier trained on this game's step screens (uxrepo-3 day-0 bootstrap or 20 labelled sessions)"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Correct per-step completion and duration across video boundaries, computed once"
+
+- id: uxrepo-13
+  title: "Three standard usability metrics precomputed per step: success rate, time on task, and inferred ease (1-5 from affect tags within the step), each with n and a 95% interval, shown as the default step report"
+  level: L4
+  cell: {part: query-path, query-path: precomputed-aggregate, delivery-surface: dashboard-standard-report, evidence-form: count-with-denominator, question-origin: established-gur-frameworks-heuristics-pxi-mda, uncertainty-policy: answer-with-ci-and-n}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "A studio asks the vague first question 'how is the tutorial doing'"
+  consequence: "Without a standard report the chatbot must guess what 'doing' means; with it the answer is the step table that every UX researcher already knows how to read"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  proposed: "step_metrics view: step_id, n_entered, success_rate (Wilson 95%), tot_median_ms, tot_p90_ms, ease_mean (1-5), ease_n; refreshed on each ingest"
+  shallow: false
+  mechanism: "Derived from uxrepo-12 step_runs and affect tags; ease is mapped from frustration/confusion/delight tag density per step on a fixed 1-5 scale and labelled 'inferred', never 'reported'"
+  example: "'How is the tutorial doing?' -> table: step 3 success 64% [60-68], median 9m40s, inferred ease 2.1/5 (n=500); the chatbot adds 'step 3 is the outlier on all three'"
+  cost: S
+  depends_on: "uxrepo-12 step_runs; uxrepo-3 affect tags"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A familiar, comparable report for every game instead of game-specific option counts"
+
+- id: uxrepo-14
+  title: "Affect timeline strip per session: a 1-value-per-10-s series from {frustration, confusion, neutral, delight} tags plus speech rate, drawn under the player and queryable as 'sessions whose affect dropped during step 3'"
+  level: L4
+  cell: {part: store, representation: time-series-signals-affect-pace-silence, question-type: how-felt, granularity: session, modality: audio-non-speech, subject-domain: player-affect}
+  object: "memo.md item 1: 'sentiment'"
+  situation: "A studio asks 'how did players feel going into step 4 after the step 3 struggle' and the table has a single per-video sentiment option"
+  consequence: "One label per 15-minute video averages away the moment; a 10 s series shows affect falling at 00:39 and recovering at 00:46 when the tooltip finally appeared"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md item 3: answers are 'a structured table per video'"
+  proposed: "affect_series(session_id, t_bucket_ms, affect_label, speech_wpm, silence_ratio); 360 rows per hour; window queries for drop >= 2 levels inside a step"
+  shallow: false
+  mechanism: "Tags and speech features bucketed to 10 s at ingestion; the strip is rendered from the series; the planner translates 'felt' questions to window functions over the series"
+  example: "'Did players recover after step 3?' -> 140 of 212 strugglers show affect back at neutral within 90 s of step 4 entry; 72 do not, and 58 of those 72 quit before step 5"
+  cost: S
+  depends_on: "uxrepo-3 affect tags"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Within-session affect dynamics; the table has one sentiment per video"
+
+- id: uxrepo-15
+  title: "Full-text search over transcripts and OCR with 'make highlight from result' as a first-class query path, because researchers used keyword search daily and ignored semantic 'ask the repository' until it cited clips"
+  level: L4
+  cell: {part: query-path, query-path: full-text-keyword-search, representation: inverted-full-text-index, question-type: what-said, build-or-buy: open-source-component, user-segment: ux-researcher}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players'"
+  situation: "The designer wants every player who said 'flank' during the tutorial, because the flanking mechanic is unexplained"
+  consequence: "A semantic retriever returns 'attack from the side' paraphrases with unknown recall; an inverted index returns exactly the 37 utterances containing 'flank' in 80 ms, and each can be turned into a highlight with one click"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow'"
+  proposed: "OpenSearch/Tantivy index over (transcript rows, ocr_spans) with fields session_id, player_id, step_id, t_session_ms; result row has 'create highlight' which writes a human-source highlight with the query as a tag"
+  shallow: false
+  mechanism: "Exact and phrase search with step and build filters; results feed the same highlight store, so a keyword search becomes a countable tag after one click"
+  example: "'flank' AND step:3 -> 37 hits, 29 players; the designer saves it as tag 'mentions_flank'; 'how many players mention flanking per step' is a count from then on"
+  cost: S
+  depends_on: "transcript and OCR rows on the session clock"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Exact, recall-complete string questions in under 100 ms; the table cannot answer any question about a word it was not asked about"
+
+- id: uxrepo-16
+  title: "Citation-or-silence rule for generated summaries: every sentence the model writes must end with at least one highlight id; sentences the post-processor cannot bind to a highlight are deleted before display"
+  level: L4
+  cell: {part: chatbot-ui, query-path: retrieval-then-llm, uncertainty-policy: abstain-below-coverage, evidence-form: quote-with-timestamp, mechanism-type: narrow-or-clarify-the-question, user-segment: studio-analyst}
+  object: "memo.md item 2: 'the model reads only those'"
+  situation: "The model summarises 40 retrieved step-3 highlights and adds 'players also struggled with the camera', which none of the 40 highlights supports"
+  consequence: "Auto-summaries in research tools were ignored by researchers until each sentence linked to a clip; one invented sentence costs more trust than ten missing ones"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md item 3: 'an evidence requirement' per question"
+  proposed: "Generation prompt requires [h:<id>] after each sentence; post-processor verifies each cited id is in the retrieved set and that the sentence's key noun phrase appears in that highlight's transcript_span or tags; unmatched sentences dropped and a footer says '2 sentences removed: no evidence'"
+  shallow: false
+  mechanism: "Retrieval set defines the universe of citable ids; the display layer enforces the rule, not the model"
+  example: "Summary of step 3: 4 sentences shown, each with 1-3 clip chips; the camera sentence is removed and the footer reads '1 sentence removed: no supporting highlight among 40 retrieved'"
+  cost: S
+  depends_on: "uxrepo-1 highlights"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Prose answers that can be audited line by line; the table gives no prose at all and a plain LLM gives unauditable prose"
+
+- id: uxrepo-17
+  title: "Coverage line on every count: 'from 212 of 500 sessions that reached step 3 (288 did not reach it; 0 unprocessed)', computed from step_runs, never omitted"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: answer-with-ci-and-n, question-type: how-many, scope: all-players, user-segment: studio-analyst}
+  object: "spec.md item 4: 'a question over, say, 500 players'"
+  situation: "The chatbot says '34% confused at step 3' and the analyst assumes 34% of 500 when it is 34% of the 320 who reached step 3"
+  consequence: "Denominator confusion produced most of the wrong numbers in research dashboards; a fixed coverage line makes the base explicit on every answer"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'Answering a studio's question must be fast' (and correct, implied)"
+  proposed: "Answer card footer template: 'n={n} of {reached} players who reached {step} ({not_reached} did not reach it; {unprocessed} sessions not yet processed)'"
+  shallow: false
+  mechanism: "The planner always returns (n, reached, total, unprocessed) from step_runs and the ingestion ledger; the UI template cannot render without all four"
+  example: "'Confused at step 3' -> '109 of 320 who reached step 3 (34%); 180 never reached step 3; 0 unprocessed' with 6 clips"
+  cost: S
+  depends_on: "uxrepo-12 step_runs; ingestion ledger per session"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table reports per-video option counts with no denominator discipline"
+
+- id: uxrepo-18
+  title: "Behaviour archetype clusters as research personas: cluster players on (step outcomes, stall durations, tag density vector) into 4-8 archetypes, each with a name, n, and 3 representative session clips; chatbot answers 'who are the churners' with archetypes not a list"
+  level: L4
+  cell: {part: question-generation, representation: behaviour-archetype-clusters, question-type: who-are-the-churners-segment-discovery, question-origin: discriminative-contrast-churn-vs-retain, granularity: player-segment-cluster, mechanism-type: auto-discover-without-question}
+  object: "spec.md: 'The targets are mostly detecting churn in the tutorial'"
+  situation: "The producer asks 'what kind of player quits the tutorial' and gets a list of 91 player ids"
+  consequence: "A list is not an answer; research repositories answered this with personas, each tied to clips, and that is what producers put in slide decks"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md item 3: ontology 'entities x dimensions x outcomes' (outcome churn is one dimension, not a segment)"
+  proposed: "player_features(player_id, step_outcomes[], stall_ms_per_step[], tag_density[36]); k-means k in 4..8 chosen by silhouette; archetypes(name, n, churn_rate, top_3_distinguishing_features, representative_session_ids[3])"
+  shallow: false
+  mechanism: "Nightly clustering per game; names generated from the top-3 distinguishing features; churn rate per archetype is a join to step_runs"
+  example: "Ember Tactics: 'silent stallers' (n=68, 71% churn, stall 40 s+ at step 3, no speech), 'menu explorers' (n=112, 22% churn), 'tooltip readers' (n=190, 4% churn); each with 3 clips"
+  cost: M
+  depends_on: "uxrepo-12 step_runs; uxrepo-11 stalls; uxrepo-3 tags"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Discovers segments from behaviour; the table can only filter on pre-written options"
+
+- id: uxrepo-19
+  title: "REFUSED: fully automatic push of generated 'insights' to the studio without a human accept step; candidate themes are pushed, insights are not"
+  level: L3
+  cell: {part: feedback-loop-from-query-log, mechanism-type: push-instead-of-pull, delivery-surface: alert, uncertainty-policy: escalate-to-human-analyst, user-segment: ux-researcher, latency-tier: push-no-query}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction'"
+  situation: "The system detects a new cluster of 40 highlights and emails the studio 'Insight: players hate the crafting menu'"
+  consequence: "Repository vendors shipped unvetted auto-insights and researchers turned them off within weeks: one wrong pushed insight reached an exec and the researcher spent a day retracting it; low willingness to build this"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md: 'coverage of real studio questions and accuracy against hand-labelled sessions' (accuracy is tested offline, not per pushed item)"
+  proposed: "Push only objects with status=candidate and the word 'candidate' in the subject line; promotion to 'insight' requires one named studio user to accept; alerts carry 3 clips and never a percentage"
+  shallow: false
+  mechanism: "Alert channel limited to candidate themes (uxrepo-5) and anomaly flags; the insight object (uxrepo-6) cannot be created by a job, only by a user action"
+  example: "Monday email: 'Candidate theme: crafting menu, 40 highlights, 31 players, 3 clips; accept or dismiss'; nothing is called an insight until the researcher clicks accept"
+  cost: S
+  depends_on: "uxrepo-5 themes; uxrepo-6 insights"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Protects trust: the table never pushed anything, and a push that is wrong once is worse than no push"
+
+- id: uxrepo-20
+  title: "REFUSED: a numbers-first dashboard page where any tile can render without a clip behind it; every tile must be a (count, clips) pair or it is not shipped"
+  level: L3
+  cell: {part: chatbot-ui, delivery-surface: dashboard-standard-report, evidence-form: chart, user-segment: producer-exec, mechanism-type: precompute-more, question-type: how-many}
+  object: "spec.md item 4: 'so that a question over, say, 500 players is fast'"
+  situation: "Product asks for a KPI dashboard of 12 percentages per game so execs do not need the chatbot"
+  consequence: "Numbers without evidence are what clip-first vendors beat on; a dashboard of unexplained percentages is the product the persona would decline to build, because the first wrong tile ends the renewal"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md item 3: 'an evidence requirement'"
+  proposed: "Tile schema requires highlight_ids[]; a tile with an empty list fails the build; charts are allowed only as a wrapper over tiles that each open a reel"
+  shallow: false
+  mechanism: "Design constraint on the report layer rather than a feature; enforced by the tile component"
+  example: "Step funnel chart: each bar opens a reel of 12 abandon moments for that step; 'step 3 64%' is one click from 12 clips"
+  cost: S
+  depends_on: "uxrepo-8 reels"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Same speed as the table, but every number is one click from footage"
+
+- id: uxrepo-21
+  title: "Tag taxonomy evolution as merge/rename history: tags are never deleted; 'merge A into B' and 'rename' write tag_history rows, and old highlights are re-pointed by a view, so a September count under a merged tag includes March highlights"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: deprecate-and-migrate, representation: customer-defined-trackers-over-universal-primitives, extraction-trigger: on-new-field-added, moment-in-journey: steady-state-weekly, reuse-scope-of-extraction: customer-defined-on-top-of-universal}
+  object: "memo.md item 2: 'cached as a new field, so the question set grows from real use'"
+  situation: "The studio created 'unit_confusion' in March and 'unit_select_confusion' in May for the same thing; counts split across both"
+  consequence: "Taxonomy drift is what makes repositories unusable after a year; researchers asked for merge-with-history above every other taxonomy feature"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md: fields grow but no merge, rename or deprecation path is specified"
+  proposed: "tag_history(tag_id, action in {create, rename, merge_into, deprecate}, target_tag_id, user_id, ts); view current_tag(tag_id) follows merge_into chains; counts resolve through the view"
+  shallow: false
+  mechanism: "Schema change is a data row; the extractor prompt lists only current tags; old highlights keep their original tag_id and resolve at read time"
+  example: "Merge in June: 'unit_confusion' -> 'unit_select_confusion'; 'how many unit-select confusions since March' now returns 170 not 88+82 in two rows"
+  cost: S
+  depends_on: "uxrepo-3 tag table"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fields can be renamed and merged without losing history; the table would need a rewrite"
+
+- id: uxrepo-22
+  title: "Query by example clip: the user selects a 10-s span in the player and asks 'find moments like this'; nearest neighbours over clip embeddings (frames + transcript) return 20 candidates to accept into a new tag"
+  level: L4
+  cell: {part: query-path, query-path: query-by-example-clip, representation: clip-or-frame-embeddings, modality: frame-embeddings, question-origin: few-shot-tracker-from-examples, mechanism-type: defer-to-query-time}
+  object: "spec.md item 2: 'what is on screen is largely lost'"
+  situation: "A designer notices one player dragging a unit off the grid at step 3 and wants to know how common it is; no tag or word describes it"
+  consequence: "The behaviour is visual and wordless, so neither keyword search nor the tag list finds it; an example-clip query finds 20 candidates in 2 s and the designer accepts 14 into a new tag"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "A-frame assumption: 'original videos remain available for re-processing, including frames'"
+  proposed: "clip_embeddings(session_id, t_bucket_ms, vec[768]) at 5 s stride from a video embedding model; ANN index per game; 'find similar' returns top-20 with step filter; accepted results seed a few-shot tag (uxrepo-3) for re-extraction"
+  shallow: false
+  mechanism: "Ingestion computes 5 s clip embeddings; the query is a vector lookup at query time; acceptance converts an ad hoc search into a durable tag with 14 positive examples"
+  example: "'Like this' on the drag-off-grid clip -> 20 candidates, 14 accepted, tag 'unit_drag_off_grid' created; re-extraction finds 61 of 500 players did it at step 3"
+  cost: M
+  depends_on: "frame embeddings at ingestion; uxrepo-3 few-shot tags"
+  part: query
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Finds visual behaviours nobody named; the table only knows what was written as a question"
+
+- id: uxrepo-23
+  title: "Live observer notes: while a session is being watched live or in review, a studio observer presses a hotkey to write a timestamped note; notes are stored as human-source highlights and counted alongside auto-tags, flagged source=human"
+  level: L4
+  cell: {part: collection-protocol, extraction-trigger: continuous-during-live-session, mechanism-type: human-in-the-loop, evidence-form: extraction-provenance-model-and-schema-version, user-segment: ux-researcher, granularity: utterance}
+  object: "spec.md item 1: 'A player's gameplay session is captured as video'"
+  situation: "The studio's researcher watches 20 of the 500 sessions herself and notices the step 3 tooltip is covered by the unit panel on 16:9 screens"
+  consequence: "Her 20 notes are the highest-precision data the project will ever have; if they live in a Google Doc the chatbot never sees them and cannot join them to the 480 unwatched sessions"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md unspecified: 'who at the studio asks'"
+  proposed: "Hotkey N in the player writes highlight(source=human, author, t_start=now-10s, t_end=now, note, tags[]); human highlights are listed first in every evidence set and excluded from auto-tag reject statistics"
+  shallow: false
+  mechanism: "Same highlight table, different source; the planner can answer 'what did our researcher note at step 3' and 'does the auto-tagger agree with her 20 notes'"
+  example: "Her note 'tooltip hidden by unit panel' at 00:41:20 becomes a few-shot example; re-extraction over 480 sessions finds 203 players with the panel covering the tooltip"
+  cost: S
+  depends_on: "uxrepo-1 highlights; uxrepo-10 player"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Human observations enter the same store as machine ones and scale out through re-extraction"
+
+- id: uxrepo-24
+  title: "Participant attributes on every highlight: platform, input device, self-reported genre experience and prior-play hours joined from player profile, so any count can be split by attribute without a new extraction"
+  level: L4
+  cell: {part: store, modality: player-profile-metadata, question-type: find-players-who, scope: query-time-defined-cohort, query-path: sql-over-closed-fields, subject-domain: accessibility}
+  object: "spec.md unspecified: 'who at the studio asks and what they ask'"
+  situation: "A designer asks 'is step 3 confusion worse for controller players' and the table has no notion of a controller player"
+  consequence: "The question needs a second extraction pass today; with attributes denormalised onto highlights it is a GROUP BY"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md item 4: 'a question over, say, 500 players' (no attributes stated)"
+  proposed: "players(player_id, platform, input_device, genre_experience in {none, some, expert}, prior_hours, locale, age_band); highlight view joins all six; recruitment screener answers populate it at collection time"
+  shallow: false
+  mechanism: "Collection protocol captures 6 attributes per participant; the store joins them into every aggregate; the chatbot offers 'split by' chips for each attribute"
+  example: "'Step 3 confusion by input device' -> controller 48% (n=140), mouse 27% (n=360); 6 controller clips show the unit-select cursor skipping cells"
+  cost: S
+  depends_on: "screener data captured at recruitment"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Any question can be split by participant attribute instantly; the table cannot"
+
+- id: uxrepo-25
+  title: "Cross-title repository search within one studio: highlights of all the studio's games share one index, tags map through the universal taxonomy, and 'inventory confusion across our 3 titles' returns per-title counts and clips"
+  level: L4
+  cell: {part: tenancy-access-control, scope: cross-game, tenancy-and-deployment: logically-isolated-per-studio, reuse-scope-of-extraction: universal-primitives, question-type: compare-versions, representation: common-data-model-with-per-game-vocab-map}
+  object: "spec.md: 'Buyers are gaming studios'"
+  situation: "A studio with three titles asks whether its new title's tutorial stalls are worse than its last two"
+  consequence: "Per-game question sets make the three tables incomparable; universal tags plus a per-game vocab map make the question one query over one index"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "A-frame assumption: 'studios are many and each game differs'"
+  proposed: "Index partition per studio; game_vocab(game_id, local_step_name, universal_phase in {movement, combat_basics, inventory, objective}); cross-game query groups by universal_phase"
+  shallow: false
+  mechanism: "Tenant isolation at the studio boundary, not the game boundary; universal tags and phases are the join key; no data crosses studios"
+  example: "'Inventory confusion across our titles' -> Ember Tactics 34%, Harbor Line 12%, Dusk Run 9% at the inventory phase, 6 clips per title"
+  cost: M
+  depends_on: "uxrepo-3 universal tags; per-game vocab map at onboarding"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Comparable across a studio's games; per-game tables are not"
+
+- id: uxrepo-26
+  title: "Monday digest for producers: top 5 themes by player count, each with a 20-s reel and the week-over-week delta, sent as one email with no number lacking a clip"
+  level: L4
+  cell: {part: export-integration, delivery-surface: scheduled-digest, user-segment: producer-exec, latency-tier: push-no-query, mechanism-type: push-instead-of-pull, question-type: what-to-fix-first-prioritised}
+  object: "spec.md item 4: the chatbot is the only studio surface described"
+  situation: "The producer never opens the chatbot; the researcher forwards screenshots on Fridays"
+  consequence: "Repositories that added a weekly reel digest saw exec usage; those that relied on the search box did not; the digest is the question that never has to be typed"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md unspecified: 'who at the studio asks'"
+  proposed: "Digest = 5 x {theme label, n_players this week, delta vs last week, 20-s reel of 3 clips, link to accept/dismiss}; sent Monday 08:00 studio time; only accepted tags and candidate themes qualify"
+  shallow: false
+  mechanism: "Scheduled job over the theme table and step metrics; rendering reuses uxrepo-8; nothing is computed at read time"
+  example: "Week 4 digest: 1. step 3 unit selection, 91 players (-12 vs week 3, build 1.4), reel; 2. camera disorientation, 60 players (new), reel; ..."
+  cost: S
+  depends_on: "uxrepo-5 themes; uxrepo-8 reels"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Reaches the people who never query; the table only serves the chatbot"
+
+- id: uxrepo-27
+  title: "Tag x step severity-frequency matrix: rows are tags, columns are tutorial steps, cells are (players affected / players reached, median duration of the moment); sorted by affected x churn lift for 'what to fix first'"
+  level: L4
+  cell: {part: query-path, evidence-form: severity-frequency-matrix, question-type: what-to-fix-first-prioritised, query-path: precomputed-aggregate, granularity: tutorial-step, representation: issue-list-with-severity-frequency}
+  object: "spec.md: 'detecting churn in the tutorial and just after it'"
+  situation: "The team has one sprint and asks 'what is the single worst thing in the tutorial'"
+  consequence: "A fixed question answers one cell at a time; the matrix answers the prioritisation question in one view, which is the artifact usability reports have always ended with"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md item 2: 'closed-field questions become aggregate queries over all players'"
+  proposed: "matrix(tag_id, step_id, n_affected, n_reached, median_ms, churn_rate_affected, churn_rate_unaffected, lift); priority = n_affected x max(lift, 0); each cell opens a reel"
+  shallow: false
+  mechanism: "One GROUP BY over highlights joined to step_runs; lift is churn among affected minus churn among unaffected at that step"
+  example: "Top cell: unit_select_confusion x step 3: 170/320 affected, median 28 s, churn 41% vs 9% unaffected, lift 32 points; second: camera x step 2, 60/480, lift 11"
+  cost: S
+  depends_on: "uxrepo-1 highlights; uxrepo-12 step_runs"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Answers 'fix what first' with a ranked grid instead of many single-question lookups"
+
+- id: uxrepo-28
+  title: "Highlight merging across modalities: overlapping auto-highlights from speech, OCR, screen-state and silence within 3 s are merged into one moment with a modalities[] list, so a count never double-counts one event seen four ways"
+  level: L4
+  cell: {part: session-stitching, modality: screen-state-classifier, representation: hybrid, evidence-form: extraction-provenance-model-and-schema-version, granularity: variable-length-moment-or-episode, mechanism-type: precompute-more}
+  object: "memo.md item 1: 'timestamped atomic observations across all videos of a session (step on screen, action, utterance, friction signal, sentiment...)'"
+  situation: "At 00:41:12 the speech tagger fires 'confusion', OCR fires 'tooltip visible', screen-state fires 'menu reopen x3' and silence fires 'stall'; the count of step 3 friction moments reads 4 for one event"
+  consequence: "Inflated counts per player were the most common complaint about auto-tagging in repositories; the merged moment carries all four signals as provenance"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "memo.md item 1 lists five observation kinds without a merge rule"
+  proposed: "Post-ingest pass: union-find over highlights of one session with |t_start diff| <= 3000 ms; merged moment keeps min t_start, max t_end, union of tags, modalities[] and source highlight ids"
+  shallow: false
+  mechanism: "Moments are the counted unit; raw highlights remain for provenance; the chatbot counts moments and shows which modalities agreed"
+  example: "'Friction moments at step 3' -> 212 moments across 500 players (was 611 raw highlights); 140 of 212 are supported by 2+ modalities"
+  cost: S
+  depends_on: "uxrepo-1 highlights from multiple modalities"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Correct event counts with multi-signal provenance; the table has neither"
+
+- id: uxrepo-29
+  title: "Buy the researcher-facing layer: push the highlight store into an existing research repository (Dovetail-class) through its import API and build only ingestion, tagging and the query planner in-house"
+  level: L3
+  cell: {part: export-integration, build-or-buy: managed-cloud-service, effort: buy-or-integrate, delivery-surface: warehouse-share-or-export, user-segment: jev-internal-ops, tenancy-and-deployment: shared-multi-tenant}
+  object: "spec.md item 4: 'A chatbot for the gaming studio'"
+  situation: "JEV has two engineers and the roadmap now lists player, reels, tags, insights, digests and a chatbot"
+  consequence: "Those six surfaces took repository vendors 3-5 years; buying them means JEV's moat is the multimodal game-specific extraction and the planner, which is where the persona believes the value sits"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md constraint: 'Ingestion time and cost are not a concern' (engineering time is)"
+  proposed: "Nightly export of highlights as {video_url, t_start, t_end, tags, note} via the repository's import API; studio users work there; JEV chatbot links back to repository clip URLs"
+  shallow: false
+  mechanism: "Integration job rather than UI build; tags and highlights map 1:1 onto repository primitives; the planner stays in JEV"
+  example: "Studio opens its repository workspace and sees 12,000 JEV highlights for Ember Tactics tagged and searchable; 'step 3 quit reel' is made with the repository's own reel tool"
+  cost: S
+  depends_on: "uxrepo-1 highlights; a repository vendor with an import API and per-studio workspaces"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Delivers reels, tags and search this quarter instead of in two years"
+
+- id: uxrepo-30
+  title: "Retention tiering: after 12 months raw video is moved to cold storage and only highlights (with their 8-40 s clips) stay hot, so a 2-year-old study is still answerable from clips while storage falls by about 95%"
+  level: L4
+  cell: {part: cost-governance, granularity: session, latency-tier: minutes, mechanism-type: reuse-or-cache-prior-work, moment-in-journey: renewal-review, evidence-form: clip}
+  object: "A-frame assumption: 'original videos remain available for re-processing, including frames'"
+  situation: "A studio renews in year 2 and asks 'show me the step 3 problem from last year's build' while the raw video for those 500 sessions is 1.9 TB"
+  consequence: "Repositories keep highlights hot and raw cold; the old question is answered from clips in seconds; a new tag over old sessions needs a cold restore, which is a 'minutes' answer, not a failure"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (storage over years is not addressed)"
+  proposed: "clips bucket (hot, ~5% of raw bytes); raw bucket (cold, 12 months after last session); restore job triggered by a backfill over cold sessions with an ETA in the chatbot"
+  shallow: false
+  mechanism: "Highlights carry their own clip files, so re-watching never touches raw; only new extractions do"
+  example: "'Last year's step 3 quits' -> 91 clips from hot storage in 1 s; 'apply the new drag-off-grid tag to last year' -> 'restoring 500 sessions from cold, about 40 minutes'"
+  cost: S
+  depends_on: "uxrepo-1 highlights with clip files"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Keeps evidence available for years at a fraction of the storage; the table has no evidence to keep"
+
+- id: uxrepo-31
+  title: "One-question in-game prompt at step exit: 'How hard was that? 1-5' shown after each tutorial step, stored on the step_run row and linked to the step's highlights, so inferred ease (uxrepo-13) is calibrated against reported ease per step"
+  level: L4
+  cell: {part: collection-protocol, modality: survey-or-in-game-prompt-response, question-type: how-felt, granularity: tutorial-step, mechanism-type: change-data-at-source, evidence-form: contrast-vs-baseline}
+  object: "spec.md unspecified: 'What a transcript contains (speech only, on-screen text, events)'"
+  situation: "The chatbot reports inferred ease 2.1/5 at step 3 and the designer asks whether that is what players would actually say"
+  consequence: "Moderated studies always pair observed friction with a single reported-ease question; without it, inferred affect has no anchor and the studio argues about it"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'The transcript alone is not enough'"
+  proposed: "Recorder SDK shows a 1-5 prompt at step exit; step_runs gains reported_ease; the chatbot shows inferred and reported side by side with their correlation per game"
+  shallow: false
+  mechanism: "Collection change, not extraction; 5 extra seconds per step; the correlation between inferred and reported ease is the running accuracy check for affect tags"
+  example: "Step 3: inferred 2.1, reported 2.4 (n=320, r=0.71 across steps); step 5: inferred 3.9, reported 2.6, a gap that exposes a mislabelled 'delight' tag"
+  cost: S
+  depends_on: "recorder SDK control at collection time"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Adds reported data the transcript can never contain and calibrates the inferred numbers"
+
+- id: uxrepo-32
+  title: "Double-coded sample for tag agreement: 50 sessions per game are coded by a second human against the 36 universal tags; per-tag Cohen's kappa under 0.6 blocks that tag from aggregate answers for that game"
+  level: L4
+  cell: {part: evaluation, evidence-form: recall-estimate, uncertainty-policy: abstain-below-coverage, question-origin: pilot-sessions-then-freeze, moment-in-journey: first-cohort-ingested, user-segment: jev-internal-ops}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: "The 'misread_ui' tag has 92% precision on the pilot game but on a text-heavy city-builder the human coder and the model agree on only 41% of instances"
+  consequence: "Research-repository auto-taggers were trusted only where agreement was published per tag; a single accuracy number across tags hides the one tag that is wrong on this game"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md item 3: 'judged by two tests'"
+  proposed: "agreement(game_id, tag_id, kappa, n_instances, coder_id, computed_at); planner refuses aggregates on tags with kappa < 0.6 and says 'tag not validated for this game (kappa 0.41, n=50); clips available'"
+  shallow: false
+  mechanism: "Per-game, per-tag validation at first-cohort time, repeated after each extractor version; low-agreement tags fall back to clip browsing instead of counts"
+  example: "City-builder day 7: 31 of 36 tags pass; 'misread_ui' and 4 others are clip-only until re-extraction with 20 game-specific examples lifts kappa to 0.72"
+  cost: M
+  depends_on: "uxrepo-3 tags; 50 human-coded sessions per game"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Per-tag, per-game trust gates; the table's accuracy is never measured per game"

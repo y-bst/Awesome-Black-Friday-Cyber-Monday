@@ -1,0 +1,650 @@
+- id: askdata-1
+  title: "Every rate answer carries numerator, denominator, and coverage: '23 of 412 players who reached step 3 (5.6%); 75 of 487 ingested have no step-3 observation'"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: count-with-denominator, uncertainty-policy: answer-with-ci-and-n, question-type: how-many, query-path: sql-over-closed-fields, scope: all-players, user-segment: studio-analyst}
+  object: "spec.md stage 4: 'A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast'"
+  situation: "The studio asks 'what share of players stalled at the forge step' and the store has the stall field for only 412 of 487 ingested sessions"
+  consequence: "A bare '5.6%' later turns out to be computed over 412, the studio recomputes 23/487 = 4.7% from the export, and the chatbot is never trusted again; the three-number form makes the discrepancy visible on the first answer"
+  p_typical: 0.35
+  grounded: inferred
+  evidence: "spec.md: 'The answers form a structured table per video' and 'a question over, say, 500 players is fast'; nothing in spec.md states a denominator rule"
+  proposed: "Answer renderer template: '{num} of {den} {den_definition} ({pct}%); {missing} of {ingested} players have no observation for this field'"
+  shallow: false
+  mechanism: "Query path returns a 4-tuple (numerator, denominator, denominator_definition, missing_count) for every rate; the renderer refuses to print a percentage without all four; denominator_definition is a closed enum (ingested, reached_step, spoke_during_step, completed_tutorial)"
+  example: "Studio: 'How many players quit during the forge tutorial step?' Answer: '31 of 412 players who reached the forge step quit before completing it (7.5%, 95% CI 5.3-10.5%). 75 of 487 ingested players never reached the forge step and are excluded.'"
+  cost: S
+  depends_on: "a per-player field marking which tutorial steps were reached (session-stitching must give per-player, not per-video, rows)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has per-video rows with no stated denominator, so the same question yields different percentages depending on whether videos or players are counted"
+
+- id: askdata-2
+  title: "Abstain rule: any aggregate over fewer than 30 populated players returns 'not enough data (n=12)' plus a backfill offer, never a percentage"
+  level: L4
+  cell: {part: query-path, uncertainty-policy: abstain-below-coverage, evidence-form: coverage-statement-n-of-m-players, query-path: lazy-backfill-extraction, scope: query-time-defined-cohort, mechanism-type: narrow-or-clarify-the-question}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "A studio filters to 'players on controller who reached step 5' and only 12 of 487 sessions have that combination populated"
+  consequence: "Percentages over n=12 (8% vs 17% is one player) get quoted in a producer deck; the abstain response with the raw n stops the number from leaving the chat"
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "memo.md item 2 names backfill but not a minimum-n or coverage threshold"
+  proposed: "Threshold config per field: min_n=30 for rates, min_n=5 for per-player lists; response text 'Only 12 players match; I will not report a rate under 30. Start a backfill over the 320 unprocessed sessions (est. 25 min)?'"
+  shallow: false
+  mechanism: "Query planner computes populated_n before the aggregate; if populated_n < min_n it returns an abstain object {n, min_n, backfillable: true|false, est_minutes} instead of a number; the UI renders the backfill button"
+  example: "Studio: 'What percent of touch-screen players failed the forge step?' Answer: 'Only 12 touch-screen players have the forge-step field; I do not report rates under 30 players. 140 touch-screen sessions are unprocessed for this field; backfill takes about 25 minutes.'"
+  cost: S
+  depends_on: "populated_n is cheap to compute (field-level null counts in the store)"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table answers every question with whatever rows exist; nothing stops a 3-of-12 answer from being read as 25%"
+
+- id: askdata-3
+  title: "Evidence drawer on every aggregate: click the number to get the per-player list with one timestamped quote each, and a 'show 5 clips' button"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: per-player-list, representation: timestamped-observation-log, question-type: find-players-who, delivery-surface: clip-reel, granularity: player}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "The chatbot says 31 players quit at the forge step; a designer wants to see who and why before taking it to the producer"
+  consequence: "Without the drawer the designer asks a second question ('which players?') and a third ('show me one'), each a new LLM call that may disagree with the first number; with the drawer the 31 is the list"
+  p_typical: 0.3
+  grounded: quote
+  evidence: "memo.md item 1: 'timestamped atomic observations ... quote with timestamp as evidence'"
+  proposed: "Aggregate answer object carries the list of (player_id, session_id, video_index, timestamp, quote) rows that produced the count; UI renders a collapsed table and a clip-reel link"
+  shallow: false
+  mechanism: "SQL for a count is rewritten to also SELECT the evidence columns; the chatbot never computes a count without materialising the contributing rows, so count == len(rows) by construction"
+  example: "Studio: 'How many players said the forge step was confusing?' Answer: '18 of 412 (4.4%)' with a drawer listing 18 players, e.g. P0231, video 3, 07:42, 'where do I even put the ore'; button 'play 5 random clips'"
+  cost: M
+  depends_on: "observation rows store video_index and timestamp per observation (memo item 1); a clip service that can cut 20-second windows from the original videos (A-frame assumption: originals remain available)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table stores an option letter per video, so a count cannot be traced back to a quote or a moment"
+
+- id: askdata-4
+  title: "Replace the free-text box with 12 slot-filled question templates learned from the first 90 days of query log, e.g. '[share] of [cohort] who [event] at [step]'"
+  level: L3
+  cell: {part: chatbot-ui, question-origin: learned-from-studio-usage, query-path: text-to-semantic-layer-metrics, mechanism-type: narrow-or-clarify-the-question, moment-in-journey: steady-state-weekly, user-segment: game-designer}
+  object: "spec.md constraint: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  situation: "After 90 days the query log shows 80% of questions match a dozen shapes (share-of-cohort-at-step, time-to-step, top-reasons-at-step, compare-build, list-players-who)"
+  consequence: "Free text invites questions the store cannot answer and invites the model to improvise; templates with dropdowns for step, cohort and metric make the unanswerable question un-typeable, and the free-text box stays as a secondary 'ask anything' path with a lower trust badge"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: questions 'are not known in advance'; the fixed-question table is itself evidence that a bounded set was workable once"
+  proposed: "Weekly job clusters the query log by parsed intent; any cluster with 20 or more questions in 30 days becomes a template; template picker UI with slots populated from the field catalog"
+  shallow: false
+  mechanism: "Query log rows (question, parsed_plan, thumbs) are clustered on the parsed_plan signature; a template is a plan with free slots; the UI exposes templates as forms; template answers are deterministic SQL with no LLM in the numeric path"
+  example: "Template 'share of [cohort] who [event] at [step]' filled as cohort=all, event=quit, step=forge gives '31 of 412 (7.5%)' from one SQL statement; the same question typed free-form goes through the planner and gets a 'planner-routed' badge"
+  cost: M
+  depends_on: "a query log with parsed plans (askdata-9) and at least 500 logged questions"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table fixes the questions at ingestion; templates fix the question shapes at query time while the slots (step, cohort, metric) stay open"
+
+- id: askdata-5
+  title: "A semantic layer file (metrics.yaml) defines every named metric with its numerator, denominator and field; the chatbot may only compute metrics that exist in the file"
+  level: L3
+  cell: {part: query-path, query-path: text-to-semantic-layer-metrics, representation: olap-cube-materialized-views, uncertainty-policy: abstain-below-coverage, user-segment: studio-data-engineer, build-or-buy: open-source-component}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "The studio asks for 'stall rate'; two engineers would write two different SQL statements (stall observations per video vs players with any stall per step)"
+  consequence: "The chatbot invents a denominator per question and gives 9% on Monday and 12% on Tuesday for the same question; a named metric gives one definition, visible to the studio, and the planner maps text to metric names instead of to SQL"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md item 2 says closed-field questions become aggregate queries but does not say who defines the aggregate"
+  proposed: "metrics.yaml entry: step_stall_rate = count(distinct player where stall_flag at step S) / count(distinct player where reached step S); dimensions: step, build_version, input_device; the planner emits metric+dimensions, a metrics engine (open-source semantic layer such as cube or dbt metrics) emits SQL"
+  shallow: false
+  mechanism: "Text-to-metric instead of text-to-SQL: the LLM chooses a metric name and dimension values from a catalog of about 40 entries; SQL generation is deterministic from the catalog; unknown metric requests are refused with the nearest 3 metric names"
+  example: "Studio: 'where in the tutorial do players stall most?' Planner emits metric=step_stall_rate, group_by=step; result: forge 7.5% (31/412), smelt 3.1% (14/451), mine 1.2% (6/487)"
+  cost: M
+  depends_on: "closed fields keyed by player and step (session-stitching); a metrics catalog maintained by JEV ops"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has answers but no metric definitions, so aggregates are improvised per question; the catalog makes the same question return the same number"
+
+- id: askdata-6
+  title: "Interpretation echo: the chatbot restates the question in field terms ('Interpreting as: players with >=1 stall observation at step forge, among players who reached forge') before the number, with an edit link"
+  level: L4
+  cell: {part: chatbot-ui, mechanism-type: narrow-or-clarify-the-question, uncertainty-policy: ask-clarifying-question, evidence-form: extraction-provenance-model-and-schema-version, question-type: how-many, latency-tier: under-2s}
+  object: "memo.md item 2: 'The chatbot runs a query planner'"
+  situation: "A studio analyst asks 'how many players got stuck at the forge' and 'stuck' could map to stall_flag, retry_count>=3, or said_confused"
+  consequence: "Silent mapping to one field produces a number that is right for the field and wrong for the question; the echo line makes the mapping visible and correctable before the number is copied anywhere"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md item 1 names 'friction signal, sentiment' as separate fields; which one 'stuck' means is undefined"
+  proposed: "Planner output includes a human-readable plan string and a list of alternative plans; UI shows 'Interpreting as ...' with 'change' revealing the alternatives; chosen alternative is logged as a correction"
+  shallow: false
+  mechanism: "Planner returns {plan, plan_text, alternatives[]}; renderer prints plan_text above the answer; selecting an alternative re-runs with that plan and writes (question, chosen_plan) to the query log for template learning"
+  example: "Studio: 'how many got stuck at the forge?' Chat: 'Interpreting as: players with at least one stall observation (no progress 45 s or more) at step forge, among 412 who reached it: 31 (7.5%). Did you mean players who said they were confused (18) or who retried 3+ times (44)?'"
+  cost: S
+  depends_on: "the planner already producing a structured plan (memo item 2)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table maps each question to one pre-written option set, so the studio never sees that 'stuck' was interpreted one specific way"
+
+- id: askdata-7
+  title: "Answer permalink: every answer gets an id; re-running the id returns the same number from the same snapshot, and the answer page shows snapshot date, n, schema version and model version"
+  level: L4
+  cell: {part: query-path, evidence-form: extraction-provenance-model-and-schema-version, mechanism-type: reuse-or-cache-prior-work, schema-evolution: append-only-versioned-fields, query-path: cached-prior-answer, user-segment: producer-exec}
+  object: "memo.md item 2: 'whose result is cached as a new field'"
+  situation: "A producer pastes '7.5% quit at the forge' into a greenlight deck; three weeks later a designer asks the same question and gets 9.1% because 120 more sessions were ingested and the extraction model was upgraded"
+  consequence: "Two numbers for one question in the same studio is the single event that ended the previous product's use; a permalink answers 'which is right' with 'both, here is what changed between snapshot 2026-10-01 (n=487, model v2) and 2026-10-22 (n=607, model v3)'"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md item 2 caches results as fields; spec.md says nothing about versioning answers"
+  proposed: "Answer table: (answer_id, question, plan, snapshot_ts, n, schema_version, extraction_model_version, result_json); UI link 'jev.app/a/8f3k'; a 'what changed' diff when the same plan is re-run"
+  shallow: false
+  mechanism: "Query path records the plan and the store snapshot (ingestion watermark) with every answer; re-running an answer_id executes the plan against the watermark, not the live store; a diff view runs the plan on both watermarks and lists n delta, field-version delta"
+  example: "Producer opens jev.app/a/8f3k: 'Forge-step quit rate 7.5% (31/412), snapshot 2026-10-01, extraction model v2, schema 1.4'. Clicking 'rerun today' shows '9.1% (55/602), snapshot 2026-10-22, model v3; 52 of the 55 come from sessions ingested after 10-01, 3 from re-extraction'"
+  cost: M
+  depends_on: "ingestion watermark per session and versioned field values (askdata-13)"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is overwritten per video and has no answer history, so a number quoted last month cannot be reproduced"
+
+- id: askdata-8
+  title: "Nightly golden-question regression: 60 hand-answered studio questions over 40 labelled sessions; any question category under 90% accuracy is switched to 'answer with warning' in the chatbot the next morning"
+  level: L4
+  cell: {part: evaluation, uncertainty-policy: abstain-below-coverage, extraction-trigger: scheduled-batch, question-type: how-many, user-segment: jev-internal-ops, latency-tier: overnight}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "A prompt change at ingestion raises the false-positive rate on the 'quit' field from 4% to 15% and nobody notices until a studio does"
+  consequence: "Trust is lost on the studio's clock, not JEV's; the regression gate moves detection to the morning after the change and turns affected categories into warned answers ('this field is under review, accuracy 82% on the golden set') rather than silent wrong numbers"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  proposed: "golden.yaml with 60 (question, expected_answer, tolerance) rows over a frozen 40-session set; nightly CI runs the full ingestion and query path on them; per-category accuracy written to a status table the chatbot reads"
+  shallow: false
+  mechanism: "Evaluation job re-extracts the 40 golden sessions with the current prompts and model, runs the 60 questions through the planner, compares to expected within tolerance (counts within 1, rates within 2 points); writes category status {ok, warn, blocked}; renderer prefixes warned answers"
+  example: "Golden question 'how many of the 40 players quit at the forge step' expects 4 (tolerance 1); after a prompt change the pipeline answers 7; the 'quit' category flips to warn and studio answers on quit carry 'under review since 2026-10-27, golden accuracy 82%'"
+  cost: M
+  depends_on: "40 hand-labelled sessions (memo item 3) and a frozen copy of their videos"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no accuracy monitor; a prompt regression changes every future answer with no signal"
+
+- id: askdata-9
+  title: "Query log as a first-class table: (question, parsed plan, fields used, n, answer, thumbs, correction) per question, reviewed weekly: all thumbs-down plus a 10% random sample checked against transcripts by a JEV analyst"
+  level: L3
+  cell: {part: feedback-loop-from-query-log, question-origin: failed-query-log, mechanism-type: human-in-the-loop, user-segment: jev-internal-ops, moment-in-journey: steady-state-weekly, evidence-form: none}
+  object: "memo.md item 2: 'so the question set grows from real use'"
+  situation: "The planner answers 300 questions a week across 8 studios; nobody at JEV knows which 30 were wrong"
+  consequence: "Wrong answers are discovered by studios first; the weekly review (about 40 answers, 3 analyst-hours) finds them first and feeds three outputs: new golden questions, new templates, and fields to re-extract"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "memo.md item 2: 'the question set grows from real use'"
+  proposed: "query_log table with the listed columns; a weekly review queue in the JEV ops UI; each reviewed row gets verdict {correct, wrong_number, wrong_interpretation, unanswerable} and the verdict feeds askdata-4, askdata-8 and askdata-12"
+  shallow: false
+  mechanism: "Every chatbot answer writes one log row; a weekly job selects all rows with thumbs=down plus a 10% sample; an analyst opens the transcript evidence and records the verdict; verdict counts per category are published to the studio as a trust page"
+  example: "Week 12 review: 4 thumbs-down on 'why did players quit at the forge'; 3 were wrong_interpretation (the planner used the 'confused' field for 'quit'); result: a new template 'top reasons players quit at [step]' bound to the quit_reason field, and a golden question added"
+  cost: S
+  depends_on: "nothing"
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no record of what was asked or whether the answer held up, so the question set cannot grow from use"
+
+- id: askdata-10
+  title: "Published trust page per studio: per field, the golden-set accuracy, coverage (n of m players populated), last extraction date, model version; linked from every answer"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: coverage-statement-n-of-m-players, schema-evolution: append-only-versioned-fields, user-segment: studio-analyst, delivery-surface: dashboard-standard-report, moment-in-journey: first-studio-question}
+  object: "spec.md known problem: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  situation: "A new studio analyst asks the chatbot what it can answer and gets a model-generated list that includes fields that do not exist"
+  consequence: "The first question hits a field the chatbot described but cannot compute; the trust page is the catalog of fields that actually exist, with their accuracy, so the analyst's first question is one the system can answer"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "spec.md 'Unspecified': 'current question count and answer types'; the catalog does not exist as a visible object"
+  proposed: "Page listing about 40-200 fields with columns: name, definition, type (enum/number/text), coverage 412/487, golden accuracy 94%, last extracted 2026-10-25, model v3; chatbot answers link 'fields used: stall_flag (94%), reached_step (99%)'"
+  shallow: false
+  mechanism: "Store metadata table per field (definition, version, coverage counts updated at ingestion, accuracy from askdata-8); rendered as a page and queried by the planner so it refuses fields with coverage under threshold"
+  example: "Analyst opens the trust page before asking about the forge step and sees quit_at_step coverage 412/487 (accuracy 94%) but quit_reason coverage 180/487 (accuracy 71%, warn); asks the count question and defers the reason question until backfill"
+  cost: S
+  depends_on: "field-level accuracy from askdata-8 and coverage counts from the store"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's question list is invisible to the studio and has no accuracy or coverage attached"
+
+- id: askdata-11
+  title: "'Why' questions answer only as a ranked list of quoted reasons with counts; no synthesised narrative paragraph is allowed in the numeric answer path"
+  level: L4
+  cell: {part: chatbot-ui, question-type: why, evidence-form: quote-with-timestamp, query-path: retrieval-then-llm, uncertainty-policy: answer-with-ci-and-n, modality: speech-transcript}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "A designer asks 'why do players quit at the forge step' and the model reads 31 observation rows"
+  consequence: "A fluent paragraph ('players are confused by the ore slot and frustrated by the hammer timing') is where invented reasons hide and cannot be checked; a ranked list 'ore slot not found: 14 players (quotes); hammer timing: 9; no reason stated: 8' can be checked quote by quote"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md item 2: 'the model reads only those'"
+  proposed: "Response schema for why-questions: list of {reason_label, player_count, 3 quotes with player/video/timestamp}; a fixed 'no reason stated: k' bucket; the LLM output is validated against the schema and every quote is string-matched to a stored observation before display"
+  shallow: false
+  mechanism: "The LLM is asked to cluster the retrieved rows into labelled reasons and cite row ids; a validator rejects any quote not present verbatim in the cited row and any count that does not equal the number of cited rows; failure falls back to 'could not group; here are the 31 quotes'"
+  example: "'Why do players quit at the forge?' Answer: '1. Cannot find where to place ore: 14 of 31 (P0231 v3 07:42 \"where do I even put the ore\"; ...). 2. Hammer timing fails: 9 of 31. 3. No reason spoken: 8 of 31.' No paragraph."
+  cost: S
+  depends_on: "observation rows with quotes and ids (memo item 1)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The fixed table has closed options only, so 'why' is either unanswerable or answered from an option list written before the reasons were known"
+
+- id: askdata-12
+  title: "Cohort definition prompt: when the question names a cohort word not in the catalog ('churners', 'casuals'), the chatbot asks a one-click multiple-choice definition before computing"
+  level: L4
+  cell: {part: chatbot-ui, uncertainty-policy: ask-clarifying-question, question-type: who-are-the-churners-segment-discovery, scope: query-time-defined-cohort, mechanism-type: narrow-or-clarify-the-question, question-origin: studio-written-at-runtime}
+  object: "spec.md stage 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "A studio asks 'what do churners say about the forge' and 'churner' has no stored definition"
+  consequence: "The model silently picks 'quit during tutorial' while the studio means 'did not return for a second session'; the chosen definition is saved per studio so the question is asked once, not every time"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it' is the only churn definition and it is not operational"
+  proposed: "Clarifier with 3 options derived from available fields: (a) quit before tutorial complete, (b) session ended within 10 min of tutorial end, (c) no second session in 7 days (needs telemetry); chosen option stored as a named cohort in the studio's catalog"
+  shallow: false
+  mechanism: "Planner detects an unresolved cohort token; generates options from fields that can define a player set; UI renders the options; the selection creates a saved cohort row (studio_id, name, definition_sql) reused by later questions"
+  example: "'What do churners say about the forge?' Chat: 'Define churner: (a) quit before finishing the tutorial, 31 players; (b) session ended within 10 min after the tutorial, 58 players; (c) needs telemetry, not available.' Studio picks (a); 'churner' is saved for that studio"
+  cost: S
+  depends_on: "player-level fields for tutorial completion and session end time"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table encodes one churn definition per game at ingestion; the studio cannot see or change it"
+
+- id: askdata-13
+  title: "Versioned field values: when a model upgrade re-extracts a field, the old values stay as (field, v2) and the chatbot shows 'changed from 7.5% to 9.1% after re-extraction with model v3' on the first query after the change"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: model-upgrade-reextract, extraction-trigger: on-model-upgrade, evidence-form: extraction-provenance-model-and-schema-version, representation: timestamped-observation-log, user-segment: studio-data-engineer}
+  object: "A-frame.yaml assumption: 'original videos remain available for re-processing'"
+  situation: "The extraction model is upgraded and the forge-step quit count moves from 31 to 55 on an unchanged 487-session set"
+  consequence: "A studio that sees the number move with no explanation concludes the system is random; a studio that sees 'model v3 flagged 24 more quits; 20 of them were classified as stall under v2' can decide which to believe and ask for the 24 clips"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md item 2 caches new fields but does not say what happens to old values on re-extraction"
+  proposed: "Observation rows carry extraction_version; aggregates default to the latest version; the chatbot runs the same plan on the previous version when the field changed in the last 14 days and prints the delta with a confusion count"
+  shallow: false
+  mechanism: "Append-only store: re-extraction writes new rows with version v3, old rows are kept; the planner adds version=latest; a change detector compares per-player values between versions and stores a per-field confusion matrix used in the answer footer"
+  example: "'How many quit at the forge?' Answer: '55 of 412 (13.3%) with model v3. Under model v2 this was 31 (7.5%); 24 players changed, 20 from stall to quit. Show the 24 clips?'"
+  cost: M
+  depends_on: "append-only observation store with a version column"
+  part: schema-evolution
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table is overwritten on re-run; the old number is gone and the change is unexplainable"
+
+- id: askdata-14
+  title: "Progressive backfill answer: for a new field, answer over the first 50 sessions with a 95% CI within 3 minutes, then refine every 100 sessions until the full 487 are done"
+  level: L4
+  cell: {part: query-path, query-path: progressive-answer-then-refine, uncertainty-policy: give-range-then-refine, latency-tier: progressive-streaming, extraction-trigger: on-first-question, mechanism-type: approximate-then-refine}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "A studio asks 'how many players muted the game audio during the tutorial', a field that does not exist, and the full backfill over 487 sessions takes 40 minutes"
+  consequence: "A 40-minute spinner is abandoned; a 3-minute answer '6 of 50 (12%, CI 5-24%), refining...' keeps the analyst in the chat and the final '41 of 487 (8.4%, CI 6.2-11.2%)' arrives in the same thread"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md item 2: 'one-time batch extraction over all sessions whose result is cached as a new field'"
+  proposed: "Backfill job orders sessions by a random permutation; the answer message updates in place at 50, 150, 250, 350, 487 with Wilson interval; the message history keeps the final value only, with the refinement trail in the answer permalink"
+  shallow: false
+  mechanism: "Backfill emits per-session results to a stream; the query path recomputes the aggregate and CI on each checkpoint and pushes an edit to the chat message; random order makes each checkpoint an unbiased sample"
+  example: "'How many muted the audio during the tutorial?' t+3min: '6 of 50 players (12%, 95% CI 5-24%). Processing the remaining 437...' t+40min: '41 of 487 (8.4%, CI 6.2-11.2%). Field audio_muted_in_tutorial saved.'"
+  cost: M
+  depends_on: "the backfill extraction path from memo item 2 and a chat surface that can edit a sent message"
+  part: query-path
+  ingest_cost: L
+  query_cost: M
+  better_than_fixed_table: "The fixed table cannot answer the question at all; the memo's backfill answers it after 40 minutes with no intermediate signal"
+
+- id: askdata-15
+  title: "Backfill budget shown in the chat: each studio has 10 new-field backfills per month; the chatbot prints 'this uses 1 of your 7 remaining backfills (est. 487 sessions, 40 min)' and asks to confirm"
+  level: L4
+  cell: {part: cost-governance, query-path: lazy-backfill-extraction, mechanism-type: defer-to-query-time, user-segment: studio-analyst, latency-tier: minutes, moment-in-journey: steady-state-weekly}
+  object: "spec.md constraint: 'Ingestion time and cost are not a concern'"
+  situation: "An analyst rephrases the same unanswerable question five ways in one afternoon and each triggers a 487-session extraction"
+  consequence: "Ingestion cost is 'not a concern' at ingestion time but a lazy backfill is query-time cost paid per curiosity; the budget line turns a silent bill into a visible decision and the confirm step catches rephrasings (the planner shows the 3 nearest existing fields before confirming)"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern'; memo.md item 2 adds query-triggered extraction, which spec.md did not cost"
+  proposed: "Per-studio quota table; backfill confirmation card listing estimated sessions, minutes, nearest existing fields; quota resets monthly; JEV ops can raise it"
+  shallow: false
+  mechanism: "Planner classifies the question as new-field; before enqueueing, it looks up the quota, estimates sessions and minutes from the last 10 backfills, and renders a confirm card; confirmation writes a quota debit and a field request row"
+  example: "'How many players opened the settings menu during the forge step?' Chat: 'No field for this. Nearest: ui_menu_opened_any (coverage 487/487). Backfilling a new field uses 1 of 7 remaining this month, est. 40 min. Confirm?'"
+  cost: S
+  depends_on: "the backfill path (memo item 2)"
+  part: cost-governance
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no query-time cost; this keeps the memo's open question set without an open bill"
+
+- id: askdata-16
+  title: "REFUSE: query-time map-reduce of an LLM over 500 raw transcripts for numeric questions, because the same question run twice yields different counts"
+  level: L3
+  cell: {part: query-path, query-path: map-reduce-over-raw, representation: raw-transcript-only, uncertainty-policy: always-answer, latency-tier: minutes, question-type: how-many}
+  object: "spec.md stage 4: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists'"
+  situation: "A proposal to drop the store and have a long-context model count directly over raw transcripts at query time"
+  consequence: "Low willingness: in the previous product a model-counted answer varied by up to 20% between runs on identical input, and the studio noticed within a week; non-determinism in the numeric path is a trust failure independent of accuracy. Accept raw map-reduce only for open 'what did players say about X' questions, labelled as a non-numeric reading"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data'"
+  proposed: "Planner rule: question-type in {how-many, how-long, compare-versions, did-the-fix-work-pre-post} may never route to map-reduce-over-raw; such questions without a field go to backfill (askdata-14) which writes a field and then counts with SQL"
+  shallow: false
+  mechanism: "A routing allow-list keyed by question type; map-reduce is reachable only for what-said and what-surprised question types and its output is rendered with a 'reading, not a count' label"
+  example: "'How many players quit at the forge?' is never answered by reading 487 transcripts; it is answered by SQL over the quit field or refused until backfilled. 'What did players say about the forge?' may be answered by map-reduce with a 'reading of 487 transcripts, not a count' label"
+  cost: S
+  depends_on: "nothing"
+  part: query-path
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "Not better; this option is the one the fixed table was built to avoid, and the refusal keeps that property"
+
+- id: askdata-17
+  title: "REFUSE: a shared cross-studio semantic cache of similar questions, because returning another studio's number for a 'similar' question is the worst wrong number possible"
+  level: L3
+  cell: {part: tenancy-access-control, query-path: semantic-cache-similar-question, tenancy-and-deployment: shared-multi-tenant, mechanism-type: reuse-or-cache-prior-work, latency-tier: sub-200ms-cached, scope: cross-game}
+  object: "spec.md: 'Buyers are gaming studios'"
+  situation: "A latency proposal caches answers keyed by question embedding across all studios so a repeated question is served in under 200 ms"
+  consequence: "Low willingness: a studio asking 'forge-step quit rate' could receive a cached answer computed over a different game's forge step; even one such leak is a contract-ending event. A per-studio exact-plan cache (same plan, same watermark) is acceptable and gets the same latency without similarity matching"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md says buyers are studios; nothing in spec.md or memo.md states an isolation rule"
+  proposed: "Cache key = (studio_id, plan_hash, store_watermark); no embedding similarity in the cache path; similarity is used only to suggest 'you asked this on 10-01: see answer 8f3k' with the user deciding"
+  shallow: false
+  mechanism: "Exact-plan cache per studio invalidated by the ingestion watermark; the similar-question suggestion is a UI hint that links to a permalink (askdata-7) and never substitutes the answer"
+  example: "A designer retypes 'how many players quit at the forge step' two days later; the planner produces the same plan hash, the watermark is unchanged, the cached 31/412 is served in 150 ms with 'cached from 10-25, store unchanged since'"
+  cost: S
+  depends_on: "plan hashing and a per-studio ingestion watermark"
+  part: tenancy-access-control
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The exact-plan cache gives the fixed table's speed with a provable 'same studio, same data, same plan' guarantee"
+
+- id: askdata-18
+  title: "Silent-player disclosure: every answer from speech fields states how many players were silent during the step and excludes them from the denominator by default, with a toggle"
+  level: L4
+  cell: {part: chatbot-ui, modality: silence-or-absence-of-speech, evidence-form: coverage-statement-n-of-m-players, question-type: how-felt, granularity: tutorial-step, uncertainty-policy: answer-with-ci-and-n}
+  object: "spec.md stage 2: 'Each video is converted to a transcript'"
+  situation: "A studio asks 'how did players feel about the forge step' and 367 of 412 players said nothing during that step"
+  consequence: "'18% frustrated' silently means 8 of 45 speakers; read as 18% of all players it is wrong by a factor of 9; the disclosure line prevents the misread and the silent count is itself a finding (the step is 2 minutes of quiet failure)"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'The transcript alone is not enough; what is on screen is largely lost'; silence as a measured quantity is not in spec.md or memo.md"
+  proposed: "Per player per step: seconds_of_speech field computed at ingestion; the renderer prints 'among 45 players who spoke during this step (367 silent)'; a toggle switches the denominator to all 412 with the silent players counted as 'no evidence'"
+  shallow: false
+  mechanism: "Ingestion computes speech seconds per (player, step) from transcript timestamps aligned with step boundaries; the semantic layer defines two denominators for every speech-derived metric; the renderer always prints which one is used"
+  example: "'How did players feel about the forge step?' Answer: 'Among 45 players who spoke during the forge step: 8 frustrated (18%), 5 confused, 32 neutral. 367 players were silent during the step and are excluded; toggle to include them as no-evidence.'"
+  cost: S
+  depends_on: "step boundaries per player aligned to transcript time (session-stitching and frame pipeline)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's sentiment option is filled for every video whether or not the player spoke, so silence is indistinguishable from neutral"
+
+- id: askdata-19
+  title: "Random-3 spot check attached to each aggregate: three randomly sampled contributing rows (not top-ranked) with a 'looks right / wrong' control; two wrongs out of three flags the field"
+  level: L4
+  cell: {part: evaluation, evidence-form: clip-montage-n-examples, mechanism-type: human-in-the-loop, extraction-trigger: on-low-confidence-or-disagreement, user-segment: game-designer, question-origin: failed-query-log}
+  object: "memo.md item 3: 'each with an answer type and an evidence requirement'"
+  situation: "A designer gets '31 players quit at the forge' and wants a 20-second check that the extraction is not nonsense before forwarding it"
+  consequence: "Top-k evidence shows the cleanest hits and hides extraction noise; three random rows show the real error rate; the studio's own 3-row verdicts, accumulated across answers, become the per-field accuracy signal that askdata-10 publishes"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md item 3: 'an evidence requirement'"
+  proposed: "Answer footer: 3 random contributing rows with quote, timestamp and clip link; buttons right/wrong per row; a field with 10 or more verdicts and under 70% right is set to warn status"
+  shallow: false
+  mechanism: "Query path samples 3 row ids uniformly from the contributing set; verdicts write to a field_verdicts table; a nightly job aggregates verdicts per field and updates field status used by the trust page and the planner"
+  example: "'31 players quit at the forge' footer shows P0088 v2 12:10 'forget it', P0231 v3 07:42 'where do I put the ore', P0402 v1 14:55 (silence, then menu). Designer marks the third wrong (player paused, did not quit); after 10 such verdicts at 60% right, quit_at_step is set to warn"
+  cost: S
+  depends_on: "evidence rows per aggregate (askdata-3)"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no per-answer evidence, so the studio has no way to check a number without asking JEV"
+
+- id: askdata-20
+  title: "Recall statement on every find-players-who answer: 'found 23; a 50-row audit of the non-matches estimates recall 80% (CI 66-90%)'"
+  level: L4
+  cell: {part: evaluation, evidence-form: recall-estimate, question-type: find-players-who, uncertainty-policy: answer-with-ci-and-n, query-path: sql-over-closed-fields, scope: all-players}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players'"
+  situation: "A studio asks for all players who tried to craft before the tutorial allowed it, intending to interview them; the list has 23 names"
+  consequence: "A list with no recall figure is read as complete; when the studio finds 5 more by hand, the list and the chatbot are both discredited; a recall estimate from a sampled audit turns 'this is the list' into 'this is about 80% of the list'"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md item 2 describes retrieval but no recall measure"
+  proposed: "For fields created by backfill, the backfill job also labels a random 50 of the negative sessions with a second pass (different prompt); the recall estimate and CI are stored on the field and printed with every list answer"
+  shallow: false
+  mechanism: "Field metadata gains (audit_n, audit_found, recall_point, recall_ci); the second-pass audit runs at field creation and after each model upgrade; the renderer appends the recall line to per-player-list answers"
+  example: "'Which players tried to craft before the forge unlocked?' Answer: '23 players (list). Recall estimate: a 50-session audit of non-matches found 2 missed, recall about 80% (CI 66-90%). Expect roughly 5 more players not on this list.'"
+  cost: M
+  depends_on: "a backfill path that can run a second extraction prompt over a sample"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table's lists are presented as complete with no recall measure at all"
+
+- id: askdata-21
+  title: "Pre-post guard for 'did the fix work': refuse the comparison when the two build cohorts differ in size by more than 3x, when either has under 30 players, or when build_version is missing on more than 10% of sessions"
+  level: L4
+  cell: {part: query-path, question-type: did-the-fix-work-pre-post, scope: build-version-pair, modality: build-version-metadata, uncertainty-policy: abstain-below-coverage, moment-in-journey: new-build-version}
+  object: "spec.md 'Unspecified': 'how videos of one session are linked' and no build version field is named"
+  situation: "A studio ships a forge-step fix in build 1.3 and asks 'did the fix work' with 412 players on 1.2 and 19 on 1.3"
+  consequence: "'Quit rate fell from 7.5% to 5.3%' on 19 players is one player; stated as a result it leads to a shipped decision; the guard returns 'not yet: 19 players on 1.3, need 30' and the question auto-re-runs when the threshold is met"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md lists linking of videos as unspecified; build version is not mentioned in spec.md or memo.md"
+  proposed: "Guard checks in the planner; refusal message with the three numbers; a 'notify me when 1.3 reaches 30 players' button that creates a push rule"
+  shallow: false
+  mechanism: "Planner computes n per build and missing-build share before any comparison; failure returns a typed refusal; a watcher row re-runs the plan at each ingestion batch and pushes the comparison when all guards pass"
+  example: "'Did the 1.3 forge fix work?' Chat: 'Not yet comparable: 412 players on 1.2, 19 on 1.3 (minimum 30). I will post the comparison when 1.3 reaches 30 players.' Six days later: 'Build 1.3 (n=34): forge quit 2 of 34 (5.9%, CI 1.6-19%) vs 1.2: 31 of 412 (7.5%). Difference not distinguishable from zero at this n.'"
+  cost: S
+  depends_on: "build_version captured per session at ingestion"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no build dimension and no guard; any pre-post question is answered or unanswerable with no statement of why"
+
+- id: askdata-22
+  title: "Weekly tutorial digest to Slack with the 12 template answers precomputed (n, CI, week-over-week delta) so the chatbot is used for drill-down only"
+  level: L3
+  cell: {part: chatbot-ui, delivery-surface: scheduled-digest, query-path: precomputed-aggregate, latency-tier: push-no-query, moment-in-journey: steady-state-weekly, mechanism-type: push-instead-of-pull}
+  object: "spec.md constraint: 'Answering a studio's question must be fast'"
+  situation: "After month 2 the chatbot's query log shows 70% of questions are the same weekly funnel questions asked by the same two people on Monday morning"
+  consequence: "In the previous product the chatbot's daily users fell to zero while the digest they built from it was read every week; the digest is the fast path for known questions and the chatbot handles only the long tail, which halves the number of free-text answers that can be wrong"
+  p_typical: 0.1
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast'; a digest answers before the question is asked"
+  proposed: "Monday 08:00 studio-local Slack post: funnel table per step (reached, completed, quit, stall rate), each with n and CI, delta vs last week flagged when CI-separated; each row links to the chatbot with the plan pre-filled"
+  shallow: false
+  mechanism: "The 12 template plans (askdata-4) run on a schedule against the latest watermark; results are rendered to a Slack block with answer permalinks; the link opens the chatbot with the plan loaded for drill-down"
+  example: "Digest row: 'Forge step: reached 412, completed 381, quit 31 (7.5%, CI 5.3-10.5), vs last week 6.9%: no change at this n. [players] [clips] [ask]'"
+  cost: S
+  depends_on: "templates (askdata-4) and the Slack integration"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Same precomputation as the fixed table, but with n, CI and links to evidence, and delivered without a question being typed"
+
+- id: askdata-23
+  title: "Outside-scope response is a typed object: 'not captured' plus the 5 nearest captured fields and a backfill offer; the model may not improvise an answer from general knowledge"
+  level: L4
+  cell: {part: chatbot-ui, question-type: outside-game-target, uncertainty-policy: abstain-below-coverage, query-path: lazy-backfill-extraction, mechanism-type: narrow-or-clarify-the-question, user-segment: producer-exec}
+  object: "spec.md stage 3: 'a fixed set of questions with options, written per game target. The targets are mostly detecting churn in the tutorial'"
+  situation: "A producer asks 'is our tutorial longer than most games in the genre' and the store holds nothing about other games"
+  consequence: "The previous product answered this from the model's training data with a confident paragraph and that single answer was quoted in a board deck; a typed 'not captured' with the nearest fields ('median tutorial duration in your data: 11 min 20 s, n=487') keeps the chatbot inside its data"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "spec.md: questions 'written per game target'; targets 'mostly detecting churn in the tutorial'"
+  proposed: "Planner classifies each question as in-store, backfillable, or outside-store; outside-store returns a fixed card with the nearest 5 fields by embedding and a backfill button when the question is about the studio's own sessions"
+  shallow: false
+  mechanism: "A system rule forbids answering from parametric knowledge; the classifier output is validated (no numeric tokens allowed in an outside-store response other than from field lookups); the card template is fixed text"
+  example: "'Is our tutorial longer than most games in the genre?' Chat: 'Not captured: I have no data on other games. Nearest in your data: median tutorial duration 11 min 20 s (n=487), 90th percentile 19 min. Cross-title benchmarks are not available in this product.'"
+  cost: S
+  depends_on: "nothing"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed-table chatbot has the same gap but no typed refusal, so the model fills it"
+
+- id: askdata-24
+  title: "Three-sentence cap on any answer: a number line, a denominator line, an evidence link; anything longer is a table, never prose"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: count-with-denominator, uncertainty-policy: answer-with-ci-and-n, delivery-surface: chatbot, user-segment: studio-analyst, question-type: what-happened}
+  object: "spec.md stage 4: 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "The model answers 'what happened at the forge step' with 300 words of fluent summary"
+  consequence: "Every invented fact in the previous product lived in the fourth sentence onward; the cap removes the space in which the model elaborates beyond the rows it read, and makes the answer scannable in 5 seconds"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md gives no answer format"
+  proposed: "Response schema: {headline (<=25 words), denominator_line, evidence_link, optional table rows[]}; the renderer rejects responses that do not fit the schema and asks the model to retry once, then falls back to table-only"
+  shallow: false
+  mechanism: "Structured output with a hard schema; a length validator; free prose is allowed only inside the table's 'quote' column where each cell is string-matched to a stored observation"
+  example: "'What happened at the forge step?' Answer: 'Of 412 players who reached the forge, 381 completed it, 31 quit, 44 retried 3+ times.' 'Denominator: players who reached the step; 75 never did.' 'Evidence: 31 quit rows [open].' Then a table of reasons from askdata-11"
+  cost: S
+  depends_on: "nothing"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed-table chatbot's output format is unconstrained; the cap makes the answer as checkable as the table it came from"
+
+- id: askdata-25
+  title: "Escalate-to-analyst button on every abstained answer: routes question plus plan plus store snapshot to a JEV analyst with a 1-business-day SLA; the analyst's answer is published as a permalink and the question becomes a template candidate"
+  level: L3
+  cell: {part: query-path, uncertainty-policy: escalate-to-human-analyst, query-path: human-analyst-escalation, mechanism-type: human-in-the-loop, latency-tier: overnight, user-segment: producer-exec}
+  object: "spec.md constraint: 'Their questions are not known in advance'"
+  situation: "The chatbot abstains on 'why do controller players quit the forge step more than mouse players' (n=12 controller players, mixed fields)"
+  consequence: "An abstain with no next step reads as 'the product cannot help'; an abstain with a human path reads as 'the product is careful'; the analyst answer, written against the same store, becomes a worked example for the template learner and a golden question"
+  p_typical: 0.1
+  grounded: inferred
+  evidence: "spec.md: questions 'not known in advance'; memo.md has no human fallback"
+  proposed: "Escalation queue in JEV ops with the question, the planner's plan, the abstain reason and a store snapshot id; analyst writes the answer in the same answer schema (askdata-24) with evidence rows; published to the studio thread"
+  shallow: false
+  mechanism: "Abstain object carries an escalate action; clicking writes an escalation row; analyst tooling runs plans against the snapshot and attaches evidence; the finished answer is a permalink with author=analyst and feeds the golden set"
+  example: "Abstain on the controller question; analyst next day: 'Controller players: 3 of 12 quit at forge (25%, CI 9-53%) vs mouse 28 of 400 (7%). Too few controller players to conclude; the 3 clips show the same ore-drag gesture failing.' Published with 3 clips; question logged as a template candidate"
+  cost: S
+  depends_on: "an abstain path (askdata-2) and a JEV ops queue"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no path for a question it cannot answer; the studio emails JEV and the answer is never captured"
+
+- id: askdata-26
+  title: "Onboarding interview captures the studio's first 30 questions, which are precomputed and hand-verified against 10 sessions before the chatbot is switched on; free-text asking is unlocked only after 30 verified answers"
+  level: L3
+  cell: {part: question-generation, question-origin: onboarding-interview-with-studio, moment-in-journey: game-onboarding-day-0, uncertainty-policy: abstain-below-coverage, user-segment: jev-internal-ops, effort: M-one-quarter}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions'"
+  situation: "A new studio gets chatbot access on day 1 and the first question it asks is one the ontology never generated"
+  consequence: "The first wrong answer sets the trust level for the quarter; a verified-30 launch means the first week of answers are ones JEV has checked by hand, and the usage log of those 30 seeds the template learner before free text opens"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md item 3: 'coverage of real studio questions'"
+  proposed: "Onboarding form: 30 questions with the studio's expected answer type; JEV maps each to a metric or a new field; 10 pilot sessions hand-labelled; chatbot launches in 'template mode' with the 30 answers and unlocks free text when all 30 pass the golden check"
+  shallow: false
+  mechanism: "A per-studio launch gate flag; the 30 questions become plans in the semantic layer; the golden check from askdata-8 runs on the 10 pilot sessions; the gate flips when per-question accuracy is at least 90%"
+  example: "Studio lists 'what share of players quit during the tutorial and at which step' as question 1; JEV maps it to step_quit_rate grouped by step; verified on 10 labelled sessions (4 quits, 4 found); shipped on day 5 as a template with n and CI"
+  cost: M
+  depends_on: "the semantic layer (askdata-5) and the golden check (askdata-8)"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table's questions are written by JEV per game target without the studio; here the studio's own 30 are the first table, verified"
+
+- id: askdata-27
+  title: "Chart answers carry n and a CI band on every bar; a bar with n under 30 is hatched and labelled 'low n'"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: chart, uncertainty-policy: answer-with-ci-and-n, question-type: compare-steps, granularity: tutorial-step, delivery-surface: chatbot}
+  object: "memo.md item 1: 'step on screen' as an observation field"
+  situation: "The chatbot draws a bar chart of quit rate per tutorial step and the last step has 9 players"
+  consequence: "A chart is the artifact most likely to be screenshotted into a deck; a 33% bar over 9 players without a band becomes a 'fact' about the final step; the band and the hatching travel with the screenshot"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md item 1: 'step on screen'"
+  proposed: "Chart renderer rule: every bar shows n under the label and a Wilson 95% interval; n under 30 renders hatched with a 'low n' tag; the chart image embeds the answer permalink id in the corner"
+  shallow: false
+  mechanism: "The chart data object is the same 4-tuple per bar as askdata-1 plus CI bounds; the renderer is deterministic from that object; the permalink id is burned into the image"
+  example: "Quit rate per step: mine 1.2% (6/487), smelt 3.1% (14/451), forge 7.5% (31/412), anvil 33% (3/9, hatched, low n); CI whiskers on every bar; corner tag 'jev a/8f3k'"
+  cost: S
+  depends_on: "per-step player counts (session-stitching)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no chart surface; this one cannot produce a bar without its n"
+
+- id: askdata-28
+  title: "REFUSE: push alerts on anomalies computed over unreviewed fields; accept alerts only on fields with golden accuracy at least 90%, n at least 50 per side, and CI-separated change"
+  level: L3
+  cell: {part: query-path, query-path: push-alert-no-query, mechanism-type: push-instead-of-pull, delivery-surface: alert, uncertainty-policy: abstain-below-coverage, latency-tier: push-no-query}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction'"
+  situation: "A proposal to alert the studio whenever any field's weekly rate moves by more than 20% relative"
+  consequence: "Low willingness: an alert is an unrequested wrong number, and the previous product's anomaly alerts fired 40 times a week with 2 real findings; studios muted the channel in 3 weeks and the mute took the digest with it. Alerts are acceptable only under the three gates, which yields about 1 alert per studio per month"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md has no push path; spec.md: 'Answering a studio's question must be fast' is pull-shaped"
+  proposed: "Alert rule table with the three gates hard-coded; each alert carries n per side, CI, the field's golden accuracy and a permalink; a studio can set the relative-change threshold but not lower the gates"
+  shallow: false
+  mechanism: "Weekly job evaluates template plans per field; candidates pass through gates (accuracy, n, CI separation using a two-proportion interval); survivors post to the alert channel with the answer object"
+  example: "Forge quit rate moved from 7.5% (31/412) to 14% (28/200) after build 1.4; quit_at_step golden accuracy 94%; both n over 50; intervals separate; alert posted with permalink. A 'confused' rate move on 12 players is not alerted"
+  cost: S
+  depends_on: "field accuracy (askdata-8) and templates (askdata-4)"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no push path; the gated alert adds one without adding ungated numbers"
+
+- id: askdata-29
+  title: "Counterfactual refusal: 'would players have stayed if the forge step were skippable' returns 'cannot be answered from recordings' plus the observed contrast between players who skipped (if any) and those who did not"
+  level: L4
+  cell: {part: chatbot-ui, question-type: counterfactual-why-not, query-path: automatic-contrast-cohort-diff, uncertainty-policy: abstain-below-coverage, evidence-form: contrast-vs-baseline, user-segment: game-designer}
+  object: "spec.md stage 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "A designer asks a what-if question about a mechanic that exists in no recorded session"
+  consequence: "The model will answer a counterfactual with a plausible paragraph; a typed refusal with the nearest observed contrast (players who used the skip button on the smelt step quit 2% vs 5%) is the only honest number and it is one the designer can act on"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md and memo.md describe observation of recorded sessions only"
+  proposed: "Planner detects counterfactual phrasing (would, if we, had we) and routes to a refusal card; the card runs the contrast query for the nearest existing field pair and prints it with n and CI"
+  shallow: false
+  mechanism: "Question-type classifier with a counterfactual label; a fixed card template; the contrast query is a precomputed-aggregate over existing fields only"
+  example: "'Would players stay if the forge were skippable?' Chat: 'Cannot be answered from recordings; no session had a skippable forge. Observed: on the smelt step, which has a skip button, 2 of 103 who skipped quit later in the tutorial (1.9%) vs 17 of 348 who did not (4.9%), CI overlap. This is not causal.'"
+  cost: S
+  depends_on: "nothing"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Same inability as the fixed table, but the refusal is explicit and ships the nearest real contrast"
+
+- id: askdata-30
+  title: "Two-field disclosure: when a question maps to two fields with overlapping meaning (confused vs frustrated, stall vs idle), both numbers are shown with their definitions; the model never picks one silently"
+  level: L4
+  cell: {part: query-path, mechanism-type: narrow-or-clarify-the-question, uncertainty-policy: ask-clarifying-question, question-type: how-felt, representation: timestamped-observation-log, evidence-form: count-with-denominator}
+  object: "memo.md item 1: 'friction signal, sentiment' as separate observation fields"
+  situation: "A studio asks 'how many players were annoyed at the forge' and the planner scores sentiment=frustrated at 0.81 and friction=stall at 0.74"
+  consequence: "Picking the top-scored field gives one number for a question that has two defensible answers; showing both (frustrated 8 of 45 speakers; stalled 31 of 412) with definitions makes the studio choose, and the choice is logged as a correction for the template learner"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md item 1: 'friction signal, sentiment'"
+  proposed: "Planner rule: when the top two field-match scores are within 0.15, emit a dual-answer object; renderer shows two rows with definition and denominator; clicking one logs the mapping"
+  shallow: false
+  mechanism: "Field matcher returns scored candidates; a margin rule triggers the dual answer; both plans run (closed-field SQL, under 2 s combined)"
+  example: "'How many players were annoyed at the forge?' Answer: 'Two readings: frustrated (speech sentiment): 8 of 45 speakers (18%). Stalled (no progress 45 s or more, screen): 31 of 412 who reached it (7.5%). Which did you mean?'"
+  cost: S
+  depends_on: "a field matcher with scores in the planner"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has one option per question; near-synonym fields collapse into whichever option the question writer chose"
+
+- id: askdata-31
+  title: "Extraction disagreement flag: every closed field is extracted twice at ingestion (two prompts or two models); rows where they disagree are stored as 'disputed' and excluded from counts, with the disputed count printed in the answer"
+  level: L4
+  cell: {part: ingestion-extraction, extraction-trigger: on-low-confidence-or-disagreement, evidence-form: confidence-score, representation: timestamped-observation-log, uncertainty-policy: answer-with-ci-and-n, modality: speech-transcript}
+  object: "memo.md item 1: 'closed enum fields and short open fields'"
+  situation: "Two extraction passes disagree on whether P0402's 90-second menu pause at the forge is a quit or a pause"
+  consequence: "One pass gives a number with hidden noise; two passes give a number plus a visible disagreement count ('31 quit, 6 disputed'), and ingestion cost is explicitly not a concern in spec.md so the second pass is free in the owner's terms"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern'; memo.md item 1: 'closed enum fields'"
+  proposed: "Ingestion writes value_a, value_b, agreed flag per closed field; aggregates count agreed rows; disputed rows go to a review queue; the answer prints 'k disputed, excluded' and the trust page shows per-field agreement rate"
+  shallow: false
+  mechanism: "Two independent extraction passes per video with different prompts; a comparator writes agreement; the semantic layer defines counts over agreed rows only; disputed rows are listed in the evidence drawer under a separate tab"
+  example: "'How many quit at the forge?' Answer: '31 of 412 (7.5%); 6 further players are disputed between quit and pause and are excluded; agreement on this field is 97%.' The 6 disputed clips are one click away"
+  cost: M
+  depends_on: "ingestion extraction producing per-field values (memo item 1)"
+  part: ingestion-extraction
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "The fixed table's single pass has no agreement signal, so noise and signal are both 'the answer'"

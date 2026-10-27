@@ -1,0 +1,713 @@
+- id: convo-1
+  title: "Universal primitives computed for every session regardless of game: speech rate, silence ratio, sentiment at 10 s windows, frustration-lexicon hits, screen-change rate; stored as time series, never as answers"
+  level: L4
+  cell: {part: ingestion-extraction, representation: time-series-signals-affect-pace-silence, granularity: session, extraction-trigger: at-ingestion, modality: speech-transcript, reuse-scope-of-extraction: universal-primitives, mechanism-type: precompute-more}
+  object: "spec.md item 3: 'The transcript is run through a fixed set of questions with options, written per game target'"
+  situation: "A new game is onboarded with zero questions written; 200 sessions of 2 h each arrive in week 1"
+  consequence: "With the fixed table nothing is extracted until someone writes questions; with primitives, 6 signals per 10 s window (720 windows per 2 h session) exist for every session on day 0 and any later question over pace, silence or affect is a window-range aggregate"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  proposed: "primitives(session_id, t_window_start_ms, words_per_min, silence_ratio, sentiment_-1_1, frustration_hits, screen_changes, screen_class) with one row per 10 s; computed by one pass at ingestion; the same 6 columns for every tenant"
+  shallow: false
+  mechanism: "Ingestion adds a game-agnostic pass after transcription that emits 6 numeric signals per 10 s window into a primitives table; no game vocabulary needed; trackers and questions are layered on top later"
+  example: "Studio asks 'do players go quiet before quitting the tutorial?' Query: mean silence_ratio in the 120 s before session end for the 83 of 500 players whose last screen_class was tutorial, vs the 417 who passed; result 0.71 vs 0.34 in 400 ms"
+  cost: M
+  depends_on: nothing
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Pace, silence and affect questions are answerable on day 0 for any game without a single hand-written question"
+
+- id: convo-2
+  title: "Customer-defined tracker object (name, 1-50 keywords, 1-10 semantic phrases, 3-20 positive example spans, scope filter) applied retroactively over the whole session history overnight, producing tracker_hits rows"
+  level: L4
+  cell: {part: question-generation, representation: customer-defined-trackers-over-universal-primitives, question-origin: studio-written-at-runtime, extraction-trigger: on-studio-tracker-defined, latency-tier: overnight, reuse-scope-of-extraction: customer-defined-on-top-of-universal, schema-evolution: lazy-backfill-on-demand}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "A designer wants to know how often players complain about the crafting menu during the tutorial; no field exists"
+  consequence: "Under the memo the planner has to turn a free-text question into an extraction prompt; a tracker makes the studio write the definition once (keywords + phrases + examples), and the next morning 500 sessions carry hit rows the chatbot counts in SQL"
+  p_typical: 0.30
+  grounded: quote
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  proposed: "trackers(tracker_id, tenant_id, name, keywords[], phrases[], positive_spans[], negative_spans[], scope_json, version); tracker_hits(session_id, tracker_id, tracker_version, t_start_ms, t_end_ms, score, modality, evidence_span_id)"
+  shallow: false
+  mechanism: "Question generation moves from JEV writing MCQs to the studio defining trackers in a form; a nightly job scores every utterance and OCR window against every active tracker (keyword match OR cosine>0.80 to phrases/examples) and appends hits"
+  example: "Tracker 'crafting-menu-confusion' = keywords [craft, recipe, workbench] + phrases ['where do I craft', 'how do I make'] + 6 example spans; next day: 142 of 500 players hit it, 97 of those inside tutorial step 4, median first hit at 00:11:30"
+  cost: M
+  depends_on: "convo-1 primitives table (for scope filters by screen_class) and an utterance/OCR window table with embeddings"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The studio adds a question without a JEV release; the answer covers all history, not only videos ingested after the question existed"
+
+- id: convo-3
+  title: "Smart tracker trained from 5-20 labelled example spans: centroid of example embeddings plus a learned threshold, validated on 50 sampled hits before activation"
+  level: L4
+  cell: {part: question-generation, question-origin: few-shot-tracker-from-examples, representation: transcript-chunks-with-embeddings, extraction-trigger: on-studio-tracker-defined, uncertainty-policy: abstain-below-coverage, evidence-form: confidence-score, user-segment: ux-researcher}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "A UX researcher cannot write keywords for 'player is confused but does not say so' but can point at 8 transcript spans where it happened"
+  consequence: "Keyword and ontology trackers miss it; a few-shot tracker fires on spans within cosine 0.78 of the example centroid, and the activation gate (precision on 50 sampled hits >= 0.70, judged by the researcher in 10 min) stops a bad tracker polluting counts"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "spec.md: 'Transcript loses visual information' and 'most of what is in the video and transcript is never captured'"
+  proposed: "smart_tracker = {examples: [span_id...], centroid: vec, threshold: float, precision_at_activation: float, labelled_by, labelled_at}; activation blocked while precision_at_activation < 0.70"
+  shallow: false
+  mechanism: "Tracker definition accepts example spans instead of words; the system embeds them with the same model used for utterance windows, computes a centroid and picks the threshold that keeps 90% of examples; a 50-hit review screen measures precision before the tracker goes live"
+  example: "8 spans like 'wait, what am I supposed to do here... hm' -> tracker 'silent-confusion'; review shows 38/50 correct (0.76); activated; 214 of 500 players hit it in tutorial step 2, vs 41 in step 1"
+  cost: M
+  depends_on: "utterance window embeddings stored at ingestion (convo-12 or equivalent)"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Questions nobody can phrase as words or options become countable; precision is known before the number is shown"
+
+- id: convo-4
+  title: "Genre tracker library: 30 seed trackers per genre (survival-crafting, match-3, extraction-shooter, roguelike) shared across tenants, with a per-game vocabulary map for proper nouns"
+  level: L3
+  cell: {part: question-generation, question-origin: genre-template-library, reuse-scope-of-extraction: genre-shared, representation: common-data-model-with-per-game-vocab-map, moment-in-journey: game-onboarding-day-0, scope: cross-game, tenancy-and-deployment: shared-multi-tenant}
+  object: "A-frame.yaml assumption: 'studios are many and each game differs, so per-game hand-written questions do not scale'"
+  situation: "Studio 14 onboards a survival-crafting game; studios 3, 7 and 9 in the same genre already refined 30 trackers over 6 months"
+  consequence: "Instead of starting at zero, studio 14 gets 30 trackers on day 0 where only the vocab map (their word for 'workbench', their tutorial step names) is filled in; the first 200 sessions ingest with 30 trackers live"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  proposed: "tracker_library(genre, tracker_template_id, keywords_with_placeholders, phrases, min_tenants_contributed); game_vocab_map(game_id, placeholder, local_term); a tracker template enters the library when 3+ tenants in the genre keep a near-identical tracker active for 60 days"
+  shallow: false
+  mechanism: "Question generation gets a third source beside ontology and studio-written: a genre library of tracker templates whose keywords contain placeholders like {craft_station}, filled from a 20-row vocab map at onboarding"
+  example: "Template 'cannot-find-{craft_station}' with {craft_station}=anvil: day-0 answer to 'how many tutorial players could not find the anvil' = 61 of 200 (30%), with the genre median 18% shown beside it"
+  cost: M
+  depends_on: "convo-2 tracker object; at least 3 tenants per genre; a tenancy model that allows sharing definitions (convo-30)"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "30 questions exist on day 0 for a new game, written and debugged by other studios, not by JEV per game"
+
+- id: convo-5
+  title: "tracker_hits as the primary query store: one row per (session, tracker, span) with score and evidence span, so every studio question is a COUNT/GROUP BY over hits joined to the step timeline"
+  level: L4
+  cell: {part: store, representation: customer-defined-trackers-over-universal-primitives, query-path: sql-over-closed-fields, granularity: variable-length-moment-or-episode, latency-tier: under-2s, evidence-form: count-with-denominator}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast'"
+  situation: "Studio asks 'what share of players who hit crafting-menu-confusion in step 4 quit before step 5?'"
+  consequence: "The per-video MCQ table cannot join a free-text concept to the step timeline; the hits table answers with SELECT COUNT(DISTINCT player_id) FILTER (quit_step<5) / COUNT(DISTINCT player_id) FROM tracker_hits JOIN step_timeline in under 1 s"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists'"
+  proposed: "tracker_hits(session_id, player_id, game_id, build_id, tracker_id, tracker_version, t_start_ms, t_end_ms, score, modality, evidence_span_id) with an index on (game_id, tracker_id, build_id); step_timeline(session_id, step_id, t_enter_ms, t_exit_ms, outcome)"
+  shallow: false
+  mechanism: "The answers table is replaced by a long, narrow hits table; the chatbot's planner compiles questions into SQL over hits x step_timeline x primitives, not into reads of transcripts"
+  example: "Forge Quest: 142 players hit crafting-menu-confusion in step 4; 58 of them (41%) never entered step 5, vs 12% of the 358 who did not hit it; both numbers with denominators in one query"
+  cost: S
+  depends_on: "convo-2 trackers; a step timeline from screen state (convo-16 or the memo's observation log)"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Any tracker can be crossed with any step or build in SQL; the fixed table only knows the questions it was built with"
+
+- id: convo-6
+  title: "Moments: variable-length episodes cut by change-points in the primitives (silence>20 s after >120 wpm, sentiment drop >0.6 in 30 s, 3+ screen changes in 10 s), each with a 1-line auto title and a 30 s clip"
+  level: L4
+  cell: {part: ingestion-extraction, representation: hierarchical-temporal-summary-tree, granularity: variable-length-moment-or-episode, mechanism-type: auto-discover-without-question, question-type: what-surprised-unknown-unknowns, evidence-form: clip, extraction-trigger: at-ingestion}
+  object: "memo.md item 1: 'timestamped atomic observations across all videos of a session'"
+  situation: "A producer asks 'what happened to the players who quit the tutorial?' and no tracker or question matches"
+  consequence: "Atomic observations are too fine to read across 83 quitters; moments give 8-15 titled episodes per hour, so the model reads 83 x ~6 = 500 titles, not 83 transcripts, and returns 'in 51 of 83, the last moment is a silence-after-fail episode in step 4'"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'Long multi-video sessions' listed as a known problem"
+  proposed: "moments(session_id, t_start_ms, t_end_ms, trigger_rule, title_text, sentiment_mean, step_id, clip_url); 8-15 per hour; title generated by the model from the moment's transcript + 2 frames"
+  shallow: false
+  mechanism: "Ingestion adds a change-point detector over the 10 s primitive rows, cuts episodes at detected boundaries and asks the model to title each one; moments are the unit the query path reads when no closed field applies"
+  example: "Studio asks why tutorial churn rose; the chatbot groups the last moment of 83 quitters by title: 'repeated failed craft attempt' 31, 'inventory full, no prompt' 14, 'silence on map screen' 9"
+  cost: M
+  depends_on: "convo-1 primitives; video frames at ingestion (A-frame assumption)"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Unknown-unknown questions get a read over 500 titles instead of 500 transcripts; the fixed table has nothing for a question it did not anticipate"
+
+- id: convo-7
+  title: "Topic segmentation of each session into labelled segments (boundary when embedding drift of a 60 s window exceeds 0.35) used as a query granularity: 'in which segments do players say X'"
+  level: L4
+  cell: {part: session-stitching, representation: per-step-summary, granularity: variable-length-moment-or-episode, query-path: sql-over-closed-fields, modality: speech-transcript, subject-domain: core-loop}
+  object: "spec.md item 1: 'each video is capped at 15 minutes, so one session is many videos'"
+  situation: "A tutorial runs 25 min across videos 1-2 and the mid-game crafting loop runs 90 min across videos 3-8; the studio asks whether 'what do I do now' complaints are a tutorial problem or a mid-game problem"
+  consequence: "Per-video rows cannot locate a complaint relative to game phase; segments labelled by the model ('tutorial: movement', 'base building', 'first raid') give a phase column every hit row can be grouped by"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'Long multi-video sessions'; 'how videos of one session are linked' unspecified"
+  proposed: "segments(session_id, t_start_ms, t_end_ms, label_text, label_class in {tutorial, core-loop, menu, social, other}, confidence); segments cross video boundaries because they are cut on the session clock"
+  shallow: false
+  mechanism: "Session stitching concatenates all videos on one clock, then a topic segmenter cuts 10-25 segments per 2 h session; every tracker hit and moment gets a segment_id at write time"
+  example: "'what do I do now' tracker: 212 hits total; 171 in segments labelled tutorial (steps 3-5), 41 in core-loop; the chatbot answers 'mostly tutorial, concentrated in step 4' in one grouped query"
+  cost: M
+  depends_on: "a session clock across videos (session-stitching) and utterance embeddings"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Answers are located in game phase rather than in 15-minute video slots that mean nothing to the studio"
+
+- id: convo-8
+  title: "Session scorecard: 10 yes/no/NA items per session derived from tracker hits and step timeline (reached step 5, asked for help, hit error dialog, 3+ failed attempts in one step...), aggregated into a per-build dashboard"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: dashboard-standard-report, representation: question-answer-bank-precomputed, granularity: session, user-segment: producer-exec, question-type: what-to-fix-first-prioritised, evidence-form: coverage-statement-n-of-m-players}
+  object: "spec.md constraint: 'Answering a studio's question must be fast'"
+  situation: "A producer opens JEV on Monday wanting the tutorial state of play for build 1.4 without typing a question"
+  consequence: "The chatbot needs a question; a scorecard shows 10 rates with n/N for the 212 sessions of build 1.4 vs the 500 of 1.3 before any question is typed, and each cell links to the sessions behind it"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  proposed: "scorecard_items(game_id, item_id, rule_sql, label); scorecard_values(session_id, item_id, value in {yes,no,na}, evidence_ids[]); dashboard = rate per item per build with N and a sparkline over builds"
+  shallow: false
+  mechanism: "A rules layer compiles each scorecard item into SQL over tracker_hits and step_timeline; values are materialised nightly per session; the dashboard reads the materialised table"
+  example: "Build 1.4: 'reached step 5' 71% (151/212) vs 61% (305/500) in 1.3; 'asked for help in step 4' 18% vs 31%; the producer sees the fix worked without asking"
+  cost: S
+  depends_on: "convo-5 hits table and a step timeline"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The 10 most-asked tutorial questions are never typed; they are on screen with denominators and build comparison"
+
+- id: convo-9
+  title: "Tracker backfill queue with per-tenant nightly budget (max 40 GPU-min per tenant per night, newest sessions first) and a live coverage counter 'applied to 312 of 500 sessions'"
+  level: L4
+  cell: {part: cost-governance, extraction-trigger: scheduled-batch, latency-tier: overnight, uncertainty-policy: abstain-below-coverage, user-segment: jev-internal-ops, evidence-form: coverage-statement-n-of-m-players, schema-evolution: lazy-backfill-on-demand}
+  object: "memo.md item 2: 'a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Three studios each define 12 trackers on the same Tuesday; one has 4,000 sessions of history"
+  consequence: "An unbounded batch job delays everyone; a per-tenant budget processes the 4,000-session tenant over 5 nights, and the chatbot shows partial counts with 'applied to 1,600 of 4,000 sessions (newest first)' rather than a wrong total"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (true per session, not true for repeated full-history passes per tracker)"
+  proposed: "backfill_jobs(tracker_id, tenant_id, sessions_total, sessions_done, gpu_min_used, priority, started_at); planner reads sessions_done/sessions_total and prefixes every count with coverage while < 100%"
+  shallow: false
+  mechanism: "Cost governance adds a scheduler between tracker creation and the hits table; it orders work by tenant budget and recency and exposes coverage to the query path"
+  example: "Tracker 'anvil-not-found' created Tuesday; Wednesday the studio asks the rate; answer: '29% (46 of 160 sessions scanned, 160 of 500 total, newest first); full history by Friday'"
+  cost: S
+  depends_on: "convo-2 trackers"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "New questions over large histories are costed and partially answered the next day instead of either blocking the pipeline or returning a count over an unstated subset"
+
+- id: convo-10
+  title: "Tracker precision/recall audit: 50 random hits and 50 random non-hits per tracker labelled by the studio in a 10-minute review screen; precision and recall estimate shown beside every tracker count"
+  level: L4
+  cell: {part: evaluation, evidence-form: recall-estimate, uncertainty-policy: answer-with-ci-and-n, mechanism-type: human-in-the-loop, user-segment: studio-analyst, question-origin: studio-written-at-runtime}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "The chatbot reports 'crafting-menu-confusion: 142 of 500 players' and an analyst asks how much to trust it"
+  consequence: "Without a per-tracker audit the number has no error bar; with it the row reads '142 of 500 (precision 0.82 on 50 labelled hits, recall ~0.6 from 50 sampled non-hits, so true prevalence likely 160-230)'"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  proposed: "tracker_audits(tracker_id, tracker_version, sampled_hit_ids[50], sampled_nonhit_ids[50], labels[], precision, recall_est, labelled_by, labelled_at); re-audit required when tracker_version changes"
+  shallow: false
+  mechanism: "Evaluation moves from a JEV-side gold set per game to a per-tracker sample the studio labels in-product; the two numbers are stored and the chatbot prints them with every count"
+  example: "Analyst labels 100 spans in 9 minutes; tracker shows precision 0.82, recall 0.61; the chatbot's '142 of 500' becomes '142 of 500 detected; corrected estimate 190 +/- 35'"
+  cost: S
+  depends_on: "convo-2 trackers and convo-5 hits table"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Every count carries a measured precision and recall; the fixed table's MCQ answers have no per-question accuracy anyone can see"
+
+- id: convo-11
+  title: "Tracker drafts mined from the failed-query log: when the planner finds no closed field for a question, it drafts a tracker (keywords and phrases extracted from the question text) and offers it to the asker with one click to activate"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, question-origin: failed-query-log, mechanism-type: narrow-or-clarify-the-question, user-segment: game-designer, moment-in-journey: first-studio-question, extraction-trigger: on-first-question}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "A designer types 'how many players complained the dodge roll felt sluggish in the tutorial?' and nothing matches"
+  consequence: "The memo would silently run an extraction with a prompt the designer never sees; a draft tracker shows them keywords [dodge, roll, sluggish, slow, laggy], 3 phrases and asks for 3 example spans, so the definition is visible and editable before the overnight run"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md: 'Their questions are not known in advance'"
+  proposed: "failed_queries(query_id, tenant_id, text, asked_at, draft_tracker_id); draft_trackers created with status=proposed; activation posts to the backfill queue (convo-9)"
+  shallow: false
+  mechanism: "The query planner's no-match branch writes a draft tracker instead of an ad-hoc extraction; the chatbot replies with the draft and a 'run overnight' button; the question log becomes the tracker backlog"
+  example: "Day 1 reply: 'No field covers dodge-roll feel. Draft tracker: keywords [dodge, roll, sluggish, slow, laggy, unresponsive], phrases [...]. Add 3 examples and run? Results tomorrow 08:00.' Day 2: 37 of 500 players, 29 of them in tutorial step 2"
+  cost: S
+  depends_on: "convo-2 trackers, convo-9 backfill queue"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Every unanswerable question becomes a named, inspectable question the next day instead of a lost chat turn"
+
+- id: convo-12
+  title: "Keyword fast path: inverted full-text index over transcript and OCR text so a new tracker's keyword half answers in under 2 s on all history, while its semantic half backfills overnight"
+  level: L4
+  cell: {part: query-path, representation: inverted-full-text-index, query-path: full-text-keyword-search, latency-tier: under-2s, mechanism-type: approximate-then-refine, build-or-buy: open-source-component, modality: on-screen-text-ocr}
+  object: "spec.md constraint: 'Answering a studio's question must be fast'"
+  situation: "Tracker 'anvil-not-found' is created at 14:00; the studio wants a number in the same meeting"
+  consequence: "Waiting for the semantic backfill gives nothing until tomorrow; the keyword part runs as a phrase query over an inverted index (OpenSearch/Tantivy/pg_trgm) and returns 'keyword-only: 38 of 500 players, semantic refinement tomorrow'"
+  p_typical: 0.10
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow'"
+  proposed: "Index documents = utterance windows (30 s) and OCR windows (10 s) with fields session_id, player_id, t_start_ms, text, modality; query = tracker.keywords OR-ed as phrase queries; result grouped by player"
+  shallow: false
+  mechanism: "Query path gains a second tier between closed-field SQL and overnight backfill: keyword search over an index built once at ingestion; results are labelled keyword-only until the semantic pass replaces them"
+  example: "14:02 reply: 'Keyword matches for anvil|workbench|craft station near \"where\" or \"can't find\": 38 of 500 players, 31 in tutorial step 4 (keyword-only; semantic pass tonight)'. Next day: 61 of 500"
+  cost: S
+  depends_on: "transcript and OCR text at ingestion"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A brand-new question gets a first number in seconds on all history; the fixed table returns nothing for a question it lacks"
+
+- id: convo-13
+  title: "Sentiment curve stored at 1 value per 10 s so 'how did players feel at step 3' is a window-range average joined to step_timeline, never a re-extraction"
+  level: L4
+  cell: {part: store, representation: time-series-signals-affect-pace-silence, question-type: how-felt, granularity: tutorial-step, query-path: precomputed-aggregate, subject-domain: player-affect, modality: speech-transcript}
+  object: "memo.md item 1: observation fields include 'sentiment'"
+  situation: "Studio asks 'which tutorial step frustrates players most?' for 500 players"
+  consequence: "Sentiment as a per-observation enum answers only where an observation was written; a continuous curve answers for every second of every step: mean sentiment per step with N windows, lowest step named"
+  p_typical: 0.10
+  grounded: quote
+  evidence: "memo.md item 1: 'friction signal, sentiment'"
+  proposed: "primitives.sentiment_-1_1 (convo-1) joined on t_window_start_ms BETWEEN step.t_enter_ms AND step.t_exit_ms; GROUP BY step_id"
+  shallow: false
+  mechanism: "Store keeps affect as a dense time series rather than sparse observations; the step timeline provides the windows; the chatbot answers 'how felt' questions as aggregates"
+  example: "Step 4 'craft a pickaxe': mean sentiment -0.31 over 9,840 windows from 500 players; step 2: +0.12; the chatbot names step 4 and offers the 5 lowest-sentiment clips"
+  cost: S
+  depends_on: "convo-1 primitives, step timeline"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "'How felt' is answerable per step and per second rather than as one MCQ option per video"
+
+- id: convo-14
+  title: "Silence as a first-class signal: every span with no speech for >15 s is a row labelled by screen class (menu, loading, gameplay, map, dialog) so 'players go quiet on the map screen' is countable"
+  level: L4
+  cell: {part: ingestion-extraction, modality: silence-or-absence-of-speech, representation: time-series-signals-affect-pace-silence, granularity: variable-length-moment-or-episode, question-type: when, subject-domain: ui-navigation, extraction-trigger: at-ingestion}
+  object: "spec.md item 2: 'the transcript alone is not enough; what is on screen is largely lost'"
+  situation: "Players who quit the tutorial often say nothing in the last 2 minutes; a transcript-only pipeline has no rows there at all"
+  consequence: "The fixed table sees an empty transcript and answers 'no issue'; silence rows show 61 of 83 quitters had a >45 s silence on the map screen in step 3, vs 9% of completers"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'Transcript loses visual information'"
+  proposed: "silence_spans(session_id, t_start_ms, t_end_ms, duration_ms, screen_class, step_id, preceded_by_fail bool); screen_class from a 5-class frame classifier at 1 fps"
+  shallow: false
+  mechanism: "Ingestion emits silence spans from the speech activity detector and labels them with the screen classifier; they sit beside tracker hits as a queryable table"
+  example: "Studio asks when players get stuck in the tutorial; answer: 'longest silences cluster on the map screen in step 3 (median 52 s for quitters vs 11 s for completers, n=83 vs 417)'"
+  cost: M
+  depends_on: "frame pipeline with a screen classifier (A-frame assumption: frames available)"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Captures the quietest players, who are often the churners, and whom a transcript-driven MCQ cannot see"
+
+- id: convo-15
+  title: "Tracker-rate alert: weekly hit rate per tracker per build; a Slack message fires when a rate moves more than 2x with n>=30 sessions on each side"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, delivery-surface: alert, mechanism-type: push-instead-of-pull, query-path: push-alert-no-query, latency-tier: push-no-query, question-type: did-the-fix-work-pre-post, scope: build-version-pair}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "Build 1.5 ships on Thursday; nobody asks the chatbot about tutorial step 4 until the following Wednesday"
+  consequence: "Pull-only means six days of a regression unnoticed; the alert posts Monday 'crafting-menu-confusion in step 4: 31% (1.4, n=212) -> 68% (1.5, n=44)' with 3 clips"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'Their questions are not known in advance'"
+  proposed: "alert_rules(tracker_id, metric=rate_per_session, compare=previous_build, threshold_ratio=2.0, min_n=30, channel=slack_webhook); evaluated nightly after backfill"
+  shallow: false
+  mechanism: "A scheduled job compares tracker rates across the two newest builds and pushes to a studio Slack channel; the chatbot is not involved"
+  example: "Monday 08:00 Slack: 'Tutorial alert: anvil-not-found rose from 12% to 41% between build 1.4 (n=212) and 1.5 (n=44). Clips: 3 links. Ask JEV for details.'"
+  cost: S
+  depends_on: "convo-5 hits table with build_id, build-version metadata at ingestion"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A regression is reported without anyone asking; the fixed table only answers questions typed after the fact"
+
+- id: convo-16
+  title: "On-screen-text trackers: tracker keywords may target OCR text (error dialog strings, 'Game Over', quest titles) at 1 fps, so 'how many tutorial players saw the inventory-full dialog' is a tracker like any other"
+  level: L4
+  cell: {part: frame-pipeline, modality: on-screen-text-ocr, representation: customer-defined-trackers-over-universal-primitives, question-type: technical-issue-bug-perf, subject-domain: ui-navigation, extraction-trigger: on-studio-tracker-defined}
+  object: "spec.md item 2: 'what is on screen is largely lost'"
+  situation: "The studio suspects an 'Inventory full' dialog in tutorial step 4 is where players quit; players rarely read it aloud"
+  consequence: "Speech trackers miss a dialog nobody reads out; an OCR tracker with keyword 'Inventory full' and modality=screen finds the dialog in 119 of 500 sessions, 47 of them within 90 s of session end"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'Transcript loses visual information'"
+  proposed: "ocr_windows(session_id, t_ms, text, bbox, screen_class) at 1 fps deduplicated on unchanged text; tracker.modalities in {speech, screen, both}; hits rows carry modality"
+  shallow: false
+  mechanism: "Frame pipeline runs OCR at 1 fps and stores deduplicated text windows; the tracker scorer runs over OCR windows exactly as over utterances"
+  example: "Tracker 'inventory-full-dialog' (screen keyword): 119 of 500 players; of the 83 tutorial quitters, 47 saw it in their last 90 s; the chatbot shows 5 clips of the dialog appearing"
+  cost: M
+  depends_on: "frame pipeline at ingestion"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Counts what the screen showed, which the transcript-based MCQ never saw"
+
+- id: convo-17
+  title: "Negative examples and exclusion phrases on every tracker (3-10 'not this' spans) so game vocabulary collisions ('stuck' as the stuck-landing mechanic) do not inflate counts"
+  level: L4
+  cell: {part: question-generation, question-origin: few-shot-tracker-from-examples, representation: customer-defined-trackers-over-universal-primitives, evidence-form: confidence-score, subject-domain: onboarding-tutorial, user-segment: game-designer}
+  object: "memo.md item 3: 'pruned by the game target'"
+  situation: "A tracker 'player-stuck' uses keyword 'stuck'; the game has a mechanic called 'stuck landing' the tutorial teaches in step 2"
+  consequence: "Without exclusions the tracker reports 88% of tutorial players 'stuck' in step 2; with 5 negative spans and exclusion phrase 'stuck landing' the rate drops to 23%, which the audit (convo-10) confirms at precision 0.84"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios' (each game has its own vocabulary; spec does not address collisions)"
+  proposed: "trackers.negative_spans[], trackers.exclusion_phrases[]; scorer subtracts cosine to the negative centroid and drops any window containing an exclusion phrase"
+  shallow: false
+  mechanism: "Tracker definition gains a negative side; the scoring function is score = sim(positive) - sim(negative), thresholded; exclusion phrases are hard filters"
+  example: "Designer adds 'stuck landing', 'nailed the stuck' as exclusions; the step-2 rate falls from 88% to 23% of 500; the step-4 rate (real confusion) stays at 31%"
+  cost: XS
+  depends_on: "convo-2 or convo-3 trackers"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Game-specific vocabulary collisions are fixed by the studio in a minute, not by JEV rewriting an MCQ"
+
+- id: convo-18
+  title: "Genre benchmark beside every tracker rate: the tenant's rate vs the anonymised median of >=5 other tenants in the same genre using the same library tracker"
+  level: L4
+  cell: {part: tenancy-access-control, scope: cross-studio-benchmark, evidence-form: contrast-vs-baseline, tenancy-and-deployment: shared-multi-tenant, user-segment: publisher-portfolio, question-origin: genre-template-library, reuse-scope-of-extraction: genre-shared}
+  object: "A-frame.yaml assumption: 'studios are many and each game differs'"
+  situation: "A studio sees 'anvil-not-found: 30% of tutorial players' and asks whether that is bad"
+  consequence: "Alone the number has no reference; with the benchmark the row reads '30% (you) vs 18% (genre median, 7 games, k-anonymised)', which turns a count into a priority"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial'"
+  proposed: "benchmark(genre, tracker_template_id, median_rate, p25, p75, n_tenants) recomputed monthly, published only when n_tenants>=5; per-tenant opt-in flag"
+  shallow: false
+  mechanism: "Tenancy layer allows aggregate-only sharing of library tracker rates; the chatbot appends the benchmark line to any count on a library tracker"
+  example: "'30% of your 500 tutorial players could not find the anvil; genre median 18% (7 survival-crafting games). Your rate is in the worst quartile.'"
+  cost: M
+  depends_on: "convo-4 library, >=5 opted-in tenants per genre, legal review of aggregate sharing"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Answers 'is this normal?', which no single-game table can"
+
+- id: convo-19
+  title: "REFUSE per-game hand-written MCQ sets as the primary question source; keep them only as 10-20 seed trackers written at onboarding"
+  level: L3
+  cell: {part: question-generation, question-origin: hand-written-per-game, representation: fixed-mcq-answers, reuse-scope-of-extraction: game-specific, moment-in-journey: game-onboarding-day-0, effort: XS-days}
+  object: "spec.md item 3: 'a fixed set of questions with options, written per game target'"
+  situation: "The owner proposes to grow the fixed MCQ set from ~20 to ~200 per game to cover more questions"
+  consequence: "Low willingness: across thousands of tenants, hand-written question sets per tenant never kept up; the vendors that scaled had the tenant define trackers and JEV-style staff curate a library. 200 MCQs per game x 50 games = 10,000 questions JEV maintains; a studio changes its tutorial and 40 of them go stale"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  proposed: "Cap hand-written questions at 20 per game, written during the onboarding interview (convo-33), stored as trackers with the same audit and versioning as any other"
+  shallow: false
+  mechanism: "Question generation drops the per-game MCQ file; the 20 seed questions become trackers in the same table as studio-written and library trackers"
+  example: "Forge Quest onboarding: 15 seed trackers in 1 hour; 3 months later the studio has 58 trackers, 43 of which they wrote or adopted from the library; none required a JEV release"
+  cost: XS
+  depends_on: nothing
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "It is the fixed table, demoted to a seed set; the gain is that it stops being the ceiling"
+
+- id: convo-20
+  title: "REFUSE map-reduce over raw transcripts at query time for 'ask anything'; allow it only as a sampled read of at most 25 sessions, labelled as a sample, with a tracker draft as the follow-up"
+  level: L3
+  cell: {part: query-path, query-path: sampled-map-reduce-with-ci, representation: raw-transcript-only, latency-tier: under-30s, uncertainty-policy: give-range-then-refine, mechanism-type: approximate-then-refine}
+  object: "spec.md item 4: 'Reading 500 transcripts per question was too slow and too much data'"
+  situation: "A planner falls back to reading all 500 transcripts for a question with no field or tracker"
+  consequence: "Low willingness: at tenant scale this path never met a latency budget and gave counts that differed by 10-20% between two runs of the same question, which destroyed trust. Bounded alternative: read 25 random sessions in <30 s, report 'about 6 of 25 (24%, 95% CI 11-43%)', and offer the tracker draft (convo-11) for an exact number tomorrow"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'Answering a studio's question must be fast'"
+  proposed: "sample_read(question, n=25, seed) returns count, proportion, Wilson 95% CI, 3 quotes with timestamps; result is never cached as a field"
+  shallow: false
+  mechanism: "Query path replaces unbounded full-corpus reads with a fixed-n sampled read whose output is a range plus a tracker draft; exact counts only come from the hits table"
+  example: "'Do tutorial players mention the camera?' -> 'In a sample of 25 of 500 sessions: 6 did (24%, CI 11-43%). Quotes: [3]. Want an exact count? Activate the drafted tracker camera-complaint for tomorrow.'"
+  cost: S
+  depends_on: "session-level transcript access, convo-11 drafts"
+  part: query
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Gives a bounded, honest first answer to a question the table cannot answer, instead of either silence or a slow unstable count"
+
+- id: convo-21
+  title: "REFUSE ontology-generated questions as the primary question origin; use the ontology only to propose library tracker templates that a human curator approves"
+  level: L3
+  cell: {part: question-generation, question-origin: ontology-generated, mechanism-type: human-in-the-loop, user-segment: jev-internal-ops, question-type: what-happened, reuse-scope-of-extraction: genre-shared}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "The ontology yields 12 entities x 8 dimensions x 5 outcomes = 480 candidate questions for one game"
+  consequence: "Low willingness: tenants ignored machine-generated trackers at a rate of roughly 9 in 10 and used the ones they or a peer wrote; 480 extracted fields per session that nobody queries cost ingestion money and clutter the planner's field choice. Keep the ontology, but route its output into a curator queue that promotes at most 10 templates per genre per month"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md item 3: 'coverage of real studio questions' (coverage of what studios ask, not of the ontology, is the test)"
+  proposed: "ontology_candidates(genre, entity, dimension, outcome, draft_tracker, curator_decision, decided_at); only approved candidates enter tracker_library (convo-4)"
+  shallow: false
+  mechanism: "The ontology becomes a candidate generator feeding the library, not a field generator feeding ingestion; a JEV curator approves per genre"
+  example: "Of 480 candidates for survival-crafting, the curator approves 9 (e.g. 'craft_station x locate x fail'); these become library templates; the other 471 are never extracted"
+  cost: S
+  depends_on: "convo-4 library"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Questions that survive are ones studios use, not ones a grammar can produce"
+
+- id: convo-22
+  title: "Per-tenant semantic cache of answered questions: embed each question; if cosine >= 0.92 to a prior question and no hits rows for that tracker changed since, return the prior answer with its date and n"
+  level: L4
+  cell: {part: query-path, query-path: semantic-cache-similar-question, representation: question-answer-bank-precomputed, latency-tier: sub-200ms-cached, mechanism-type: reuse-or-cache-prior-work, tenancy-and-deployment: logically-isolated-per-studio}
+  object: "spec.md constraint: 'Answering a studio's question must be fast'"
+  situation: "Five people at one studio ask variants of 'how many quit in tutorial step 4' in the same week"
+  consequence: "Each variant re-plans and re-queries; the cache returns the stored answer in 150 ms with 'answered 2026-10-21 over 500 sessions; 12 new sessions since; refresh?'"
+  p_typical: 0.10
+  grounded: inferred
+  evidence: "spec.md: 'a question over, say, 500 players is fast'"
+  proposed: "answer_cache(tenant_id, question_embedding, question_text, plan_sql, answer_json, sessions_n, max_session_ingested_at, trackers_used[]); invalidated when any used tracker's version or backfill coverage changes"
+  shallow: false
+  mechanism: "Query path checks a per-tenant vector cache before planning; staleness is computed from session ingest watermark and tracker versions, never shared across tenants"
+  example: "'what % of players dropped at the pickaxe step' matches 'tutorial step 4 quit rate' at 0.94; reply in 150 ms: '41% (205 of 500) as of Oct 21; 12 sessions arrived since. Refresh (2 s)?'"
+  cost: S
+  depends_on: "convo-5 hits table with coverage metadata (convo-9)"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Repeat questions cost nothing and say how stale they are"
+
+- id: convo-23
+  title: "Trackers as code: every tracker is a versioned YAML document with a CRUD API, so a studio data engineer manages 60 trackers in git and CI, not in a form"
+  level: L4
+  cell: {part: export-integration, delivery-surface: api-sdk, user-segment: studio-data-engineer, schema-evolution: append-only-versioned-fields, question-origin: studio-written-at-runtime, build-or-buy: build-in-house}
+  object: "spec.md: 'who at the studio asks and what they ask' is unspecified"
+  situation: "A studio with a data team wants tutorial trackers reviewed in a pull request alongside their telemetry event definitions"
+  consequence: "A form-only tracker editor keeps the definitions outside the studio's review process; a YAML schema plus PUT /trackers/{id} lets them diff v3 vs v4 of 'anvil-not-found' and tie the change to build 1.5"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Unspecified ... who at the studio asks'"
+  proposed: "tracker.yaml = {name, version, keywords, phrases, examples: [{session_id, t_start_ms, t_end_ms}], negatives, scope: {steps: [], builds: []}, modalities}; API: GET/PUT/DELETE /v1/trackers, POST /v1/trackers/{id}/backfill"
+  shallow: false
+  mechanism: "Question generation exposes trackers as a documented file format and REST resource; the in-app form writes the same documents"
+  example: "PR 'tighten anvil tracker for build 1.5' changes 2 exclusion phrases; CI calls the API; the chatbot's answers show 'tracker v4 since Oct 24' on every count"
+  cost: S
+  depends_on: "convo-2 trackers, convo-27 versioning"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Studios own and review their questions as artifacts; the fixed table's questions live only in JEV's code"
+
+- id: convo-24
+  title: "Nightly export of tracker_hits, primitives and step_timeline as Parquet to the studio's bucket or a warehouse share, so the studio joins JEV signals with its own telemetry"
+  level: L4
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, tenancy-and-deployment: federated-query-into-studio-warehouse, modality: game-telemetry, user-segment: studio-data-engineer, scope: all-players, latency-tier: overnight}
+  object: "spec.md: 'whether game telemetry is joined' is unspecified"
+  situation: "Studio has D1 retention per player in Snowflake and wants 'did players who hit anvil-not-found in the tutorial return on day 1?'"
+  consequence: "The chatbot cannot see retention; a nightly Parquet drop keyed by player_id (the studio's id, mapped at ingestion) lets them run the join themselves: 38% D1 for hitters vs 57% for non-hitters"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'Unspecified ... whether game telemetry is joined'"
+  proposed: "s3://studio-bucket/jev/{game_id}/dt=YYYY-MM-DD/{tracker_hits,primitives,step_timeline,moments}.parquet; schema versioned in a _schema.json; Snowflake Secure Share as the alternative"
+  shallow: false
+  mechanism: "Export stage writes the same tables the chatbot reads, partitioned by day; player_id uses the studio's identifier captured at session upload"
+  example: "Studio analyst runs one SQL in Snowflake joining jev.tracker_hits to retention: tutorial anvil-not-found hitters retain at 38% D1 vs 57%, n=142 vs 358"
+  cost: S
+  depends_on: "a studio player_id on every session; convo-5 hits table"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Questions that need the studio's own data (retention, spend) become possible; the chatbot alone can never answer them"
+
+- id: convo-25
+  title: "Engagement ratio primitive: seconds of speech during gameplay screens vs during menu/map screens per step, the analogue of talk ratio, stored per session per step"
+  level: L4
+  cell: {part: ingestion-extraction, representation: time-series-signals-affect-pace-silence, modality: screen-state-classifier, granularity: tutorial-step, question-type: compare-steps, reuse-scope-of-extraction: universal-primitives, subject-domain: onboarding-tutorial}
+  object: "memo.md item 1: 'Video frames add screen state and on-screen text'"
+  situation: "Studio asks which tutorial step loses attention, with no tracker for 'attention'"
+  consequence: "No MCQ measures attention; the ratio (speech-while-playing / speech-while-in-menus) per step, available for all 500 players on day 0, shows step 4 at 0.6 vs 2.1 for other steps, pointing at menu time in step 4"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'what is on screen is largely lost'"
+  proposed: "step_engagement(session_id, step_id, speech_s_gameplay, speech_s_menu, silence_s_gameplay, silence_s_menu, ratio) computed nightly from primitives x step_timeline"
+  shallow: false
+  mechanism: "Ingestion joins the speech activity track with the screen class track per step and materialises 4 durations and a ratio; universal across games"
+  example: "Step 4: players spend 61% of time in menus and speak 0.6x as much there; step 2: 18% in menus; the chatbot names step 4's crafting menu as the attention sink"
+  cost: S
+  depends_on: "convo-1 primitives with screen_class; step timeline"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A universal, game-agnostic step comparison that needs no question to be written"
+
+- id: convo-26
+  title: "Coverage gate on every tracker count: rates are shown only when >=30 sessions have been scanned under the current tracker version; below that the chatbot prints 'insufficient coverage (n=12 of 500)' and the clips"
+  level: L4
+  cell: {part: chatbot-ui, uncertainty-policy: abstain-below-coverage, evidence-form: coverage-statement-n-of-m-players, extraction-trigger: on-cohort-size-threshold, user-segment: studio-analyst, query-path: sql-over-closed-fields}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "A tracker was edited an hour ago; only 12 sessions have been rescored; the chatbot is asked for the rate"
+  consequence: "An instant aggregate over 12 of 500 reads as a rate over 500; the gate replaces the percentage with the coverage line and the 12 sessions' clips so the asker sees evidence, not a false rate"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md item 2 (no coverage condition stated)"
+  proposed: "planner rule: if sessions_scanned_current_version < 30 then answer_form = clips + coverage; else rate with n/N; threshold configurable per tenant"
+  shallow: false
+  mechanism: "Chatbot UI reads backfill coverage (convo-9) and tracker version per count and switches answer form below the threshold"
+  example: "'anvil-not-found rate?' -> 'Tracker v4 has scanned 12 of 500 sessions; 4 hits so far (clips: 4). Full coverage by 08:00 tomorrow.'"
+  cost: XS
+  depends_on: "convo-9 coverage counters, convo-27 versioning"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Never prints a rate over an unstated subset; the fixed table has no notion of partial coverage"
+
+- id: convo-27
+  title: "Tracker versioning: an edit creates version n+1, hits from version n are retained with their version, and every chart shows a vertical break line at the edit date"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: append-only-versioned-fields, evidence-form: extraction-provenance-model-and-schema-version, question-type: compare-versions, extraction-trigger: on-new-field-added, user-segment: studio-analyst}
+  object: "memo.md item 2: 'cached as a new field'"
+  situation: "A designer tightens 'player-stuck' on Oct 20 (convo-17); the weekly chart since Oct 1 is read on Oct 27"
+  consequence: "Without versions the chart shows a fake 65-point drop on Oct 20 and someone claims the build fixed it; with versions the chart breaks at Oct 20, labels 'v2 definition', and the pre-Oct-20 points are recomputed under v2 once backfill finishes"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md item 2 implies fields are added over time; no versioning stated"
+  proposed: "tracker_versions(tracker_id, version, definition_json, created_by, created_at, reason); tracker_hits.tracker_version; charts annotate version boundaries; default view = latest version, backfilled"
+  shallow: false
+  mechanism: "Schema evolution for trackers is append-only; the hits table never loses old-version rows; the UI shows the break"
+  example: "Chart 'player-stuck in tutorial, weekly': 88%, 87%, 89% | v2 Oct 20 | 23%, 24%; the hover reads 'definition changed; earlier weeks recomputed under v2: 22%, 24%, 23%'"
+  cost: S
+  depends_on: "convo-2 trackers, convo-9 backfill"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Edited questions do not rewrite history silently; trends survive definition changes"
+
+- id: convo-28
+  title: "Query by example clip: the studio marks a 20-40 s clip as a positive example; the system embeds its transcript window and its frames and returns the k nearest clips across all players as a tracker seed"
+  level: L4
+  cell: {part: query-path, query-path: query-by-example-clip, representation: clip-or-frame-embeddings, modality: frame-embeddings, evidence-form: clip-montage-n-examples, question-origin: few-shot-tracker-from-examples, latency-tier: under-30s}
+  object: "spec.md item 2: 'what is on screen is largely lost'"
+  situation: "A designer watches one session, sees a player spin the camera for 15 s on the crafting screen, and wants to know how common that is; there are no words for it in the transcript"
+  consequence: "Text trackers cannot be written for a visual behaviour; a clip query returns 40 nearest clips in 8 s, the designer confirms 29, and those 29 become examples for a smart tracker (convo-3) that runs overnight"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'Transcript loses visual information'"
+  proposed: "clip_embeddings(session_id, t_start_ms, t_end_ms, frame_vec[768], text_vec[768]) at 10 s stride; ANN index (HNSW) per tenant; query = weighted sum of the two similarities"
+  shallow: false
+  mechanism: "Frame pipeline stores a clip embedding every 10 s; the query path gains an ANN lookup from a chosen clip; results feed tracker creation"
+  example: "Marked clip at 00:14:20 in session 2231 -> 40 neighbours; 29 confirmed; smart tracker 'camera-spin-on-crafting' next day: 97 of 500 players, 71 inside tutorial step 4"
+  cost: M
+  depends_on: "frame embeddings at ingestion (A-frame assumption: frames available), convo-3"
+  part: query
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Visual behaviours become questions without anyone writing words for them"
+
+- id: convo-29
+  title: "Weekly tutorial digest: the 10 trackers with the largest week-over-week rate change, each with n/N and 3 clips, emailed Monday 08:00; no question typed"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: scheduled-digest, mechanism-type: push-instead-of-pull, moment-in-journey: steady-state-weekly, user-segment: producer-exec, evidence-form: clip-montage-n-examples, subject-domain: onboarding-tutorial}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "A producer never opens the chatbot but reads email"
+  consequence: "The chatbot's value depends on someone asking; the digest delivers the 10 largest movers of the week, with denominators and clips, and a one-click 'ask JEV about this' link that pre-fills the question"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md: 'Their questions are not known in advance'"
+  proposed: "digest_job(tenant_id, schedule=Mon 08:00 local, top_k=10, min_n=30, sections=[movers_up, movers_down, new_trackers]); each row = tracker, rate_this_week n/N, rate_last_week n/N, 3 clip links"
+  shallow: false
+  mechanism: "A scheduled report over the hits table replaces the first question of the week; links deep-link into the chatbot with the question pre-filled"
+  example: "Mon 08:00 email: '1. anvil-not-found (tutorial step 4): 41% (18/44) vs 12% (25/212) last week. Clips: 3. 2. silent-confusion step 2: 19% vs 31% ...'"
+  cost: S
+  depends_on: "convo-5 hits, convo-9 coverage"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The week's news arrives without a question; the fixed table only speaks when spoken to"
+
+- id: convo-30
+  title: "Tenancy split: tracker definitions and genre templates are shareable; hits, transcripts, clips and embeddings are per-tenant partitions with tenant_id in every primary key and row-level policy"
+  level: L4
+  cell: {part: tenancy-access-control, tenancy-and-deployment: logically-isolated-per-studio, reuse-scope-of-extraction: genre-shared, user-segment: jev-internal-ops, build-or-buy: managed-cloud-service, scope: cross-studio-benchmark}
+  object: "A-frame.yaml: 'studios are many'"
+  situation: "Studio 3's security questionnaire asks whether any other studio's model or query can touch its footage"
+  consequence: "A fully shared store blocks the deal; strict single-tenant blocks the library (convo-4). The split answers both: definitions (text) are shared in a library table, every data table has tenant_id first in its key and a row-level security policy, and benchmarks (convo-18) are aggregate-only with k>=5"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios' (no tenancy stated)"
+  proposed: "All data tables keyed (tenant_id, game_id, session_id, ...); RLS policy tenant_id = current_setting('jev.tenant'); tracker_library has no tenant_id; shared embedding model, per-tenant ANN index"
+  shallow: false
+  mechanism: "Store and access control separate the two kinds of reuse: definitions move across tenants, data never does"
+  example: "Studio 3 adopts library tracker 'cannot-find-{craft_station}' written originally by studio 7; studio 3's hits live only in its partition; the benchmark line shows the genre median, never studio 7's number"
+  cost: M
+  depends_on: nothing
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Makes cross-studio question reuse possible without cross-studio data exposure"
+
+- id: convo-31
+  title: "Churn-risk score per session: logistic regression over 12 universal primitives and tracker hits in the tutorial window, trained on the studio's own 'did not return D1' label from exported telemetry"
+  level: L4
+  cell: {part: evaluation, representation: behaviour-archetype-clusters, question-type: who-are-the-churners-segment-discovery, modality: game-telemetry, mechanism-type: auto-discover-without-question, question-origin: kpi-backward-from-studio-metrics, scope: all-players}
+  object: "spec.md item 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "The studio wants to know which observable tutorial behaviours predict not returning, without naming them"
+  consequence: "MCQ answers only report what was asked; a model over primitives (silence ratio in step 3, menu time in step 4, sentiment slope, anvil-not-found hit, failed-craft count) reports the 5 strongest coefficients with AUC, turning 'who churns' into a ranked list of behaviours"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial'"
+  proposed: "churn_model(game_id, features[12], coef[], auc, trained_on_n, label_source); churn_score(session_id, score, top3_contributing_features) refreshed weekly"
+  shallow: false
+  mechanism: "Evaluation layer trains a small per-game model on the studio's retention label (via convo-24) and the primitives; the chatbot answers 'why do they churn' with coefficients and n"
+  example: "Forge Quest, n=1,240 sessions with D1 label: AUC 0.74; top features: silence >45 s on map in step 3 (OR 2.9), anvil-not-found hit (OR 2.3), menu time in step 4 >60% (OR 1.8)"
+  cost: M
+  depends_on: "convo-1 primitives, convo-5 hits, a retention label from the studio (convo-24 reverse direction)"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Finds the churn behaviours nobody wrote a question for and ranks them by effect size"
+
+- id: convo-32
+  title: "Review queue for tracker hits scored 0.45-0.60: 20 per tracker per day shown to the studio for a yes/no, with labels appended to the tracker's examples and the threshold re-fit weekly"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, extraction-trigger: on-low-confidence-or-disagreement, mechanism-type: human-in-the-loop, question-origin: learned-from-studio-usage, user-segment: ux-researcher, uncertainty-policy: escalate-to-human-analyst}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: "Smart tracker 'silent-confusion' has 1,100 hits, 310 of them in the 0.45-0.60 band"
+  consequence: "Counting the band inflates the rate; dropping it loses recall; a 20-a-day review resolves 140 per week, each label becomes a positive or negative example, and the re-fit moves the threshold from 0.52 to 0.56 with precision from 0.76 to 0.84"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md item 3"
+  proposed: "review_queue(tracker_id, hit_id, score, assigned_to, label, labelled_at); weekly job re-fits threshold on all labels; band hits excluded from counts until labelled, shown as 'pending n'"
+  shallow: false
+  mechanism: "Feedback loop sends mid-score hits to a small daily review; labels feed the smart tracker; counts exclude unlabelled band hits and say so"
+  example: "'silent-confusion in step 2: 214 of 500 confirmed + 61 pending review'; after 3 weeks of 20/day the pending count is 0 and precision is 0.84"
+  cost: S
+  depends_on: "convo-3 smart trackers"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Accuracy improves with use; the fixed table's accuracy is whatever it was on day 1"
+
+- id: convo-33
+  title: "Onboarding protocol: a 45-minute interview with the studio produces 10-15 seed trackers and a 20-term vocab map; a pilot over the first 20 sessions, with the studio labelling 50 hits, precedes any dashboard"
+  level: L3
+  cell: {part: collection-protocol, question-origin: onboarding-interview-with-studio, moment-in-journey: game-onboarding-day-0, question-origin: pilot-sessions-then-freeze, user-segment: game-designer, effort: XS-days, reuse-scope-of-extraction: customer-defined-on-top-of-universal}
+  object: "spec.md item 3: 'written per game target'"
+  situation: "A new studio signs; the current process has JEV staff write MCQs from the game's store page"
+  consequence: "JEV-written questions miss the studio's real worries; the interview script ('name the 3 places you think players quit', 'what do players call the crafting station', 'show me a session you found painful') yields trackers the studio recognises, and the 20-session pilot catches vocabulary collisions (convo-17) before 500 sessions are scored"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'Their questions are not known in advance'"
+  proposed: "onboarding_checklist(game_id): interview_done, seed_trackers>=10, vocab_terms>=20, pilot_sessions=20, pilot_labels>=50, precision_all_trackers>=0.70, then status=live"
+  shallow: false
+  mechanism: "Collection protocol front-loads a short structured interview and a pilot gate; the output is tracker rows and vocab rows, not an MCQ file"
+  example: "Forge Quest interview: 12 seed trackers, 'anvil' mapped to {craft_station}; pilot finds 'stuck' collision; fixed; go-live day 4 with 12 trackers at precision >=0.72"
+  cost: XS
+  depends_on: "convo-2 trackers, convo-4 vocab map"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The first questions come from the studio's own worries and are validated on 20 sessions before anyone sees a number"
+
+- id: convo-34
+  title: "Untracked-speech clustering: utterance windows with no tracker hit and sentiment below -0.3 are clustered weekly (HDBSCAN over embeddings); the 5 largest clusters are shown with a label and 3 quotes as 'what you are not tracking'"
+  level: L4
+  cell: {part: question-generation, question-origin: emergent-topic-clustering-of-player-speech, mechanism-type: auto-discover-without-question, question-type: what-surprised-unknown-unknowns, extraction-trigger: scheduled-batch, evidence-form: quote-with-timestamp, delivery-surface: dashboard-standard-report}
+  object: "spec.md: 'most of what is in the video and transcript is never captured'"
+  situation: "The studio has 40 trackers; players in the tutorial keep complaining about something none of them cover"
+  consequence: "Tracker-only systems are blind to their own gaps; the weekly cluster panel shows 'cluster A, 212 windows from 96 players, mostly step 3: \"the arrow keeps pointing at the wrong place\"', with a one-click 'make tracker' that seeds examples from the cluster"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'The question set is small'"
+  proposed: "untracked_clusters(tenant_id, week, cluster_id, n_windows, n_players, top_step, label_text, sample_span_ids[3]); run weekly over windows with zero hits and sentiment < -0.3"
+  shallow: false
+  mechanism: "Question generation gains a data-induced source: negative, untracked speech is clustered and surfaced; each cluster is one click from becoming a smart tracker (convo-3)"
+  example: "Week 6 panel: cluster 'arrow points wrong way' 96 of 500 players, step 3; studio makes a tracker; next week's rate 19%, and a fix ships in build 1.6"
+  cost: M
+  depends_on: "utterance embeddings, convo-5 hits (to define 'untracked'), convo-1 sentiment"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Shows what the question set is missing, every week, from the data itself"

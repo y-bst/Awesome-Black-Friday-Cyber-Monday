@@ -1,0 +1,734 @@
+- id: clinical-1
+  title: "Standard concept vocabulary (concept table: concept_id, domain in {step, mechanic, ui_element, affect, friction, churn_event, input_action}, standard_flag) plus a per-game source_to_concept_map (game_id, source_value, target_concept_id, similarity, mapped_by); unmapped source values get concept_id 0"
+  level: L4
+  cell: {part: store, representation: common-data-model-with-per-game-vocab-map, granularity: game, reuse-scope-of-extraction: universal-primitives, schema-evolution: deprecate-and-migrate, question-origin: genre-template-library, tenancy-and-deployment: logically-isolated-per-studio}
+  object: "spec.md item 3: 'a fixed set of questions with options, written per game target'; memo.md item 3: 'ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "A new studio onboards 'Harbor Tycoon' whose tutorial steps are named tut_01_place_dock, tut_02_hire_crew, tut_03_first_shipment; the existing question bank was written for a different game's step names"
+  consequence: "Every question written against standard concepts (concept 4001 'tutorial_step', 4120 'inventory_panel', 7002 'frustration') runs on Harbor Tycoon the day its 3 step names and 40 UI names are mapped; without the map every game needs its own question bank and cross-game questions are impossible"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'; A-frame assumption 'per-game hand-written questions do not scale'"
+  proposed: "Tables concept(concept_id, concept_name, domain_id, standard_flag, valid_start, valid_end), concept_relationship(concept_id_1, concept_id_2, relationship in {maps_to, is_a, part_of}), source_to_concept_map(game_id, source_vocabulary, source_value, target_concept_id, similarity, mapped_by, valid_start_build, valid_end_build); JEV ops owns the vocabulary, each studio owns its map"
+  shallow: false
+  mechanism: "Store: every observation row carries a concept_id from the shared vocabulary plus the game's own source_value; question generation and the query planner address concepts only; a game is onboarded by filling its map, not by writing questions"
+  example: "Studio asks 'what share of players abandon during the step where they first move a unit?' Planner resolves 'first move a unit' to concept 4015 'first_unit_move_step', the map says that is tut_02_hire_crew in Harbor Tycoon, and SELECT COUNT(DISTINCT player_id) ... WHERE step_concept_id=4015 AND churn_within_step runs over 500 players in 200 ms"
+  cost: M
+  depends_on: "nothing (the vocabulary starts with the concepts the current fixed questions already imply)"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "One question bank serves every game; a question written once is answerable on a game onboarded tomorrow"
+
+- id: clinical-2
+  title: "Every observation row stores source_value (the game's literal name or on-screen string) next to concept_id, and the chatbot shows both in evidence so a studio can audit a mapping from inside an answer"
+  level: L4
+  cell: {part: store, representation: common-data-model-with-per-game-vocab-map, evidence-form: extraction-provenance-model-and-schema-version, modality: on-screen-text-ocr, user-segment: studio-data-engineer, granularity: utterance}
+  object: "memo.md item 1: 'closed enum fields and short open fields'"
+  situation: "The step counter reads 'Dock placement (1/3)' on screen in 480 of 500 players; the mapping assigned it to concept 4001 'tutorial_step' with step_index 1, but one studio designer insists dock placement is pre-tutorial"
+  consequence: "Because the row keeps source_value='Dock placement (1/3)' the designer sees exactly which on-screen string was counted and can re-map it; a row holding only concept_id 4001 cannot be argued with and the studio stops trusting the number"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md unspecified: 'What a transcript contains (speech only, on-screen text, events)'"
+  proposed: "observation(..., concept_id, source_value VARCHAR(200), source_vocabulary in {ocr, speech, telemetry, classifier}, source_concept_id); chatbot evidence card prints 'counted as tutorial_step (from on-screen text: Dock placement (1/3))'"
+  shallow: false
+  mechanism: "Store: two columns per coded field (source_value, concept_id) instead of one; chatbot UI: evidence card renders the source string under the concept name"
+  example: "Answer: '22% of 500 players (110) left during tutorial_step 2. Counted as tutorial_step 2 from on-screen strings: Hire crew (2/3) in 497 players, Crew hiring (2/3) in 3 players (older build)'"
+  cost: S
+  depends_on: "clinical-1 vocabulary and map"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A disputed count can be traced to the literal strings that produced it"
+
+- id: clinical-3
+  title: "concept_ancestor table (ancestor_concept_id, descendant_concept_id, min_levels) so a question about 'any inventory UI element' rolls up 11 child concepts in one join without the question author listing them"
+  level: L4
+  cell: {part: query-path, query-path: sql-over-closed-fields, representation: entity-relation-graph, question-type: how-many, granularity: game-system, latency-tier: under-2s}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Studio asks 'how many players opened anything in the inventory while stuck on step 3?'; the game has 11 inventory-related UI elements (bag, crafting tab, sort button, 8 item slots) each mapped to its own concept"
+  consequence: "Planner joins concept_ancestor WHERE ancestor_concept_id=4120 'inventory_panel' and gets all 11 descendants; without hierarchy the planner either lists the 11 by hand (misses the 12th added next build) or falls back to LLM reading"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md item 3: 'ontology (entities x dimensions x outcomes)' (an ontology with no stated hierarchy table or roll-up query)"
+  proposed: "concept_ancestor rebuilt nightly from concept_relationship is_a/part_of edges; planner rewrites 'any X' and 'X or its parts' into an ancestor join; max depth 6"
+  shallow: false
+  mechanism: "Query path: a transitive-closure table over the concept hierarchy; planner rule: a plural or 'any' noun phrase that resolves to a non-leaf concept expands via ancestor join"
+  example: "SELECT COUNT(DISTINCT o.player_id) FROM observation o JOIN concept_ancestor a ON o.concept_id=a.descendant_concept_id WHERE a.ancestor_concept_id=4120 AND o.step_concept_id=4003 AND o.friction_era_id IS NOT NULL returns 143 of 500 in 180 ms"
+  cost: S
+  depends_on: "clinical-1 concept_relationship edges"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Questions at any level of the hierarchy (one button, one panel, all UI) answer from the same rows"
+
+- id: clinical-4
+  title: "Semi-automatic vocabulary mapper at game onboarding: ingest the design doc, patch notes and 20 pilot sessions, propose a map for every observed source value with a similarity score, studio confirms in a mapping screen; release gate is unmapped rate under 5% of observed source values by frequency"
+  level: L4
+  cell: {part: collection-protocol, moment-in-journey: game-onboarding-day-0, question-origin: design-doc-patch-notes-store-page-derived, mechanism-type: human-in-the-loop, reuse-scope-of-extraction: universal-primitives, effort: S-weeks, user-segment: game-designer}
+  object: "spec.md item 3: 'written per game target'; A-frame assumption 'studios are many and each game differs'"
+  situation: "Harbor Tycoon onboarding: 20 pilot sessions surface 312 distinct on-screen strings, 3 step names and 44 UI element labels; the studio designer has 2 hours"
+  consequence: "Mapper auto-maps 260 strings at similarity above 0.85, queues 52 for the designer sorted by frequency, and reports unmapped frequency share 3.1% after review; the studio is live on the whole question bank in one afternoon instead of a question-writing project"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern'; memo.md item 3 does not say how a new game's names reach the ontology"
+  proposed: "mapping_candidates(game_id, source_value, freq, top3 [(concept_id, similarity)], status in {auto, confirmed, rejected, unmapped}); screen lists candidates by freq desc; gate: sum(freq of unmapped)/sum(freq) < 0.05 before chatbot opens"
+  shallow: false
+  mechanism: "Collection protocol: a mapping task runs before question answering; proposals come from embedding similarity of source strings and design-doc context to concept names and synonyms; a human confirms; the gate is a measured coverage number"
+  example: "Designer confirms 'Hire crew (2/3)' -> tutorial_step index 2 and 'Dockhand' -> npc_guide; rejects 'Skip' -> tutorial_skip_button (it is a dialogue skip) and maps it to dialogue_skip_button; first question 'where do players churn in the tutorial?' answers the same day"
+  cost: M
+  depends_on: "clinical-1"
+  part: collection-protocol
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Onboarding effort is a 2-hour mapping review, not writing and tuning a per-game question set"
+
+- id: clinical-5
+  title: "Cohort (phenotype) definition as a versioned JSON artifact: entry event, inclusion rules with time windows, exit rule, era collapse gap; materialised into cohort(cohort_definition_id, player_id, start_t_ms, end_t_ms); 'tutorial churner v3' is one such artifact"
+  level: L4
+  cell: {part: question-generation, representation: step-funnel-state-machine-per-player, query-path: sql-over-closed-fields, question-type: find-players-who, scope: query-time-defined-cohort, schema-evolution: append-only-versioned-fields, user-segment: studio-analyst}
+  object: "spec.md item 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Three studio analysts each ask 'how many players churned in the tutorial' over one week and get 18%, 23% and 31% because each run of the chatbot interprets 'churned' differently (quit to menu, idle 5 min, recording ended)"
+  consequence: "With a named definition tutorial_churner_v3 = {entry: tutorial_step index>=1; exit: first of (quit_to_menu, idle_era>=300s, recording_end) before tutorial_complete; exclude: recording_end within 60s of session start} the number is 23% of 500 every time, and the chatbot names the definition and version in the answer"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it' (no definition of churn given)"
+  proposed: "cohort_definition(id, name, version, json, author, created_at, validation_id); cohort(cohort_definition_id, player_id, start_t_ms, end_t_ms) rebuilt on ingestion; chatbot answers '23% (115/500) by tutorial_churner v3'"
+  shallow: false
+  mechanism: "Question generation: cohort logic becomes a first-class, shareable, versioned object evaluated by a fixed engine over the observation log; natural-language 'churners' resolves to the studio's pinned default definition"
+  example: "Studio asks 'which players churned at the crew-hiring step?' Planner runs cohort tutorial_churner_v3 intersected with step_concept_id=4002 at end_t_ms; returns 41 player_ids with end timestamps in 250 ms"
+  cost: M
+  depends_on: "clinical-1; an observation log with session-clock timestamps"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "'Churn' means one reproducible thing per studio, shareable across games, instead of whatever the per-video question happened to encode"
+
+- id: clinical-6
+  title: "Every cohort definition ships a validation record: positive predictive value and sensitivity from hand review of 50 sampled members and 50 sampled non-members, with 95% CI; the chatbot prints 'PPV 0.92 (46/50), sensitivity 0.84' under any count that uses the cohort"
+  level: L4
+  cell: {part: evaluation, evidence-form: recall-estimate, uncertainty-policy: answer-with-ci-and-n, question-type: how-many, mechanism-type: human-in-the-loop, user-segment: ux-researcher}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "A producer is about to re-cut the crew-hiring step on the strength of '23% churn there'; the cohort was defined last week and never checked"
+  consequence: "The validation record says PPV 0.92 and sensitivity 0.84 on 100 reviewed sessions, so the true rate is bounded roughly 21% to 27%; a cohort with PPV under 0.80 is flagged 'not validated for decisions' and the producer sees that flag before re-cutting"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  proposed: "cohort_validation(cohort_definition_id, version, n_pos_reviewed, tp, n_neg_reviewed, fn, ppv, sens, ci_low, ci_high, reviewer, reviewed_at); release gate PPV >= 0.80 for a 'validated' badge"
+  shallow: false
+  mechanism: "Evaluation: a stratified sample (50 in, 50 out) per cohort version is reviewed by a human with the clips; the resulting PPV and sensitivity are stored with the definition and surfaced with every answer that uses it"
+  example: "Answer: '23% (115/500) are tutorial_churner v3. Validation: PPV 0.92 (46/50), sensitivity 0.84 (42/50), reviewed 2026-10-20 by JEV ops. Adjusted estimate 21-27%.'"
+  cost: M
+  depends_on: "clinical-5; a clip viewer for reviewers"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A number arrives with a measured error, not an implied certainty"
+
+- id: clinical-7
+  title: "Phenotype library of 30 genre-shared cohort definitions written against standard concepts (tutorial_churner, skip_tutorial, stuck_on_step_over_3min, never_opened_map, rage_quit_after_death_streak) that run unchanged on any game once its map exists, giving day-0 answers"
+  level: L3
+  cell: {part: question-generation, question-origin: genre-template-library, reuse-scope-of-extraction: genre-shared, moment-in-journey: game-onboarding-day-0, mechanism-type: transfer-across-games, subject-domain: onboarding-tutorial, scope: cross-game}
+  object: "memo.md item 3: 'Questions are generated from an ontology ... pruned by the game target'"
+  situation: "Harbor Tycoon's first 120 sessions land on day 1; the studio has not asked anything yet"
+  consequence: "All 30 library cohorts are materialised overnight; the first studio question 'anything odd in the tutorial?' is answered from library counts (stuck_on_step_over_3min: 38% at step 2 vs library median 12% across 9 city-builders) rather than by a fresh extraction"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "A-frame assumption: 'studios are many and each game differs, so per-game hand-written questions do not scale'"
+  proposed: "library/ folder of cohort JSON with genre tags, each with a validation record on at least 2 games; nightly job materialises every library cohort for every game whose map covers its concepts; coverage flag per (game, cohort)"
+  shallow: false
+  mechanism: "Question generation: reusable cohort logic replaces per-game questions; the library grows when a studio-written definition is generalised by replacing game-specific concepts with standard ones"
+  example: "Day 1 report for Harbor Tycoon: 30 cohort prevalences with denominators; 'stuck_on_step_over_3min at tutorial_step 2: 46/120 (38%)' is the top outlier against genre medians"
+  cost: M
+  depends_on: "clinical-1, clinical-5"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Thirty validated questions answer on a new game before anyone writes one"
+
+- id: clinical-8
+  title: "Source-span constraint: an extracted value is rejected at write time unless it carries evidence_span (video_id, t_start_ms, t_end_ms, modality, verbatim snippet up to 200 chars or frame_id); fields that cannot cite a span are stored as 'not documented', never as a value"
+  level: L4
+  cell: {part: ingestion-extraction, evidence-form: quote-with-timestamp, representation: timestamped-observation-log, uncertainty-policy: abstain-below-coverage, modality: speech-transcript, extraction-trigger: at-ingestion}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "The extractor answers 'player felt confused by the crew UI: yes' for a session where the player never speaks and the crew UI is never on screen"
+  consequence: "The write is rejected (no span); the field is 'not documented' for that session and drops out of the denominator; the studio never sees a hallucinated yes, and the unsupported-claim rate becomes measurable (rejected writes per 1,000)"
+  p_typical: 0.22
+  grounded: quote
+  evidence: "memo.md item 1: 'quote with timestamp as evidence'"
+  proposed: "CHECK constraint evidence_span IS NOT NULL on observation and field_values; rejected_writes(extractor_run_id, field_id, reason) counted per run; span verified by re-reading the cited window (snippet must appear in transcript within the window, frame_id must exist)"
+  shallow: false
+  mechanism: "Ingestion: abstraction-with-evidence as a hard schema rule, with mechanical verification that the cited span exists and contains the snippet"
+  example: "Field 'quit_reason' for player 217: value 'controls' with span (video 3, 00:04:12-00:04:19, speech, 'these controls are so clunky I am done'); for player 304 the extractor cites a window with no speech, the write is rejected and quit_reason='not documented'"
+  cost: S
+  depends_on: nothing
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "No answer exists in the store that cannot be shown on a timeline"
+
+- id: clinical-9
+  title: "Transcript term table modelled on NOTE_NLP: one row per detected concept mention with offset, lexical_variant, negated, temporality in {present, past, hypothetical}, certainty, experiencer in {player, npc, stream_chat, other_voice}; prevalence queries exclude negated and hypothetical by default"
+  level: L4
+  cell: {part: ingestion-extraction, modality: speech-transcript, question-type: prevalence-of-quoted-sentiment, representation: timestamped-observation-log, granularity: utterance, query-path: sql-over-closed-fields}
+  object: "spec.md item 2: 'Each video is converted to a transcript'"
+  situation: "Studio asks 'how many players said they would quit?'; transcripts contain 'I'd quit if this took any longer' (hypothetical), 'I didn't quit, I just alt-tabbed' (negated), and the NPC guide's line 'don't quit now!' (experiencer npc)"
+  consequence: "A keyword count returns 212 of 500; the term table with modifiers returns 37 present, non-negated, player-experienced mentions, and the chatbot can show the 175 excluded with their modifier"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md unspecified: 'What a transcript contains'"
+  proposed: "transcript_term(session_id, video_id, t_ms, offset_start, offset_end, lexical_variant, concept_id, negated BOOL, temporality, certainty in {certain, probable, possible}, experiencer, extractor_run_id); default query filter negated=false AND temporality='present' AND experiencer='player'"
+  shallow: false
+  mechanism: "Ingestion: a concept-mention pass over the transcript writes modifiers alongside the mention; the query planner applies the default modifier filter and reports what it excluded"
+  example: "Answer: '37 of 500 players (7.4%) stated an intent to quit during the tutorial. Excluded: 118 hypothetical, 31 negated, 26 spoken by the NPC guide.' with 37 timestamped quotes"
+  cost: M
+  depends_on: "speaker attribution between player voice and in-game voice lines"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "'How many said X' stops counting people who said not-X or if-X"
+
+- id: clinical-10
+  title: "Inter-abstractor agreement as the release gate: 10% of sessions are double-extracted by two independent configurations (different model or prompt), Cohen's kappa per field; a field is exposed to the chatbot only when kappa is at least 0.70 over at least 50 double-extracted sessions"
+  level: L4
+  cell: {part: evaluation, uncertainty-policy: abstain-below-coverage, extraction-trigger: on-low-confidence-or-disagreement, evidence-form: confidence-score, question-origin: ontology-generated, user-segment: jev-internal-ops}
+  object: "memo.md item 3: 'each with an answer type and an evidence requirement'"
+  situation: "The ontology generates 400 candidate fields for Harbor Tycoon; 90 of them ('player seemed bored', 'UI felt cluttered') are judgement calls the two extractors agree on at kappa 0.3"
+  consequence: "The 90 low-kappa fields are withheld or shown with a 'low agreement (kappa 0.31)' badge; the studio never bases a decision on a field that two readers of the same video would not agree on; the ontology learns which dimension types are unreliable"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "memo.md item 3: 'accuracy against hand-labelled sessions' (accuracy only, no agreement metric)"
+  proposed: "agreement(field_id, field_version, n_double, kappa, ci_low, computed_at); field_status in {released, badge_low_agreement, withheld}; double extraction sample chosen by stratified random over games and session length"
+  shallow: false
+  mechanism: "Evaluation: a continuous 10% double-abstraction sample yields a per-field reliability number that gates exposure, mirrors registry abstraction QA"
+  example: "Field 'quit_reason' kappa 0.81 (n=62) released; field 'felt_bored' kappa 0.29 (n=58) withheld; chatbot, asked 'were players bored?', replies that the field is withheld for low agreement and offers idle_era and silence stats instead"
+  cost: M
+  depends_on: "clinical-8 so disagreements can be inspected by span"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Unreliable questions are measured and withheld rather than answered with the same confidence as reliable ones"
+
+- id: clinical-11
+  title: "Adjudication queue: the double-extraction disagreements from clinical-10 are routed to a human abstractor with both spans side by side; adjudicated labels become the gold set and each adjudication writes a decision rule into the field's abstraction manual"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, mechanism-type: human-in-the-loop, user-segment: jev-internal-ops, evidence-form: clip, extraction-trigger: on-low-confidence-or-disagreement, delivery-surface: notebook}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: "Extractor A says quit_reason='difficulty', extractor B says 'controls' for player 217 at 00:04:12; the player said 'these controls are so clunky I keep dying'"
+  consequence: "Adjudicator picks 'controls' and adds rule 'when a control complaint is given as the cause of deaths, code controls not difficulty' to the manual; next extractor version agrees on this pattern; gold set grows by 1 without a separate labelling project"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md item 3 (hand-labelled sessions exist but no process for producing them is given)"
+  proposed: "adjudication(field_id, session_id, value_a, span_a, value_b, span_b, decision, rule_text, adjudicator, decided_at); target throughput 40 items per hour per adjudicator; rules appended to manual (clinical-12)"
+  shallow: false
+  mechanism: "Feedback loop: disagreement, not random sampling, selects what humans look at; each decision is written back as a rule and a gold label"
+  example: "Weekly queue for Harbor Tycoon: 84 disagreements, 2 hours of adjudication, 11 new decision rules, kappa for quit_reason rises from 0.72 to 0.86 on the next double-extraction sample"
+  cost: M
+  depends_on: "clinical-10"
+  part: feedback-loop-from-query-log
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no mechanism to learn from its own errors; this one converts each disagreement into a rule"
+
+- id: clinical-12
+  title: "Abstraction manual per field as the extraction prompt: definition, allowed values, 3 positive and 3 negative worked examples, decision rules, and an explicit 'not documented' rule; manual_version is stored on every value and the manual is diffable"
+  level: L4
+  cell: {part: question-generation, schema-evolution: append-only-versioned-fields, evidence-form: extraction-provenance-model-and-schema-version, question-origin: ontology-generated, extraction-trigger: on-new-field-added, build-or-buy: build-in-house}
+  object: "memo.md item 3: 'each with an answer type and an evidence requirement'"
+  situation: "Field 'quit_reason' changes meaning in week 6 when 'controls' is split into 'controls_input' and 'controls_camera'; 1,200 sessions carry the old value"
+  consequence: "Old rows carry manual_version 2, new rows 3; the chatbot either reports the two versions separately or re-extracts the 1,200 under v3; a prompt kept in a code file without a version would silently mix definitions in one count"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md item 2: 'cached as a new field, so the question set grows from real use'"
+  proposed: "field_manual(field_id, manual_version, definition, allowed_values[], examples_pos[3], examples_neg[3], rules[], not_documented_rule, created_at); extraction prompt is rendered from the manual; field_values.manual_version NOT NULL"
+  shallow: false
+  mechanism: "Question generation: an ontology-generated question is not released until it has a manual with examples and a not-documented rule; the manual is the prompt and the audit document"
+  example: "quit_reason v3 manual: allowed {difficulty, controls_input, controls_camera, boredom, bug, external, not_documented}; rule 4: 'code external when the player says they must leave for a reason outside the game'; chatbot answer footer: 'quit_reason manual v3, extractor run 2026-10-24-b'"
+  cost: S
+  depends_on: nothing
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Every value is traceable to a definition with examples, and definition drift is visible instead of silent"
+
+- id: clinical-13
+  title: "Three-valued missingness on every field: {value, absent, not_observable, not_abstracted}; denominators exclude not_observable and not_abstracted, and every count prints the three exclusion counts"
+  level: L4
+  cell: {part: store, uncertainty-policy: answer-with-ci-and-n, evidence-form: coverage-statement-n-of-m-players, question-type: how-many, modality: silence-or-absence-of-speech, latency-tier: under-2s}
+  object: "spec.md item 4: 'a question over, say, 500 players is fast'"
+  situation: "Studio asks 'what share of players complained about the camera?'; 140 of 500 players have no microphone audio, 60 sessions were ingested before the camera field existed"
+  consequence: "Answer is 38/300 (12.7%) with 'not observable: 140 (no speech audio), not yet extracted: 60'; a two-valued store would report 38/500 (7.6%) and the studio under-prioritises the camera"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md unspecified: 'What a transcript contains (speech only, on-screen text, events)'"
+  proposed: "field_values.status in {value, absent, not_observable, not_abstracted}; not_observable set from observation_period (clinical-14) per modality required by the field's manual; chatbot template 'X of N (p%); excluded: a not observable, b not extracted'"
+  shallow: false
+  mechanism: "Store: a status column distinguishes 'we looked and it was not there' from 'we could not look' from 'we have not looked'; query path uses status to build denominators"
+  example: "Harbor Tycoon camera complaint: 38 of 300 observable (12.7%, CI 9.3-17.0); 140 not observable (no mic); 60 not abstracted (ingested before field v1), backfill queued"
+  cost: S
+  depends_on: "clinical-14 for not_observable"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Percentages are over players who could have shown the thing, not over everyone"
+
+- id: clinical-14
+  title: "observation_period table per player and modality: time ranges where recording was on, game in foreground, speech audio present, webcam present; every rate uses observable time or observable players as its denominator"
+  level: L4
+  cell: {part: session-stitching, granularity: session, modality: silence-or-absence-of-speech, representation: time-series-signals-affect-pace-silence, question-type: how-long, evidence-form: count-with-denominator}
+  object: "spec.md item 1: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos'"
+  situation: "Player 88's session has 9 videos; videos 4 and 5 are missing (recorder crash), and the mic is muted from video 7 onward"
+  consequence: "observation_period rows: video 00:00-00:45 and 01:15-02:15 for screen; 00:00-01:30 for speech; 'how long stuck in step 3' is answered as 'unknown, step 3 falls in an unobserved gap' rather than as 0 or 30 minutes"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'Long multi-video sessions' and unspecified 'how videos of one session are linked'"
+  proposed: "observation_period(player_id, session_id, modality in {screen, speech, webcam, input}, start_t_ms, end_t_ms, reason_end in {video_gap, mute, alt_tab, end}); built from the session manifest and per-video audio energy"
+  shallow: false
+  mechanism: "Session stitching: an explicit observability table, the analogue of an observation period in a clinical database, computed at ingestion and joined by every denominator"
+  example: "Median time in tutorial_step 3 = 4m50s over 441 players with step 3 fully observable; 59 players excluded (gap or mute inside the step)"
+  cost: S
+  depends_on: "a session manifest listing videos with capture_start"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Missing videos and muted stretches stop being counted as 'nothing happened'"
+
+- id: clinical-15
+  title: "Era tables: consecutive observations of the same concept per player with gaps up to 45 s are collapsed at ingestion into friction_era, idle_era, step_era (player_id, concept_id, start_t_ms, end_t_ms, n_events); duration questions read eras, not raw events"
+  level: L4
+  cell: {part: store, granularity: variable-length-moment-or-episode, question-type: how-long, mechanism-type: precompute-more, representation: timestamped-observation-log, extraction-trigger: at-ingestion}
+  object: "memo.md item 1: 'timestamped atomic observations ... friction signal'"
+  situation: "Player 302 shows 14 friction observations between 00:31:05 and 00:38:40 with gaps of 10-40 s; the studio asks 'how long were players stuck on step 2?'"
+  consequence: "One friction_era 00:31:05-00:38:40 (7m35s, 14 events) answers the question directly; counting raw friction events would give '14 frictions' and summing their instants gives nothing"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md item 1: 'timestamped atomic observations'"
+  proposed: "era(player_id, session_id, era_type in {friction, idle, step, affect_negative}, concept_id, start_t_ms, end_t_ms, n_events, gap_ms_used=45000); rebuilt when the gap parameter changes"
+  shallow: false
+  mechanism: "Store: a standardised derived table, computed at ingestion, that turns point observations into episodes with a documented gap rule"
+  example: "Median friction_era length at tutorial_step 2 = 5m10s (n=203 players with any era); 38% of players have an era over 3 min"
+  cost: S
+  depends_on: "an observation log on the session clock"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "'How long' questions become a column subtraction instead of a per-video guess"
+
+- id: clinical-16
+  title: "churn_event table, one row per player: churn_t_ms, churn_type_concept in {quit_to_menu, idle_over_300s, rage_quit, uninstall_seen, recording_end_unexplained}, last_step_concept, last_ui_concept, evidence_span; all churn questions resolve to this table first"
+  level: L4
+  cell: {part: store, granularity: player, question-type: who-are-the-churners-segment-discovery, subject-domain: onboarding-tutorial, evidence-form: per-player-list, query-path: precomputed-aggregate}
+  object: "spec.md item 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Studio asks 'who churned and what were they doing?'"
+  consequence: "SELECT player_id, churn_type, last_step, last_ui FROM churn_event WHERE game_id=... returns 115 rows in under 100 ms with a span each; the per-video answers table needs the planner to reconstruct 'last thing before leaving' across video boundaries per player"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md item 3"
+  proposed: "churn_event(player_id, session_id, churn_t_ms, churn_type_concept, last_step_concept, last_ui_concept, last_utterance_term_id, evidence_span, definition_version); rebuilt from cohort tutorial_churner (clinical-5) at ingestion"
+  shallow: false
+  mechanism: "Store: the terminal event is a dedicated table, like a death table, with cause and context columns and a definition version"
+  example: "115 churners: 41 at tutorial_step 2 (crew hiring), 38 quit_to_menu within 20 s of a 'no crew available' dialog; 12 rage_quit with a negative affect era in the preceding 60 s"
+  cost: S
+  depends_on: "clinical-5"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The most asked question is a table scan with evidence, not a reconstruction"
+
+- id: clinical-17
+  title: "Data quality check suite run after every ingestion batch, per game: about 200 checks in three classes (conformance: every concept_id exists in the vocabulary; completeness: share of rows with evidence_span, share of players with observation_period; plausibility: step_era end after start, step order consistent with the design doc, no step after churn_event); a failed critical check holds the batch out of the chatbot"
+  level: L4
+  cell: {part: evaluation, delivery-surface: dashboard-standard-report, extraction-trigger: scheduled-batch, user-segment: jev-internal-ops, evidence-form: chart, moment-in-journey: steady-state-weekly}
+  object: "spec.md item 3: 'The answers form a structured table per video'"
+  situation: "A new build renames tutorial_step 3; the OCR pass now writes source_value 'Shipment!' which maps to concept 0; 180 sessions ingest with step 3 absent"
+  consequence: "Check 'share of players reaching step 3' drops from 71% to 0% for the batch, plausibility check fails, batch is held, and ops sees the unmapped string in the dashboard before a studio asks why step-3 churn is 100%"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (room for a check suite per batch)"
+  proposed: "dq_check(check_id, class, sql, threshold, severity); dq_result(batch_id, game_id, check_id, value, pass); dashboard per game with pass rate and failing checks; batch.status in {ingested, dq_passed, dq_held}"
+  shallow: false
+  mechanism: "Evaluation: a standing suite of SQL checks against the CDM, analogous to a clinical data quality dashboard, gates which batches the chatbot may read"
+  example: "Harbor Tycoon batch 2026-10-26: 197/200 checks pass; failing: concept 0 share 9.2% (threshold 5%), step_3_reach 0% (threshold 40%), both critical; batch held, mapping task opened"
+  cost: M
+  depends_on: "clinical-1, clinical-14"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Broken ingestion is caught by a check, not by a studio's wrong answer"
+
+- id: clinical-18
+  title: "Standard characterisation report generated automatically when the first cohort of a game is ingested: per-step reach and median time, friction and idle era rates per step, churn_event distribution, top 20 player-spoken concept mentions, all with denominators; no question typed"
+  level: L4
+  cell: {part: chatbot-ui, mechanism-type: auto-discover-without-question, delivery-surface: dashboard-standard-report, moment-in-journey: first-cohort-ingested, question-type: what-happened, latency-tier: overnight}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "Harbor Tycoon's producer logs in on day 2 and does not know what to ask"
+  consequence: "The report already shows 'tutorial_step 2: reached by 480/500, median 6m40s, friction era in 203 (42%), churn_event in 41 (8.5%)'; the first typed question is a follow-up, not a cold start"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md: 'Their questions are not known in advance'"
+  proposed: "report template of 40 fixed panels over standard concepts; rendered per game nightly from the CDM; every panel has a 'ask about this' button that seeds the chatbot with the panel's cohort"
+  shallow: false
+  mechanism: "Delivery: a fixed descriptive report over the common data model, generated per game without input, as the entry point to the chatbot"
+  example: "Panel 'churn by last step': 41 at step 2, 38 at step 3, 36 post-tutorial; click opens chatbot with cohort tutorial_churner v3 AND last_step=2 preloaded"
+  cost: M
+  depends_on: "clinical-1, clinical-15, clinical-16"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The studio sees what is in the data before deciding what to ask"
+
+- id: clinical-19
+  title: "Cohort characterisation with standardised mean differences: for any cohort and comparator (default tutorial_churner vs tutorial_completer) compute prevalence of every concept and era type in both, rank by |SMD| over 0.10, show top 25 with n per side"
+  level: L4
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, question-origin: discriminative-contrast-churn-vs-retain, question-type: what-surprised-unknown-unknowns, evidence-form: contrast-vs-baseline, scope: cohort, latency-tier: under-30s}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction'"
+  situation: "Studio asks 'why do players churn at crew hiring?' and has no hypothesis"
+  consequence: "Instead of guessing a question to extract, the planner runs the contrast: 'dialog no_crew_available' prevalence 0.78 in churners vs 0.21 in completers (SMD 1.3), 'opened_help' 0.05 vs 0.40 (SMD -0.9); the studio gets the two leading suspects in 8 s from existing rows"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md item 2 (new questions trigger extraction; no mechanism for hypothesis-free contrast)"
+  proposed: "characterise(cohort_a, cohort_b): one GROUP BY over observation and era joined to cohort, SMD = (p_a - p_b)/sqrt((p_a(1-p_a)+p_b(1-p_b))/2); output table (concept, n_a, p_a, n_b, p_b, smd) sorted; min 20 players per side"
+  shallow: false
+  mechanism: "Query path: a 'why' question with no hypothesis is answered by an exhaustive two-cohort prevalence contrast over the common data model, no new extraction"
+  example: "Top 3 for churners vs completers at step 2: no_crew_available dialog (0.78 vs 0.21), help opened (0.05 vs 0.40), negative affect era in step (0.61 vs 0.14); each with 5 clips"
+  cost: S
+  depends_on: "clinical-5"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The 'why' question is answered from everything already extracted, ranked, rather than from one pre-written reason field"
+
+- id: clinical-20
+  title: "Pathway analysis over step concepts: each player's ordered sequence of step_era concepts (collapsed repeats, max 8 steps) is grouped into pathways; top 20 pathways with counts rendered as a sunburst; deviation from the design-doc order is a per-player flag"
+  level: L4
+  cell: {part: query-path, representation: step-funnel-state-machine-per-player, question-type: timeline, evidence-form: chart, granularity: player, subject-domain: onboarding-tutorial, delivery-surface: dashboard-standard-report}
+  object: "memo.md item 1: 'step on screen, action'"
+  situation: "The tutorial is designed as 1-2-3 but 23% of players go 1-3-2 because step 3's dock is reachable early; the studio has never asked about order"
+  consequence: "Pathway table shows 1-2-3 (312), 1-3-2 (115), 1-2-churn (41), 1-churn (18); the 1-3-2 pathway has churn 3% vs 11% for 1-2-3, which nobody would have asked for"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md item 1"
+  proposed: "pathway(player_id, path_string, n_steps, matches_design_order BOOL); design order from the onboarding design doc; sunburst panel in the standard report with click-through to player lists"
+  shallow: false
+  mechanism: "Query path: a precomputed sequence table over step eras, the analogue of treatment pathways, enabling order questions without extraction"
+  example: "Studio asks 'do players do the steps in order?': 62% yes (312/500), top deviation 1-3-2 at 23%; churn by pathway listed"
+  cost: S
+  depends_on: "clinical-15 step eras"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Order and sequence questions become a lookup; the per-video table cannot order steps across videos"
+
+- id: clinical-21
+  title: "Network-study execution for cross-studio benchmarks: a cohort definition plus analysis package runs inside each studio's isolated tenant, and only aggregate results (counts with denominators, medians) leave; no raw row crosses tenants"
+  level: L4
+  cell: {part: tenancy-access-control, scope: cross-studio-benchmark, tenancy-and-deployment: logically-isolated-per-studio, query-path: precomputed-aggregate, mechanism-type: transfer-across-games, user-segment: publisher-portfolio}
+  object: "spec.md: 'Buyers are gaming studios'"
+  situation: "A publisher with 4 studios asks 'is our tutorial churn at step 2 worse than the other city-builders on JEV?'"
+  consequence: "The package stuck_on_step_over_3min runs in 9 tenants; each returns (n_players, n_stuck, median_s) and the benchmark is a 9-row table; no studio's rows, quotes or clips are visible to another; the answer takes a nightly batch, not seconds"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios' (multiple tenants with competing interests implied; no isolation stated)"
+  proposed: "study_package(id, cohort_definition_ids[], aggregate_sql, min_cell_size=5); run per tenant by a scheduler; results table (study_id, game_id_hashed, n, value); benchmark views only on results"
+  shallow: false
+  mechanism: "Tenancy: code moves to the data, aggregates move back, the pattern of distributed research networks; the common data model is what makes the same package run everywhere"
+  example: "Benchmark row for Harbor Tycoon: stuck at step 2 38% (n=500); genre median 12% (9 games, 4,100 players); Harbor Tycoon is the highest"
+  cost: L
+  depends_on: "clinical-1, clinical-5, per-tenant isolation"
+  part: tenancy-access-control
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Cross-game comparison exists at all, and without pooling pre-release footage"
+
+- id: clinical-22
+  title: "Small-cell suppression and role gating: any count under 5 players is shown as 'under 5'; per-player lists and clips require the studio's analyst role; aggregate-only role sees counts and medians"
+  level: L4
+  cell: {part: tenancy-access-control, evidence-form: count-with-denominator, user-segment: producer-exec, uncertainty-policy: abstain-below-coverage, delivery-surface: chatbot, scope: cohort}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "A publisher executive with aggregate role asks 'which players swore at the crew UI?' and the answer is 3 players"
+  consequence: "Chatbot returns 'under 5 players; per-player detail needs analyst role'; identities of 3 testers in a 500-player NDA pool are not exposed to a dashboard screenshot"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'who at the studio asks' listed as unspecified"
+  proposed: "role in {aggregate, analyst, admin} per studio user; suppression rule n<5 applied in the planner before rendering; audit log of per-player list requests"
+  shallow: false
+  mechanism: "Access control: a disclosure rule from registry reporting applied in the query path, plus a two-level role model"
+  example: "Analyst sees 3 player_ids with 3 clips; executive sees 'under 5 of 500'; both see the 12.7% camera complaint rate"
+  cost: S
+  depends_on: "a user and role table per studio"
+  part: tenancy-access-control
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Small counts and identities are governed instead of printed"
+
+- id: clinical-23
+  title: "Negative-control calibration for 'did the fix work': alongside the targeted metric, the same pre/post comparison is run on 10 concepts the fix cannot plausibly affect; the claimed effect is reported against the spread of those 10, and 'not distinguishable from drift' is a possible answer"
+  level: L4
+  cell: {part: evaluation, question-type: did-the-fix-work-pre-post, scope: build-version-pair, uncertainty-policy: answer-with-ci-and-n, granularity: build-version, evidence-form: contrast-vs-baseline, moment-in-journey: new-build-version}
+  object: "spec.md item 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Build 1.3 adds a hint at crew hiring; step-2 churn moves from 8.5% (n=500) to 6.1% (n=380); the post cohort was also recorded 3 weeks later with a different recruiter"
+  consequence: "The 10 negative controls (step-1 duration, menu opens, swear rate, mic-on share, ...) shift by a median 1.9 points in the same direction; the 2.4-point drop is reported as 'within the drift band of unrelated metrics (1.1-3.0); not attributable to the hint'"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: no mention of build versions or pre/post; memo.md: none"
+  proposed: "negative_controls(game_id, concept_id[10]) curated at onboarding; pre_post(metric, pre_n, pre_p, post_n, post_p, delta, control_deltas[10], calibrated_p); answer template states the band"
+  shallow: false
+  mechanism: "Evaluation: empirical calibration with negative control outcomes, applied to the compare-versions query path"
+  example: "Answer: 'Step-2 churn 8.5% -> 6.1% (delta -2.4, n 500/380). Negative controls moved -1.1 to -3.0 (median -1.9). Calibrated: not distinguishable from cohort drift.'"
+  cost: M
+  depends_on: "build_version on every session; clinical-1 concepts"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A pre/post number comes with a check against the cohort having changed for other reasons"
+
+- id: clinical-24
+  title: "source_to_concept_map rows carry valid_start_build and valid_end_build: when build 1.3 renames 'Hire crew' to 'Recruit crew', both source values map to concept tutorial_step index 2 for their build ranges and compare-versions queries run on the concept, not the string"
+  level: L4
+  cell: {part: schema-evolution, granularity: build-version, extraction-trigger: on-game-update, schema-evolution: deprecate-and-migrate, question-type: compare-versions, modality: build-version-metadata}
+  object: "A-frame assumption: 'original videos remain available for re-processing'"
+  situation: "Build 1.3 ships with 2 renamed steps and 1 step split into 2a/2b; 500 old sessions and 380 new ones"
+  consequence: "Map gains 3 rows with build ranges; split step 2 gets a new concept 'crew_hiring_part_b' with is_a edge to tutorial_step 2 so pre-1.3 comparisons roll up; a per-video answers table keyed on the string would show step 2 'disappearing' in 1.3"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'Long multi-video sessions' only; nothing on build changes; memo.md: none"
+  proposed: "source_to_concept_map(..., valid_start_build, valid_end_build, invalid_reason); ingestion resolves source_value with session.build_version; DQ check (clinical-17) flags new unmapped strings per build"
+  shallow: false
+  mechanism: "Schema evolution: the map, not the observation rows, absorbs renames and splits; old rows never need rewriting"
+  example: "Studio asks 'did step 2 churn change in 1.3?' -> 8.5% (n=500, builds 1.0-1.2) vs 6.1% (n=380, 1.3), where 1.3's 2a+2b are rolled up to step 2 via the hierarchy"
+  cost: S
+  depends_on: "clinical-1, clinical-3, build_version on session"
+  part: schema-evolution
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A rename or split in the game does not break history or comparisons"
+
+- id: clinical-25
+  title: "Backfill at the concept level, not the question level: when a new standard concept is added to the vocabulary ('accessibility_menu_opened'), one re-extraction pass runs over every game with a mapped source value, and every question over that concept on every game is served from the same pass"
+  level: L4
+  cell: {part: ingestion-extraction, extraction-trigger: on-new-field-added, schema-evolution: eager-backfill-all-history, reuse-scope-of-extraction: universal-primitives, mechanism-type: precompute-more, scope: cross-game, latency-tier: overnight}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Studio A asks 'how many players opened the accessibility menu?'; the memo's design extracts a new field for Studio A's 500 sessions; Studio B asks the same next month"
+  consequence: "Concept-level backfill extracts 'accessibility_menu_opened' as an observation concept for all 9 games (4,100 sessions) overnight once; Studio B's question is a 200 ms query, and 'what else happened in the same minute' works because it is an observation row, not a per-question answer"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md item 2"
+  proposed: "vocabulary change request -> concept added with manual (clinical-12) -> mapping proposals per game (clinical-4) -> backfill job per game over sessions with mapped sources -> DQ check -> release; cost accounted per concept not per question"
+  shallow: false
+  mechanism: "Ingestion: the unit of extraction and backfill is a vocabulary concept shared across tenants, so one studio's new question enriches the observation log for everyone"
+  example: "Night of 2026-10-28: concept 9031 accessibility_menu_opened backfilled across 4,100 sessions; next day Studio B's 'how many opened accessibility?' returns 61/520 (11.7%) in 180 ms"
+  cost: M
+  depends_on: "clinical-1, clinical-4; isolated tenants still share the vocabulary, not the rows"
+  part: ingestion-extraction
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "A new question paid for once serves every game, and the result is an observation others can join, not a cached answer"
+
+- id: clinical-26
+  title: "Extractor certification before production: a new model or prompt version must score kappa at least 0.75 against the adjudicated gold set on 100 sessions per concept family before it may write to the store; failing families keep the previous extractor version"
+  level: L4
+  cell: {part: evaluation, extraction-trigger: on-model-upgrade, schema-evolution: model-upgrade-reextract, evidence-form: extraction-provenance-model-and-schema-version, user-segment: jev-internal-ops, uncertainty-policy: abstain-below-coverage}
+  object: "A-frame assumption: 'a modern long-context multimodal model is available at ingestion'"
+  situation: "A new multimodal model arrives; it is better at OCR and worse at affect; ops wants to re-extract all 4,100 sessions"
+  consequence: "Certification: ui_element family kappa 0.88 (pass), affect family 0.61 (fail); re-extraction runs for ui and step families only, affect keeps extractor v4; the store never mixes a worse affect extractor into existing affect counts"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  proposed: "certification(extractor_version, concept_family, n_sessions=100, kappa, pass); extractor_runs.allowed_families[]; field_values.extractor_run_id resolves to the certified version"
+  shallow: false
+  mechanism: "Evaluation: the abstractor-certification step from registry work, applied per extractor version and concept family, gating model upgrades"
+  example: "Model upgrade 2026-11: step family 0.91, ui 0.88, speech-term 0.82, affect 0.61; three families re-extracted overnight, affect deferred with a ticket"
+  cost: S
+  depends_on: "clinical-11 gold set"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "A model change cannot silently degrade a field; each family is measured before it writes"
+
+- id: clinical-27
+  title: "Studio-written questions become cohort definitions through a form: the chatbot drafts entry event, inclusion rules and exit from the natural-language question, shows the draft with a count preview, and runs only after the studio confirms or edits; the confirmed definition is saved and reusable"
+  level: L4
+  cell: {part: chatbot-ui, query-path: text-to-semantic-layer-metrics, uncertainty-policy: ask-clarifying-question, question-origin: studio-written-at-runtime, mechanism-type: narrow-or-clarify-the-question, user-segment: studio-analyst, latency-tier: under-30s}
+  object: "spec.md: 'The owner wants to improve (a) how the chatbot answers from the question-answer store'"
+  situation: "Analyst types 'players who gave up on crew hiring after trying a few times'"
+  consequence: "Chatbot shows: entry = step_era concept tutorial_step 2; inclusion = at least 3 'hire attempt' input events in the era; exit = churn_event or step_era for step 3 without hire_success; preview 'matches 29 of 500'; analyst changes 'at least 3' to 'at least 2', preview 47, confirms; definition saved as gave_up_crew_hiring v1"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'Their questions are not known in advance'"
+  proposed: "NL -> draft cohort JSON (clinical-5 schema) via the planner; UI shows rules as editable chips with live count; 'run' disabled until confirmed; saved definitions searchable by other analysts at the studio"
+  shallow: false
+  mechanism: "Chatbot UI: the clarifying question is the drafted definition itself; free text never runs directly as a count"
+  example: "Confirmed gave_up_crew_hiring v1 returns 47 players (9.4%), 38 with a 'no crew available' dialog in the era; the definition appears in the studio's library"
+  cost: M
+  depends_on: "clinical-5"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A new question yields a reusable, inspectable definition instead of a one-off LLM interpretation"
+
+- id: clinical-28
+  title: "REFUSED by this persona: learned-schema-from-data as the primary representation, where each game's extraction invents its own field names and values from its transcripts"
+  level: L3
+  cell: {part: store, representation: learned-schema-from-data, reuse-scope-of-extraction: game-specific, question-origin: induced-from-data, scope: cross-game, mechanism-type: auto-discover-without-question}
+  object: "memo.md item 3: 'Questions are generated from an ontology'"
+  situation: "Someone proposes letting the model propose fields per game ('crew_frustration_level', 'dock_confusion') from the data to avoid curating a vocabulary"
+  consequence: "Low willingness: this is the pre-CDM situation of every institution coding its own way; 9 games produce 9 incompatible 'frustration' fields, no cross-game question, no reusable phenotype, no validation that transfers; the persona will only accept induced fields as candidate concepts routed into the vocabulary request flow (clinical-25), never as queryable fields in their own right"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "A-frame assumption: 'studios are many and each game differs'"
+  proposed: "If pursued at all: induced fields land in candidate_concept(game_id, proposed_name, examples[], freq) and are promoted to the shared vocabulary by ops with a manual; never exposed to the chatbot directly"
+  shallow: false
+  mechanism: "Store: refusal of schema inference as a representation; induced names are candidates for the vocabulary, not columns"
+  example: "Harbor Tycoon induces 'dock_confusion'; Forge Quest induces 'forge_confusion'; the question 'where are players confused across our games?' is impossible until both are mapped to concept ui_confusion with target element"
+  cost: S
+  depends_on: "clinical-1"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Not better: it recreates the per-game question set problem with machine-written names"
+
+- id: clinical-29
+  title: "REFUSED by this persona: the chatbot emitting a count or percentage produced by retrieval-then-LLM reading of rows under an undefined cohort ('about 18% of players seemed to churn')"
+  level: L3
+  cell: {part: query-path, query-path: retrieval-then-llm, uncertainty-policy: always-answer, question-type: how-many, evidence-form: none, user-segment: producer-exec}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "Studio asks 'what share of players churned because of the controls?'; the planner retrieves 160 rows and asks the model for a share"
+  consequence: "Low willingness: a percentage with no definition, no denominator statement and no validation record is a number the studio will quote in a meeting and later find wrong; the persona allows retrieval-then-LLM for narrative answers (what did players say) but requires any count to resolve to a defined cohort or field with status counts (clinical-5, clinical-13); otherwise the chatbot answers 'I can show 160 matching quotes; to give a share I need a definition' and offers the form (clinical-27)"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md item 2"
+  proposed: "Planner rule: numeric answer types (count, share, median) must bind to a cohort_definition_id or field_id; the LLM path may only produce lists, quotes and summaries"
+  shallow: false
+  mechanism: "Query path: a type rule separating defined-quantity questions from narrative questions"
+  example: "Question 'share churned due to controls' -> 'quit_reason=controls_input OR controls_camera among tutorial_churner v3: 27/115 (23.5%); 40 churners have quit_reason not documented' rather than 'about 18%'"
+  cost: S
+  depends_on: "clinical-5, clinical-12"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Not better as proposed; the fixed table at least has a stated definition per column"
+
+- id: clinical-30
+  title: "REFUSED by this persona: cross-studio benchmarks built by pooling raw observation rows, quotes or clips in a shared multi-tenant table"
+  level: L3
+  cell: {part: tenancy-access-control, tenancy-and-deployment: shared-multi-tenant, scope: cross-studio-benchmark, representation: timestamped-observation-log, user-segment: publisher-portfolio}
+  object: "spec.md: 'Buyers are gaming studios'"
+  situation: "To make genre benchmarks fast, someone proposes one observation table across all games with a game_id column and row-level filters"
+  consequence: "Low willingness: one filter bug exposes pre-release footage quotes of one studio to another; the persona accepts cross-studio aggregates only through the network-study path (clinical-21) with minimum cell size 5 and hashed game ids, which costs a nightly batch instead of a 200 ms query"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios' (competing tenants); nothing in memo.md on isolation"
+  proposed: "Benchmarks served only from results tables produced by per-tenant package runs; raw tables physically or logically isolated per studio"
+  shallow: false
+  mechanism: "Tenancy: refusal of row pooling; aggregates-only exchange"
+  example: "Genre median 'stuck at step 2' = 12% computed from 9 per-tenant result rows, refreshed nightly; no row of Harbor Tycoon is readable from another tenant's planner"
+  cost: S
+  depends_on: "clinical-21"
+  part: tenancy-access-control
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Not applicable; this is a constraint on how benchmarks may be built"
+
+- id: clinical-31
+  title: "Mapping coverage statement printed with every concept-level answer: 'concept inventory_panel covers 14 of 17 inventory-related source strings observed in this game; 3 unmapped (listed)' so a count is read with its vocabulary gap"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: answer-with-ci-and-n, representation: common-data-model-with-per-game-vocab-map, user-segment: studio-analyst, latency-tier: under-2s}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Build 1.3 added a 'Warehouse' tab under inventory; its string is still concept 0; the analyst asks about inventory use"
+  consequence: "Answer: '143 of 500 opened the inventory during step 3. Coverage: 14 of 17 inventory strings mapped; unmapped: Warehouse (seen in 61 players), Sort by weight (12), Quick sell (4). Map them?'; the analyst knows 61 players may be missing and can fix it in one click"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  proposed: "Planner computes, for each concept subtree used in a query, the set of source strings in the game that share a parent by co-occurrence or embedding similarity above 0.8 and are concept 0; prints counts; link to mapping screen (clinical-4)"
+  shallow: false
+  mechanism: "Chatbot UI: an explicit vocabulary-coverage footer, the analogue of reporting unmapped source codes in a CDM study"
+  example: "After mapping Warehouse, the same question returns 171 of 500 (34.2%) and coverage 15 of 17"
+  cost: S
+  depends_on: "clinical-1, clinical-4"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A count tells the reader what it could not see"
+
+- id: clinical-32
+  title: "Measurement table for quantities separate from the observation table for events: (player_id, t_ms, measurement_concept_id, value_as_number, unit_concept_id, value_as_concept_id, evidence_span) for time-in-step seconds, attempt counts, HUD-read resources and health"
+  level: L4
+  cell: {part: store, question-type: how-many, granularity: tutorial-step, modality: on-screen-text-ocr, representation: common-data-model-with-per-game-vocab-map, query-path: sql-over-closed-fields}
+  object: "memo.md item 1: 'closed enum fields and short open fields'"
+  situation: "Studio asks 'how much gold did players have when they churned at crew hiring?' and 'how many hire attempts before giving up?'"
+  consequence: "Both are AVG/percentile queries over measurement joined to churn_event; with quantities stored as open text ('had some gold', 'tried several times') the planner must parse 500 strings at query time"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md item 1: 'short open fields' (quantities would land there without a typed table)"
+  proposed: "measurement(player_id, session_id, t_ms, measurement_concept_id, value_as_number DOUBLE, unit_concept_id, value_as_concept_id, source_value, evidence_span); HUD OCR writes gold, health, crew_count every 10 s; counters from input events"
+  shallow: false
+  mechanism: "Store: numeric observations get a typed table with units, as in a clinical measurement table, so 'how many / how much' is arithmetic"
+  example: "Median gold at churn (step 2) = 40 (IQR 25-55, n=41) vs median gold of completers at the same step 120; hire attempts before giving up: median 3 (n=47)"
+  cost: S
+  depends_on: "HUD OCR at a fixed cadence; clinical-1 concepts for measurements"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Quantities are numbers with units, not multiple-choice bins chosen before the question was known"
+
+- id: clinical-33
+  title: "Affect coded as a standard vocabulary with modifiers rather than a free sentiment string: affect_concept in 12 values (frustration, confusion, boredom, delight, surprise, ...), intensity 1-3, target_concept_id (the UI element, step, mechanic or self), source modality in {speech, prosody, webcam}; 'frustration at crew UI' and 'frustration at own play' are different rows"
+  level: L4
+  cell: {part: ingestion-extraction, question-type: how-felt, modality: audio-non-speech, subject-domain: player-affect, representation: common-data-model-with-per-game-vocab-map, evidence-form: quote-with-timestamp}
+  object: "memo.md item 1: 'friction signal, sentiment'"
+  situation: "Studio asks 'are players frustrated by the crew UI or by the difficulty?'"
+  consequence: "GROUP BY target_concept_id over affect rows at step 2: ui_element crew_panel 61 players, mechanic crew_cost 23, self 18; a single 'sentiment: negative' field cannot separate these and a free string ('annoyed at hiring thing') cannot be grouped"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md item 1: 'sentiment' (one dimension, no target)"
+  proposed: "affect(player_id, t_ms, affect_concept_id, intensity, target_concept_id, modality, evidence_span, extractor_run_id); manual (clinical-12) with 3 examples per affect concept; kappa gate (clinical-10) per affect concept"
+  shallow: false
+  mechanism: "Ingestion: affect as a coded concept with a target link into the same vocabulary as steps and UI elements"
+  example: "Answer: 'Frustration at step 2 in 102 of 500 players: 61 directed at crew_panel, 23 at crew cost, 18 at own play; 5 clips per target'"
+  cost: M
+  depends_on: "clinical-1; prosody or webcam signals optional"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "'How did they feel' answers with a target and a count, not a per-video sentiment option"
+
+- id: clinical-34
+  title: "Re-abstraction audit: each month a random 2% of sessions per game is re-extracted with the current certified extractor and compared field by field with stored values; a field whose disagreement exceeds 5% triggers a full re-extract of that field and a note on every answer using it until done"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, extraction-trigger: scheduled-batch, schema-evolution: model-upgrade-reextract, evidence-form: extraction-provenance-model-and-schema-version, moment-in-journey: steady-state-weekly, user-segment: jev-internal-ops}
+  object: "memo.md item 2: 'whose result is cached as a new field'"
+  situation: "A vocabulary change in week 10 shifted how 'help opened' is coded; cached values from weeks 1-9 drift from what the current extractor would write"
+  consequence: "Audit on 82 sessions: help_opened disagreement 11% (threshold 5%); full re-extract queued for 4,100 sessions; chatbot footer 'help_opened under re-extraction, 11% drift measured 2026-11-02' until complete"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md item 2 (cached fields with no stated expiry or audit)"
+  proposed: "reabstraction_audit(month, game_id, field_id, n, disagreement_rate); threshold 0.05; re-extract job per field; answer footer reads field_status"
+  shallow: false
+  mechanism: "Feedback loop: cached extractions have a measured shelf life, checked by periodic re-abstraction, as registries re-abstract a sample"
+  example: "October audit, Harbor Tycoon: 14 fields under 2% drift, quit_reason 3.8%, help_opened 11% -> re-extract"
+  cost: S
+  depends_on: "clinical-26 certified extractor; clinical-12 manual versions"
+  part: feedback-loop-from-query-log
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Stale cached answers are detected and replaced, rather than served forever"
+
+- id: clinical-35
+  title: "Abstraction window protocol per subject domain: for onboarding-tutorial questions the dense, double-extracted window is first launch to tutorial_complete or churn_event plus 10 minutes; outside the window extraction runs at single pass; the window boundaries are stored per player so coverage statements can say 'inside window'"
+  level: L4
+  cell: {part: cost-governance, subject-domain: onboarding-tutorial, granularity: variable-length-moment-or-episode, mechanism-type: narrow-or-clarify-the-question, evidence-form: coverage-statement-n-of-m-players, extraction-trigger: at-ingestion}
+  object: "spec.md item 1: 'A session can be n hours'; item 3: 'detecting churn in the tutorial and just after it'"
+  situation: "A 4-hour session where the tutorial ends at 00:38; the double-extraction sample (clinical-10) and the 200-char evidence spans are costly over 3 h 20 m of mid-game play nobody asks about yet"
+  consequence: "Window 00:00-00:48 gets double extraction, affect at 10 s cadence and HUD measurements; 00:48-04:00 gets single-pass observations only; the churn kappa is computed where it matters and the answer footer states 'tutorial window: 500 of 500 players fully observed'"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (persona reads this as: spend it where agreement is measured, not uniformly)"
+  proposed: "abstraction_window(player_id, domain, start_t_ms, end_t_ms, rule_version); extraction config per domain {density, double_extract BOOL, measurement_cadence_s}; a mid-game question later triggers a window for 'core-loop' with its own rules"
+  shallow: false
+  mechanism: "Cost governance: extraction density and QA are defined per subject-domain window, like an abstraction protocol's data-collection window, and the window is recorded"
+  example: "Tutorial window median 41 min over 500 players; outside-window observations exist at single pass, so 'what happened at hour 3' still answers but is marked single-pass, kappa unmeasured"
+  cost: S
+  depends_on: "clinical-15 step eras to find tutorial_complete; clinical-16 churn_event"
+  part: cost-governance
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "QA effort concentrates where the studio's named target lives, and the answer says whether it was inside the QA'd window"

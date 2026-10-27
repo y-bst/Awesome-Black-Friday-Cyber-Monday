@@ -1,0 +1,671 @@
+- id: telem-1
+  title: "Per-video clock offset row (video_id, telemetry_session_id, offset_ms, drift_ms_per_hour) computed at ingestion from one on-screen anchor"
+  level: L4
+  cell: {part: session-stitching, modality: game-telemetry, granularity: video, extraction-trigger: at-ingestion, representation: timestamped-observation-log, scope: one-player, effort: S-weeks}
+  object: "spec.md 'each video is capped at 15 minutes, so one session is many videos' and 'whether game telemetry is joined' (Unspecified)"
+  situation: "A studio has an event stream with wall-clock timestamps; the capture tool stamps each 15-minute video with its own start time; the two clocks differ by an unknown offset and drift"
+  consequence: "Without the offset row, every observation timestamp in memo.md's log is unjoinable to any telemetry event; with it, every observation gets a telemetry_ts column and a join to events within +/-500 ms becomes a plain SQL join"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "spec.md: 'whether game telemetry is joined' is listed under Unspecified"
+  proposed: "At ingestion, OCR one anchor per video (build/time overlay, or the first on-screen step banner) and match it to the nearest telemetry event of the same type; store 1 row per video in video_clock_sync; propagate telemetry_ts = video_ts + offset_ms onto every observation row"
+  shallow: false
+  mechanism: "Ingestion adds a sync pass per video: 1 anchor match, 1 row written; the observation log gains a telemetry_ts column; drift is re-estimated at the next anchor (step banner) and stored as drift_ms_per_hour"
+  example: "Tutorial step 3: telemetry has tutorial_step_start{step=3} at 14:02:11.4 for player 0417; video 2 of 7 shows the step-3 banner at 00:03:50; offset = +14:02:11.4 - video2_start - 230 s; the player's utterance 'where is the dodge button' at video 00:04:40 now lands 49.6 s after the step-3 event and 3.2 s after input_pressed{button=A} x4"
+  cost: S
+  depends_on: "studio exports a telemetry session_id or player_id per recorded session (telem-2)"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table has no timestamp that any telemetry row can join to; this makes every video-derived row joinable at 500 ms resolution"
+
+- id: telem-2
+  title: "Recruitment form captures the studio's player account ID; stored as sha256(player_id + studio_salt) on the session row so telemetry joins exist at all"
+  level: L4
+  cell: {part: collection-protocol, modality: player-profile-metadata, granularity: session, tenancy-and-deployment: logically-isolated-per-studio, mechanism-type: change-data-at-source, effort: XS-days}
+  object: "spec.md 'A player's gameplay session is captured as video' with no mention of a player identity key; memo.md 'session-level observation log'"
+  situation: "Studio wants to ask 'of the 212 players who abandoned step 3 in telemetry, what did the recorded ones say'; recorded players are only known by a recording filename"
+  consequence: "Without a captured ID the join rate is 0 of 500; with it, every one of the 500 recorded sessions maps to exactly one telemetry player row; the salt lives at the studio so JEV cannot re-identify"
+  p_typical: 0.30
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'whether game telemetry is joined', 'how videos of one session are linked'"
+  proposed: "Add 1 required field to the playtest intake (account ID or a QR shown in-game at session start); session table gets player_hash; studio receives the same hash function to apply in their warehouse"
+  shallow: false
+  mechanism: "Collection protocol change: 1 field at intake; store: 1 column on session; export: hash spec document (1 page) handed to the studio data team"
+  example: "Studio asks 'why did step-3 abandoners quit'; planner selects player_hash IN (telemetry abandoners) -> 41 of the 500 recorded players match -> reads observation rows for those 41 only"
+  cost: S
+  depends_on: nothing
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table answers only about the 500 recorded players in isolation; with a join key the same answers can be cross-checked against the studio's full population"
+
+- id: telem-3
+  title: "Planner routes how-many / how-long / when / did-the-fix-work questions to the studio's telemetry tables first; video observations are read only for why / how-felt / what-said"
+  level: L3
+  cell: {part: query-path, query-path: sql-over-closed-fields, question-type: how-long, modality: game-telemetry, latency-tier: under-2s, mechanism-type: narrow-or-clarify-the-question, user-segment: studio-analyst}
+  object: "memo.md 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Studio asks 'how long do players spend on tutorial step 3'; the fixed MCQ table has an option bucket ('under 1 min / 1-3 min / over 3 min') estimated by the model from transcript; telemetry has step_start and step_complete events for 48,000 players"
+  consequence: "Model-estimated bucket counts from 500 transcripts disagree with telemetry medians (exact, n=48,000) and the studio stops trusting the chatbot after the first mismatch; routing to telemetry returns the exact median (142 s) and p90 (401 s) with n"
+  p_typical: 0.40
+  grounded: quote
+  evidence: "spec.md: 'The transcript is run through a fixed set of questions with options'"
+  proposed: "Question classifier gets a 'telemetry-answerable' label with a per-studio mapping (metric name -> event pair); if matched, run SQL in the studio warehouse connection and append 'source: telemetry, n=48,000'; otherwise fall through to observation rows"
+  shallow: false
+  mechanism: "Query path: 1 extra classification step (telemetry-answerable yes/no) and 1 per-studio metric map (JSON: metric -> start_event, end_event, filter) maintained by the studio data engineer"
+  example: "'How many players finished the tutorial in build 1.4.2?' -> SELECT count(distinct player_id) FROM events WHERE name='tutorial_complete' AND build='1.4.2' -> 31,204 of 48,117 (64.8%), 0 video rows read"
+  cost: M
+  depends_on: "studio warehouse connection (telem-19) or a telemetry extract loaded into JEV; metric map per studio"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "replaces 500-player model-estimated duration buckets with exact population numbers for the 4 question types telemetry covers"
+
+- id: telem-4
+  title: "Cohort for a video question is defined in telemetry SQL (step_3_abandoners), then only those players' observation rows are read"
+  level: L4
+  cell: {part: query-path, scope: query-time-defined-cohort, query-path: retrieval-then-llm, question-type: why, modality: game-telemetry, granularity: cohort, latency-tier: under-30s}
+  object: "memo.md 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "Designer asks 'why do players quit at step 3'; the memo's retrieval would match observation rows by text similarity to 'quit' and 'step 3', missing players who quit silently"
+  consequence: "Cohort defined by telemetry (no step_complete{3} event within 30 min of step_start{3}) has exact membership (41 recorded players); the model reads 41 x ~60 = 2,460 observation rows instead of a similarity-ranked top-k with unknown recall"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "memo.md: 'retrieve matching observation rows across players and the model reads only those'"
+  proposed: "Planner emits two statements: cohort SQL over telemetry (returns player_hash list) and observation SQL filtered by that list and by telemetry_ts window around the step; LLM summarises with 'n=41 of 500 recorded, 212 of 48,117 in telemetry'"
+  shallow: false
+  mechanism: "Query path: cohort step becomes a telemetry predicate rather than text retrieval; observation store needs an index on (player_hash, telemetry_ts)"
+  example: "'Why do step-3 abandoners quit?' -> cohort: 41 players; window: step_start{3} to last event; rows: 2,460; answer: 'In 23 of 41, the last 60 s contains a dodge-button utterance; in 11 of 41, 45+ s of silence with no input'"
+  cost: M
+  depends_on: "telem-1 and telem-2"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "the fixed table cannot define a cohort by anything not in its options; telemetry predicates give arbitrary cohorts with exact membership and a denominator"
+
+- id: telem-5
+  title: "Telemetry step events, not the model, segment each session into tutorial-step windows; the extractor is run per telemetry-defined window"
+  level: L4
+  cell: {part: ingestion-extraction, modality: game-telemetry, granularity: tutorial-step, extraction-trigger: at-ingestion, representation: per-step-summary, mechanism-type: change-data-at-source, subject-domain: onboarding-tutorial}
+  object: "memo.md observation field 'step on screen'"
+  situation: "Ingestion must know which tutorial step the player is in at every observation; the memo infers 'step on screen' from frames and transcript, which fails when the step banner is off-screen (open menus, cutscenes) or when a player re-enters a step"
+  consequence: "Step attribution error drops from an estimated 5-10% (model-inferred from frames) to the telemetry instrumentation error (near 0% for instrumented steps); the extractor prompt receives 'you are watching step 3 (Dodge), 00:03:50-00:09:12' as given context"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session (step on screen, action, utterance...)'"
+  proposed: "Ingestion reads tutorial_step_start/complete events for the session, builds step windows (step_id, start_ts, end_ts, attempt_no), and runs extraction once per window with the step name injected; 'step on screen' becomes a joined column rather than an extracted field"
+  shallow: false
+  mechanism: "Ingestion: windowing from telemetry (1 query per session), extraction per window; store: observation rows carry step_id and attempt_no from telemetry, plus a model_inferred_step column for the 2 games without step events"
+  example: "Player 0417: telemetry shows step 3 attempted 3 times (attempt_no 1-3, durations 88 s, 140 s, 301 s); extraction per attempt yields 'attempt 2: says \"again?\" at +12 s; attempt 3: 70 s silence then quits'"
+  cost: M
+  depends_on: "telem-1; studios whose tutorial emits step events (ask at onboarding; fall back to frame inference otherwise)"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "the fixed table is per video with no step boundary; this gives per-step, per-attempt rows with step identity taken from the game itself"
+
+- id: telem-6
+  title: "Divergence observation: a row written whenever telemetry says 'step complete' but video shows friction (3+ retries, a help utterance, or 30+ s idle) in the same window"
+  level: L4
+  cell: {part: ingestion-extraction, question-type: what-surprised-unknown-unknowns, modality: game-telemetry, representation: timestamped-observation-log, mechanism-type: auto-discover-without-question, evidence-form: clip, extraction-trigger: at-ingestion}
+  object: "memo.md 'friction signal' observation field; spec.md target 'detecting churn in the tutorial and just after it'"
+  situation: "Telemetry funnel shows step 2 at 97% completion, so the studio never asks about step 2; the recorded players completed it but 18 of 500 pressed the wrong button 5+ times and said 'what?' before succeeding"
+  consequence: "The studio's own funnel hides the problem; a divergence row ('telemetry_ok, video_friction', step 2, 18 of 500) surfaces it without a question being asked"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md lists 'friction signal' as an observation type but no comparison against telemetry outcome"
+  proposed: "After extraction, join each step window's telemetry outcome (complete / abandon / time) with video friction count; write divergence rows of 4 kinds: telemetry_ok+video_friction, telemetry_abandon+video_calm, telemetry_fast+video_confused, telemetry_missing_event+video_shows_step; weekly digest lists the top 5 steps by divergence count"
+  shallow: false
+  mechanism: "Ingestion post-pass: 1 join per step window, 1 row per divergence; delivery: scheduled digest with clip links"
+  example: "Digest line: 'Step 2 (Move): telemetry 97% complete, median 41 s; video friction in 18 of 500 (3.6%): 14 wrong-button x5+, 4 asked aloud what to do; 3 clips attached'"
+  cost: M
+  depends_on: "telem-1, telem-5"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "the fixed table only answers questions that were written; divergence rows are generated from the disagreement between two data sources, which is where the unasked questions live"
+
+- id: telem-7
+  title: "Observation log exported into the studio's event stream as events named jev.<observation_type> with the studio's player_id, ts, and properties JSON"
+  level: L4
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, representation: wide-event-schema-on-read, user-segment: studio-data-engineer, tenancy-and-deployment: federated-query-into-studio-warehouse, schema-evolution: append-only-versioned-fields, effort: S-weeks}
+  object: "spec.md 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "Studio data team already has a funnel tool (Amplitude / Mixpanel / dbt models over BigQuery) and refuses to ask a chatbot; they want video observations to appear next to their events"
+  consequence: "Each jev.utterance, jev.friction, jev.sentiment row becomes an event in their warehouse; their existing funnel builder answers 'step 3 abandoners with a help utterance' with zero JEV query infrastructure; new observation types appear as new event names with no schema migration"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists'"
+  proposed: "Nightly Parquet drop (or Snowflake share) with columns event_name, player_hash, telemetry_ts, video_id, video_ts, properties (JSON), extractor_version; schema doc versioned; new fields only ever added inside properties"
+  shallow: false
+  mechanism: "Export: 1 nightly job; store: observation rows already in wide format; schema: append-only, new observation types = new event_name values"
+  example: "Studio dbt model: tutorial_funnel LEFT JOIN jev_events ON player_hash AND ts BETWEEN step_start AND step_end WHERE event_name='jev.utterance' AND properties.intent='asks_for_help' -> help-ask rate per step in their own dashboard"
+  cost: S
+  depends_on: "telem-1, telem-2"
+  part: export-integration
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table is answers to JEV's questions; the export is raw observations in the studio's own event grammar, so the studio asks its own questions with tools it already trusts"
+
+- id: telem-8
+  title: "REFUSE: model-estimated durations ('how long on step 3') are never written to the store for games whose telemetry has step events; the field is populated from telemetry or left null"
+  level: L4
+  cell: {part: store, question-type: how-long, modality: speech-transcript, uncertainty-policy: abstain-below-coverage, evidence-form: extraction-provenance-model-and-schema-version, representation: fixed-mcq-answers}
+  object: "spec.md 'fixed set of questions with options' (duration-bucket options, e.g. 'under 1 min / 1-3 min / over 3 min', estimated from a transcript)"
+  situation: "The ontology generator in memo.md proposes a 'how long' dimension for every step; the extractor answers it from transcript pacing with +/-40% error"
+  consequence: "Low willingness: a studio analyst who sees two step-3 durations (JEV bucket '1-3 min' for 61% of players; telemetry median 142 s, p90 401 s) will file the whole JEV table as unreliable; the data scientist refuses any numeric field the store has two sources for unless provenance says which one"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'The transcript is run through a fixed set of questions with options, written per game target'"
+  proposed: "Field registry marks each numeric field with source_policy: telemetry_only | video_only | telemetry_then_video; the generator skips 'how long' for games with step events; where video is the only source, store seconds with a +/- band, never a bucket"
+  shallow: false
+  mechanism: "Store: 1 source_policy column in the field registry; question generation: prune how-long for instrumented steps; extraction: duration fields written as (value_s, low_s, high_s, source)"
+  example: "Game A (step events): how_long_step_3 = telemetry, 48,117 players; Game B (no events): how_long_step_3 = video, 500 players, 'about 150 s (110-190)'; chatbot prints the source on every number"
+  cost: S
+  depends_on: "telem-1; field registry with a source column"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table has one unlabeled source for every answer; this removes the class of answer most likely to be contradicted by the studio's own numbers"
+
+- id: telem-9
+  title: "REFUSE: no cohort percentage leaves the chatbot without the recorded-sample denominator (n of 500) and, when a join exists, the matching telemetry population count"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: count-with-denominator, uncertainty-policy: answer-with-ci-and-n, scope: all-players, question-type: how-many, user-segment: producer-exec}
+  object: "spec.md 'so that a question over, say, 500 players is fast'"
+  situation: "Producer asks 'what share of players quit at step 3'; chatbot answers '42%' from 211 of 500 recorded players; the game has 48,117 tutorial starters of whom telemetry says 18% quit at step 3, because recorded players were recruited from a harder-to-reach segment"
+  consequence: "Low willingness to ship a bare percentage: the 42% becomes a slide in a producer deck and is wrong by a factor of 2.3; mandatory format is '211 of 500 recorded (42%); telemetry: 8,661 of 48,117 (18%); recorded sample over-represents PC-controller players'"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'a question over, say, 500 players'"
+  proposed: "Answer template enforces numerator/denominator for every proportion; if a telemetry metric map exists for the same event, the planner runs both and prints the pair; if the sample share differs from telemetry by more than 10 points, append a 1-line sample-composition note from telem-18 weights"
+  shallow: false
+  mechanism: "Chatbot UI: answer formatter with 1 mandatory block per proportion; query path: optional second SQL against telemetry"
+  example: "'How many players skip the dodge tutorial?' -> 'Recorded: 37 of 500 (7.4%). Telemetry (skip_tutorial_step{3}): 2,207 of 48,117 (4.6%). Recorded sample is 61% PC vs 29% in population.'"
+  cost: S
+  depends_on: "telem-3 for the telemetry pair; works without it in sample-only mode"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table gives counts of options over 500 videos with no population context; this prints both numbers side by side"
+
+- id: telem-10
+  title: "Per-field precision/recall of video-derived churn-risk fields measured against telemetry day-1 return (returned_d1 = 0/1) as the label, per game, before a field is exposed"
+  level: L4
+  cell: {part: evaluation, modality: game-telemetry, evidence-form: confidence-score, question-type: who-are-the-churners-segment-discovery, extraction-trigger: on-cohort-size-threshold, scope: all-players}
+  object: "memo.md 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'; spec.md target 'detecting churn in the tutorial and just after it'"
+  situation: "The memo evaluates fields against hand labels (does the extractor read the transcript correctly) but never against the outcome the studio cares about (did the player come back)"
+  consequence: "A field like 'expressed frustration at step 3' may be extracted with 95% label agreement and still have zero association with churn; with telemetry labels, each field gets lift (P(churn | field=true) / P(churn)) and a sample size; fields with lift < 1.2 on n >= 200 are hidden from the ontology's churn questions"
+  p_typical: 0.18
+  grounded: quote
+  evidence: "memo.md: 'accuracy against hand-labelled sessions'"
+  proposed: "Weekly job joins observation fields (per player, boolean/count) to telemetry returned_d1 and returned_d7; stores a field_outcome_lift table (field, game, n, lift, ci_low, ci_high); chatbot shows lift next to any churn-related answer"
+  shallow: false
+  mechanism: "Evaluation: 1 weekly join and 1 table; question generation: pruning rule on lift; UI: 1 extra line per answer"
+  example: "Field 'help_utterance_step_3': n=500, churn rate 31% with vs 14% without, lift 2.2 (1.6-3.0); field 'sighed_during_step_3': lift 1.05 (0.7-1.5) -> hidden from the churn question set"
+  cost: M
+  depends_on: "telem-2; telemetry retention events available for the recorded players"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table's questions were chosen by hand for churn; this measures which extracted fields actually predict churn and drops the ones that do not"
+
+- id: telem-11
+  title: "Questions generated by contrasting telemetry churners vs retainers over every observation field; a question is emitted for each field whose rate differs by 10+ points at n >= 100 per side"
+  level: L4
+  cell: {part: question-generation, question-origin: discriminative-contrast-churn-vs-retain, query-path: automatic-contrast-cohort-diff, mechanism-type: auto-discover-without-question, evidence-form: contrast-vs-baseline, moment-in-journey: first-cohort-ingested, scope: cohort}
+  object: "memo.md 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "Day 7 after the first 500 sessions are ingested; the ontology produced 340 questions for the tutorial; the studio does not know which 5 to read first"
+  consequence: "Contrast over 180 boolean fields yields 9 fields with a 10+ point gap, each becoming a ranked question ('Why do churners open the settings menu during step 4 at 3x the rate?'); the studio starts from 9 questions, not 340"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'ontology (entities x dimensions x outcomes), pruned by the game target'"
+  proposed: "After each ingestion batch, compute per-field rate in churners (telemetry: no session on day 1-3) vs retainers; rank by absolute gap with a Benjamini-Hochberg cut at q=0.10; render as a 'what differs' list with 3 clips per side"
+  shallow: false
+  mechanism: "Question generation: a contrast job (1 pass over the per-player field matrix, 500 x 180) writes a ranked question list with gap, n, q-value; UI: a standing 'what differs' panel"
+  example: "'Churners say a confused utterance in step 4 in 38 of 150 (25%) vs retainers 28 of 350 (8%); gap 17 points, q=0.02' -> generated question: 'What confuses players in step 4?' with the 38 clips"
+  cost: M
+  depends_on: "telem-2, telem-10's per-player field matrix"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "the fixed questions were guessed before data existed; these are derived from where recorded churners and retainers actually differ"
+
+- id: telem-12
+  title: "KPI-backward generation: each step in the studio's telemetry funnel with a drop of 5+ points spawns 3 why-questions scoped to that step's window"
+  level: L4
+  cell: {part: question-generation, question-origin: kpi-backward-from-studio-metrics, question-type: why, granularity: tutorial-step, moment-in-journey: game-onboarding-day-0, subject-domain: onboarding-tutorial, user-segment: game-designer}
+  object: "memo.md ontology 'pruned by the game target'; spec.md 'targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Day 0 for a new game: no video yet, but the studio's funnel (tutorial_step_start/complete for 12 steps) already shows drops at step 3 (-11 points) and step 9 (-7 points)"
+  consequence: "The question set starts at 6 targeted questions on the 2 steps that lose players, each with a window predicate; the first 50 recorded sessions already answer them, instead of 340 ontology questions with equal weight"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'pruned by the game target'"
+  proposed: "Onboarding reads the funnel (1 SQL over the studio's events), ranks steps by drop, and for each flagged step emits: 'What did players do in the 60 s before leaving step N', 'What did players say during step N', 'What was on screen when the last input on step N happened'; each carries the step window from telemetry"
+  shallow: false
+  mechanism: "Question generation: funnel query -> step ranking -> 3 templates per flagged step; extraction prioritises those windows in the first batch"
+  example: "Step 3 drop 11 points -> 'What was on screen at the last input before leaving step 3?' -> after 50 sessions: 'in 19 of 22 abandoners, the dodge prompt was hidden behind the inventory panel'"
+  cost: S
+  depends_on: "studio funnel access at onboarding; telem-5 for windows"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "fixed questions are written per game by hand; these are written by the studio's own funnel numbers, so the first questions point at the steps that lose players"
+
+- id: telem-13
+  title: "Idle-with-prompt friction signal: 20+ s with no input events while a prompt or tutorial banner is on screen, computed from input logs and screen state, no LLM"
+  level: L4
+  cell: {part: ingestion-extraction, modality: input-events, representation: time-series-signals-affect-pace-silence, granularity: variable-length-moment-or-episode, extraction-trigger: at-ingestion, evidence-form: clip, effort: S-weeks}
+  object: "memo.md observation field 'friction signal'; spec.md 'what is on screen is largely lost'"
+  situation: "Silent players (no speech) produce empty transcripts; their friction is invisible to the memo's utterance-based extraction"
+  consequence: "Idle episodes are detected for 100% of players including the silent 30-40%; each episode row has start_ts, duration_s, screen_state, and the next input; 'where do silent players stall' becomes a SQL question"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'The transcript alone is not enough; what is on screen is largely lost'"
+  proposed: "Ingest the capture tool's input log (or telemetry input events) as a per-second input-rate series; combine with the screen-state classifier's prompt_visible flag; write 1 idle_episode row per run of 20+ s; clip = episode window +/-5 s"
+  shallow: false
+  mechanism: "Ingestion: 2 time series per session (input_rate, prompt_visible) and a run-length pass; store: idle_episode table; query: SQL count by step"
+  example: "Step 3: 97 of 500 players have an idle episode of 20+ s with the dodge prompt visible (median 34 s); 61 of them are silent players who would have had zero friction rows under transcript-only extraction"
+  cost: S
+  depends_on: "input events (capture overlay or telemetry) and a screen-state classifier with a prompt_visible class"
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table asks the model about the transcript; silent players answer nothing; this signal covers them with a deterministic rule"
+
+- id: telem-14
+  title: "AFK episodes (60+ s with no input, no speech, no telemetry event) are flagged and excluded from every duration and silence metric by default"
+  level: L4
+  cell: {part: store, modality: silence-or-absence-of-speech, question-type: how-long, representation: time-series-signals-affect-pace-silence, uncertainty-policy: always-answer, granularity: session}
+  object: "spec.md 'A session can be n hours'; memo.md 'how long' style closed fields"
+  situation: "Multi-hour sessions include bathroom breaks and phone calls; 'time on step 5' includes a 9-minute absence for 12 of 500 players and 'silence during step 5' reads 100% for them"
+  consequence: "Step-5 mean duration drops from 311 s to 184 s after AFK exclusion; the chatbot reports both numbers with the exclusion count ('12 AFK episodes removed, total 71 min')"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'A session can be n hours; each video is capped at 15 minutes'"
+  proposed: "Ingestion writes afk_episode rows from the 3-signal rule; metric SQL templates subtract AFK time; a flag include_afk=true re-includes it"
+  shallow: false
+  mechanism: "Store: afk_episode table (session, start_ts, end_ts, reason); query: every duration template has an AFK-subtract clause"
+  example: "'How long is step 5?' -> 'median 184 s (AFK-excluded; 12 players had 1+ AFK episode, 9 min max); raw median 203 s'"
+  cost: S
+  depends_on: "input events or telemetry heartbeat; speech timestamps"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table's per-video duration options cannot distinguish stuck from absent; this separates the two with a stated rule"
+
+- id: telem-15
+  title: "Per-session 10-second bucket table with 6 columns (speech_s, input_count, telemetry_event_count, prompt_visible_s, menu_open_s, step_id) so pace questions are column scans, not LLM reads"
+  level: L4
+  cell: {part: store, representation: time-series-signals-affect-pace-silence, granularity: session, query-path: sql-over-closed-fields, latency-tier: under-2s, question-type: timeline, reuse-scope-of-extraction: universal-primitives}
+  object: "memo.md 'timestamped atomic observations'; spec.md 'Long multi-video sessions'"
+  situation: "Designer asks 'does pace slow down in the second hour'; observation rows are events, not a continuous signal; answering requires the model to read all rows"
+  consequence: "A 3-hour session becomes 1,080 rows x 6 numeric columns; 'pace by hour across 500 players' is one GROUP BY over 540,000 rows (under 1 s on a columnar store); the same table feeds telem-13 and telem-14"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md Known problems: 'Long multi-video sessions'"
+  proposed: "Ingestion aggregates speech timestamps, input log, telemetry events, and screen-state outputs into 10 s buckets across video boundaries (using telem-1 offsets); store as Parquet partitioned by game and session"
+  shallow: false
+  mechanism: "Store: 1 bucket table computed for every game identically (universal primitive); query: SQL templates for pace, silence share, input rate by step or hour"
+  example: "'Where do players go quiet in the tutorial?' -> speech_s per bucket by step: step 6 has the lowest speech share (11% vs 29% mean) and the highest menu_open_s (41%)"
+  cost: M
+  depends_on: "telem-1 for cross-video alignment; screen-state classifier for prompt/menu flags"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "the fixed table has one row per video with categorical answers; this gives a numeric timeline per session that answers pace, silence and attention questions without any question having been written"
+
+- id: telem-16
+  title: "Pre/post for a patch: telemetry funnel diff per step first (exact, both builds), then video observations only for the steps whose drop changed by 3+ points"
+  level: L4
+  cell: {part: query-path, question-type: did-the-fix-work-pre-post, scope: build-version-pair, modality: build-version-metadata, moment-in-journey: new-build-version, query-path: automatic-contrast-cohort-diff, evidence-form: contrast-vs-baseline}
+  object: "memo.md tier 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "Studio ships build 1.4.3 moving the dodge prompt; asks 'did the step-3 fix work'; recorded sessions exist for 1.4.2 (500) and 1.4.3 (120)"
+  consequence: "Telemetry answers the headline in under 2 s (step-3 completion 71% -> 83%, n=48,117 vs 12,402); video is read only for the 1.4.3 step-3 abandoners (19 recorded) to say what still fails; no batch re-extraction is triggered"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  proposed: "Planner recognises build-pair questions; runs funnel diff SQL over telemetry for all steps; for steps with a 3+ point change, pulls observation rows for the post-build abandoners of that step and summarises; renders a 2-column step table plus 1 paragraph"
+  shallow: false
+  mechanism: "Query path: 1 SQL over telemetry, then a targeted observation read; store: session rows carry build_version from telemetry"
+  example: "'Did 1.4.3 fix step 3?' -> 'Completion 71% -> 83% (telemetry). Of 19 recorded 1.4.3 abandoners, 12 never pressed dodge; 7 pressed it during the enemy wind-up and died'"
+  cost: S
+  depends_on: "telem-2, build_version on sessions"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table answers per video with no build dimension; this answers the headline from the population and spends video reads only where the funnel moved"
+
+- id: telem-17
+  title: "Telemetry anomaly (step completion falls 5+ points day-over-day) triggers extraction on that step's window for the last 200 recorded sessions and pushes a Slack alert with 3 clips"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, mechanism-type: push-instead-of-pull, query-path: push-alert-no-query, extraction-trigger: on-game-update, delivery-surface: alert, latency-tier: push-no-query, moment-in-journey: live-ops-update, user-segment: live-ops-community}
+  object: "memo.md 'genuinely new questions trigger a one-time batch extraction'"
+  situation: "Nobody at the studio asks a question until a KPI moves; by then the sessions that explain the move are days old and the question is asked in a panic"
+  consequence: "The alert arrives within 6 hours of the funnel drop with the step name, the delta, and 3 clips of recorded players failing the step; the backfill that the memo would run on-first-question is already done"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'the question set grows from real use'"
+  proposed: "Nightly funnel monitor (per step, per build, 7-day baseline); on a 5+ point drop, enqueue extraction for that step window over the newest 200 recorded sessions; post to the studio's Slack channel: step, delta, n, 3 clip links"
+  shallow: false
+  mechanism: "Feedback loop driven by telemetry, not the query log: 1 monitor job, 1 extraction job, 1 webhook"
+  example: "'Step 7 completion 88% -> 79% since build 1.5.0 (n=9,811). In 31 of 40 recorded 1.5.0 sessions the new crafting popup covers the objective marker. Clips: a, b, c'"
+  cost: M
+  depends_on: "telem-3 metric map, telem-5 windows, Slack integration"
+  part: feedback-loop-from-query-log
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "the fixed table waits to be queried; this answers the question the KPI drop will cause before anyone types it"
+
+- id: telem-18
+  title: "Recruit recorded players by strata drawn from telemetry (platform x input device x prior-genre playtime) and store a per-player weight so chatbot proportions are reweighted to the population"
+  level: L4
+  cell: {part: collection-protocol, mechanism-type: change-data-at-source, modality: player-profile-metadata, uncertainty-policy: answer-with-ci-and-n, scope: all-players, evidence-form: count-with-denominator, user-segment: ux-researcher}
+  object: "spec.md 'a question over, say, 500 players'"
+  situation: "The 500 recorded players are whoever signed up; 61% PC-controller vs 29% in the population; every proportion the chatbot gives inherits that skew"
+  consequence: "With quotas (12 strata, 40 players each minimum) and stored weights, 'share who quit at step 3' is reported as 'weighted 19% (unweighted 42%), 95% CI 15-24%'; without it, the number is off by 2x and nobody knows"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "spec.md: 'a question over, say, 500 players is fast'"
+  proposed: "Onboarding pulls the strata distribution from telemetry (1 SQL); recruitment targets per stratum; session row gets stratum and weight = pop_share / sample_share; SQL templates compute weighted proportions with Wilson CI"
+  shallow: false
+  mechanism: "Collection protocol: quota table per game; store: 2 columns on session; query: weighted aggregates"
+  example: "'How many players miss the dodge prompt?' -> 'weighted 23% (CI 18-28%, n=500, 12 strata); mobile-touch stratum 41% vs PC-controller 9%'"
+  cost: M
+  depends_on: "telem-2; telemetry profile fields for the population"
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table counts answers over whoever was recorded; this makes those counts estimates of the population with a stated error"
+
+- id: telem-19
+  title: "Observation tables mounted inside the studio warehouse (Snowflake share / BigQuery dataset); the planner generates SQL that joins jev.observations to the studio's events table directly"
+  level: L4
+  cell: {part: query-path, tenancy-and-deployment: federated-query-into-studio-warehouse, query-path: text-to-semantic-layer-metrics, build-or-buy: studio-owned-stack, delivery-surface: api-sdk, user-segment: studio-data-engineer, effort: M-one-quarter}
+  object: "spec.md 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "Telemetry cannot leave the studio (contract); JEV cannot copy 48,117 players' events; every join in telem-3/4/16 would otherwise be impossible"
+  consequence: "JEV ships observations to the studio, not the reverse; the planner's SQL runs where both tables live; JEV never holds telemetry; query latency is the warehouse's (2-8 s on BigQuery for a 500-session join)"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'whether game telemetry is joined'"
+  proposed: "Per studio: 1 shared dataset (observations, sessions, idle_episode, bucket10s, field_registry); planner holds a per-studio catalogue of the studio's event tables (names, columns) and emits SQL via a read-only service account; results stream back to the chatbot"
+  shallow: false
+  mechanism: "Query path: text-to-SQL over a 2-schema catalogue (JEV + studio); tenancy: data stays in the studio; store: JEV keeps a copy of its own tables only"
+  example: "'Why do step-3 abandoners quit?' -> SQL joining studio.events (abandon predicate) to jev.observations ON player_hash AND telemetry_ts BETWEEN ... -> 2,460 rows -> LLM summary"
+  cost: M
+  depends_on: "telem-1, telem-2, telem-7 export format; a warehouse connection per studio"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "the fixed table is an island inside JEV; this puts video observations next to every column the studio already has"
+
+- id: telem-20
+  title: "Synthetic events from screen state where telemetry has no event: menu_open, prompt_shown, death_screen written as jev.synthetic.<name> with the studio's event naming convention"
+  level: L4
+  cell: {part: frame-pipeline, modality: screen-state-classifier, representation: wide-event-schema-on-read, schema-evolution: append-only-versioned-fields, granularity: frame, extraction-trigger: on-new-field-added, reuse-scope-of-extraction: genre-shared}
+  object: "spec.md 'what is on screen is largely lost'; memo.md 'Video frames add screen state and on-screen text'"
+  situation: "Studio telemetry has 41 event types but no event for opening the settings menu, no event for a tutorial prompt being displayed, and no death-screen event; the studio's data team cannot add instrumentation before the next build"
+  consequence: "Screen-state classifier output (1 frame per second, 12 classes) is emitted as events the studio's funnel tool can use the day after ingestion; 'how many players opened settings during step 3' answered from the studio's own tool with n=500"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'Video frames add screen state and on-screen text, because speech alone cannot answer \"where did they click\"'"
+  proposed: "Frame pipeline emits state transitions (enter/exit) as rows event_name='jev.synthetic.menu_open', player_hash, telemetry_ts, properties{confidence, frame_ts, video_id}; classifier classes per genre (12 for action-RPG) reused across games; new classes = new event names, no migration"
+  shallow: false
+  mechanism: "Frame pipeline: transition detection on classifier output; export: same channel as telem-7; question generation: each synthetic event becomes a what-happened/when/how-many question automatically"
+  example: "'Do players open the inventory while the dodge prompt is up?' -> jev.synthetic.menu_open{menu=inventory} within prompt_shown window: 88 of 500 (17.6%), median 23 s before abandoning"
+  cost: M
+  depends_on: "screen-state classifier (cv-frame-engineer); telem-1 offsets"
+  part: frame-pipeline
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "the fixed table captures screen content only through transcript questions; synthetic events make screen state countable with the same tools as telemetry"
+
+- id: telem-21
+  title: "Instrumentation QA: a weekly report of telemetry events with no matching screen state (double fires, 0-duration steps) and screen states with no telemetry event (uninstrumented steps), per build"
+  level: L4
+  cell: {part: evaluation, question-type: technical-issue-bug-perf, modality: game-telemetry, subject-domain: technical-bugs-performance, delivery-surface: scheduled-digest, user-segment: studio-data-engineer, scope: build-version-pair}
+  object: "spec.md Unspecified 'whether game telemetry is joined'"
+  situation: "Build 1.4.2 fires tutorial_step_complete{3} twice for 14% of players and never fires step_start{9}; the studio's funnel is wrong and they do not know; JEV's step windows (telem-5) are wrong for those players too"
+  consequence: "The report lists 2 defects with counts (double fire: 70 of 500 recorded; missing step 9 start: 500 of 500) and 2 clips each; the studio data engineer fixes instrumentation, and JEV gets a reason to be in their standup"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "memo.md: 'step on screen' extracted from video provides an independent reading of the same step boundary telemetry claims"
+  proposed: "Weekly join of telemetry step events to screen-state step detections per session; count mismatches by type (event_without_screen, screen_without_event, duplicate_event, order_violation); digest to the studio data channel"
+  shallow: false
+  mechanism: "Evaluation job over 2 sources; delivery: digest; store: mismatch table also used to flag sessions where telem-5 windows fall back to frame inference"
+  example: "'Build 1.4.2: step_complete{3} double-fires in 70/500 (14%); step_start{9} absent in 500/500; 4 clips attached; JEV windows for step 9 use frame inference until fixed'"
+  cost: S
+  depends_on: "telem-1, telem-5, screen-state step detection"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table says nothing about the studio's data; this finds bugs in the telemetry the studio already pays for"
+
+- id: telem-22
+  title: "Videos of one session are ordered and gap-checked against the telemetry session: a session row lists expected_minutes (from first to last event) vs covered_minutes (sum of videos) and names the missing ranges"
+  level: L4
+  cell: {part: session-stitching, modality: game-telemetry, granularity: session, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: abstain-below-coverage, representation: per-session-summary}
+  object: "spec.md Unspecified 'how videos of one session are linked'; 'each video is capped at 15 minutes'"
+  situation: "A 3-hour session should be 12 videos; upload produced 11 and video 7 is 9 minutes long because capture restarted; without a reference there is no way to know anything is missing"
+  consequence: "Session row: expected 181 min, covered 159 min, missing [01:30:00-01:45:00, 02:51:00-02:58:00]; any step question whose window overlaps a gap is answered with 'coverage 455 of 500 players for step 8' instead of a silent undercount"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos'"
+  proposed: "Stitcher uses telemetry first/last event as the session span and telem-1 offsets to place each video on it; writes coverage ranges; query templates compute per-step coverage and print it when under 95%"
+  shallow: false
+  mechanism: "Session stitching: 1 coverage computation per session; store: coverage_ranges column; query: coverage clause on every per-step aggregate"
+  example: "'How many players struggled at step 8?' -> '62 of 455 covered players (13.6%); 45 players have no video for step 8'"
+  cost: S
+  depends_on: "telem-1"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table is per video and cannot know a video is missing; this states what the recording covers"
+
+- id: telem-23
+  title: "REFUSE: an entity-relation graph store for sessions; the same questions are joins over 3 flat tables (sessions, observations, bucket10s) plus the studio's events, and the studio's analysts cannot write graph queries"
+  level: L3
+  cell: {part: store, representation: entity-relation-graph, user-segment: studio-data-engineer, build-or-buy: open-source-component, query-path: sql-over-closed-fields, effort: L-multi-quarter}
+  object: "memo.md 'session-level observation log'; B-perspectives knowledge-graph-person 'graph queries vs tables'"
+  situation: "A proposal to model player -> step -> mechanic -> UI element as a graph with temporal edges, to answer 'which UI element did players interact with before failing step 3'"
+  consequence: "Low willingness: the question is SELECT ui_element, count(*) FROM observations WHERE step_id=3 AND telemetry_ts < abandon_ts GROUP BY 1; a graph store adds a second query language, breaks the warehouse export (telem-7/19), and no studio data team has Cypher skills; the only graph-shaped question found in 2 years of studio asks is 'path through optional tutorial steps', which is a string-agg over telemetry"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  proposed: "Keep flat tables; if a path question appears, add a per-player step_sequence string column computed from telemetry (1 field, XS effort)"
+  shallow: false
+  mechanism: "No change; records the reason so the graph option is not re-litigated: every entity in the proposed graph is already a column or a join key"
+  example: "'Which UI element did step-3 abandoners touch last?' -> flat SQL over observations joined to telemetry abandon time: inventory panel 19 of 41, map 9 of 41, none 13 of 41"
+  cost: S
+  depends_on: nothing
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "not applicable to the graph; the flat alternative beats the fixed table because every column is joinable to telemetry and exportable"
+
+- id: telem-24
+  title: "REFUSE: averaged LLM sentiment scores ('mean frustration 3.4/5 at step 3') in any aggregate; sentiment is stored as a categorical label with quote and only reported as 'n of m players said X' until a per-game inter-rater agreement of kappa >= 0.6 is on file"
+  level: L4
+  cell: {part: evaluation, question-type: how-felt, uncertainty-policy: abstain-below-coverage, evidence-form: quote-with-timestamp, representation: timestamped-observation-log, subject-domain: player-affect}
+  object: "memo.md observation field 'sentiment'"
+  situation: "The ontology emits 'how frustrated were players at step N' for 12 steps; the extractor returns a 1-5 number per utterance; the chatbot averages them"
+  consequence: "Low willingness: an LLM 1-5 scale has no calibration across games or across model versions; a mean of 3.4 moves to 2.9 after a model upgrade with no change in players, and the studio reads it as a fix; the categorical form with quotes survives model upgrades and is checkable"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'sentiment, quote with timestamp as evidence'"
+  proposed: "Store sentiment as label in {frustrated, confused, bored, delighted, neutral} with quote and ts; evaluation keeps a 100-utterance per-game double-labelled set with kappa; chatbot prints counts and 3 quotes; numeric scales unlocked per game only above kappa 0.6"
+  shallow: false
+  mechanism: "Store: categorical column, no numeric; evaluation: kappa table per game and extractor version; chatbot: count-and-quote template for how-felt"
+  example: "'How did players feel at step 3?' -> 'frustrated: 71 of 500 (14%); confused: 58 (12%); quotes: \"why won't it dodge\" (0417, 00:04:40) ...; kappa for this game 0.71'"
+  cost: S
+  depends_on: "double-labelled set per game (eval-lead)"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table reports option counts with no agreement measure; this reports counts with the agreement number next to them and refuses the one form (a mean score) most likely to mislead"
+
+- id: telem-25
+  title: "Per-player wide feature row (180 video-derived counts + 40 telemetry features) clustered into 4-6 behaviour archetypes; questions generated from the fields that separate archetypes"
+  level: L4
+  cell: {part: question-generation, representation: behaviour-archetype-clusters, granularity: player-segment-cluster, question-origin: induced-from-data, question-type: who-are-the-churners-segment-discovery, modality: game-telemetry, scope: all-players}
+  object: "memo.md 'ontology (entities x dimensions x outcomes)'; spec.md 'detecting churn in the tutorial and just after it'"
+  situation: "The studio asks 'who are the churners' and the ontology has no segment concept; churn is one outcome, but there are at least 3 ways to churn in a tutorial (never understood the mechanic; understood and found it boring; hit a bug)"
+  consequence: "Clustering 500 rows yields 4 archetypes with churn rates 61% / 34% / 12% / 9% (telemetry) and 5 defining fields each; the chatbot answers 'who churns' with named segments and sizes rather than one pooled rate"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'entities x dimensions x outcomes'"
+  proposed: "Weekly job builds the per-player matrix (same as telem-10/11), standardises, runs k-means with k chosen by silhouette in 3-8, labels clusters by their top 5 discriminating fields, joins churn rate from telemetry; generates 'What do players in segment N say at the step where they diverge' questions"
+  shallow: false
+  mechanism: "Question generation and store: 1 matrix, 1 clustering, 1 segment table (player_hash, segment_id); chatbot: segment names usable in any question as a filter"
+  example: "'Who are the churners?' -> 'Segment A (n=88, churn 61%): 3+ idle episodes in steps 2-4, 0 help utterances, mobile-touch; Segment B (n=140, churn 34%): completes fast, says \"boring\" or \"skip\" 2+ times; ...'"
+  cost: M
+  depends_on: "telem-2, telem-10 matrix, telem-13 idle episodes"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "the fixed table has one churn outcome and no notion of player type; this produces segments from the data and the questions follow the segments"
+
+- id: telem-26
+  title: "Prevalence of a quoted complaint estimated on the full population: map the quote to a telemetry proxy predicate, report sample rate and population rate side by side"
+  level: L4
+  cell: {part: query-path, question-type: prevalence-of-quoted-sentiment, modality: game-telemetry, scope: all-players, evidence-form: count-with-denominator, query-path: sql-over-closed-fields, user-segment: game-designer}
+  object: "memo.md 'quote with timestamp as evidence'"
+  situation: "Designer pastes 'I can't find the attack button' and asks how common it is; recorded players: 23 of 500 said something similar; the real question is about 48,117 players"
+  consequence: "Planner proposes a proxy (no attack input within 30 s of the first combat prompt) and runs it on telemetry: 6,140 of 48,117 (12.8%); shown with the 23/500 (4.6%) speech rate and the note 'speech under-reports: of the 61 recorded players matching the proxy, 23 said it aloud'"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "For prevalence questions, the planner searches the field registry and the studio event catalogue for a behavioural proxy, shows the proposed predicate to the user for confirmation (1 click), runs it, and stores quote -> proxy mappings for reuse"
+  shallow: false
+  mechanism: "Query path: proxy suggestion step (LLM over 2 catalogues) + confirmation + telemetry SQL; store: quote_proxy table for cached reuse"
+  example: "'How common is this: \"I can't find the attack button\"?' -> 'Said aloud: 23 of 500 recorded. Behavioural proxy (no attack press within 30 s of combat prompt): 6,140 of 48,117 (12.8%). Proxy validated on recorded players: 61 match, 23 of them said it.'"
+  cost: M
+  depends_on: "telem-3 catalogue, telem-2 join"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "the fixed table can count an option over 500 videos; this turns a quote into a population-scale number with a validation step"
+
+- id: telem-27
+  title: "Standard tutorial report: telemetry funnel per step (n, completion, median time) with a video 'why' column (top 3 friction labels with counts) and 3 clips per step, regenerated nightly"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: dashboard-standard-report, question-type: what-to-fix-first-prioritised, evidence-form: clip-montage-n-examples, latency-tier: overnight, user-segment: producer-exec, moment-in-journey: steady-state-weekly, representation: issue-list-with-severity-frequency}
+  object: "spec.md 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "Most studio questions in the first month are the same 10 questions about the tutorial funnel; typing them into a chatbot is slower than opening a page"
+  consequence: "The page answers the 10 questions without any typing; the chatbot's query log shrinks to the long tail, which is what memo.md's planner is for; producers get one URL to paste into the weekly review"
+  p_typical: 0.14
+  grounded: quote
+  evidence: "spec.md: 'targets are mostly detecting churn in the tutorial and just after it'"
+  proposed: "Nightly job: funnel SQL (telemetry) + per-step friction counts (observations) + clip selection (highest-confidence friction episode per player, 3 per step); rendered as a 12-row table with expandable clips; severity = drop points x friction share"
+  shallow: false
+  mechanism: "UI: 1 report template per genre; query: 2 SQL statements and 1 clip lookup per step; no LLM at view time"
+  example: "Row: 'Step 3 Dodge | n 48,117 | completion 71% (-11) | median 142 s | why: prompt hidden by inventory 19, timing 12, never pressed 7 (of 41 recorded abandoners) | clips 3'"
+  cost: S
+  depends_on: "telem-3, telem-5, telem-13"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table needs a question to be typed; this delivers the 10 standard answers with population numbers and clips before any question"
+
+- id: telem-28
+  title: "A metrics layer (dbt MetricFlow or Cube) defines each metric once over both telemetry and observation tables; the chatbot translates text to metric calls, never to raw SQL"
+  level: L4
+  cell: {part: query-path, query-path: text-to-semantic-layer-metrics, build-or-buy: open-source-component, representation: olap-cube-materialized-views, schema-evolution: deprecate-and-migrate, user-segment: studio-data-engineer, latency-tier: under-2s}
+  object: "memo.md 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Text-to-SQL over 2 schemas (telem-19) produces a different join for 'step completion rate' on different days (inner vs left join, AFK included or not), and the studio's own number for the same metric differs again"
+  consequence: "40 metrics (step_completion_rate, time_in_step_afk_excluded, help_utterance_rate, idle_episode_rate ...) have one definition with owner and version; the chatbot picks a metric and dimensions; the studio's BI uses the same layer, so the two never disagree"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'closed-field questions become aggregate queries over all players (instant)'"
+  proposed: "Define metrics in YAML (dbt metrics) over the shared dataset; planner maps a question to (metric, dimensions, filters) with a 40-entry catalogue; metric changes are versioned and the answer prints metric@version; materialised views refresh nightly for the 40"
+  shallow: false
+  mechanism: "Query path: text-to-metric instead of text-to-SQL for closed questions; store: materialised views; schema evolution: metric deprecation with a 30-day dual-serve"
+  example: "'Help-ask rate per step for mobile players' -> help_utterance_rate@3 BY step WHERE platform='mobile' -> 12 rows, 0.4 s, same numbers as the studio's Looker"
+  cost: M
+  depends_on: "telem-7 or telem-19 dataset; a studio data engineer to co-own definitions"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table's option counts have no definition anyone can read; a metrics layer makes every number reproducible by the studio with their own tool"
+
+- id: telem-29
+  title: "Day-0 question seed from the studio's telemetry event catalogue: each of the 41 event names and its properties spawns what-happened / when / how-many templates and a video 'why' pair, before any video exists"
+  level: L4
+  cell: {part: question-generation, question-origin: induced-from-data, moment-in-journey: game-onboarding-day-0, modality: game-telemetry, extraction-trigger: on-new-game-onboarding, reuse-scope-of-extraction: game-specific, effort: XS-days}
+  object: "memo.md 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "Day 0 for a new game: the ontology needs the game's entities (steps, mechanics, UI elements); the studio's event schema already lists them (tutorial_step{step_id 1-12}, ability_used{ability}, menu_opened{menu}, death{cause})"
+  consequence: "Entity list for the ontology comes from the event catalogue in 1 hour instead of an onboarding interview; 41 events x 3 templates = 123 questions with exact telemetry predicates, plus 41 'why' questions routed to video; the per-game hand-written step is removed"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'pruned by the game target'; spec.md: 'written per game target'"
+  proposed: "Onboarding ingests the event schema (JSON or dbt sources.yml); an entity extractor maps event/property names to ontology entities (step, mechanic, UI element, outcome); templates are instantiated with the telemetry predicate attached; the video extractor prompt receives the same entity names so observation fields and events share vocabulary"
+  shallow: false
+  mechanism: "Question generation: schema -> entities -> templated questions; ingestion: entity names injected into extraction prompts"
+  example: "Event ability_used{ability in [dodge, parry, heal]} -> 'How many players used parry during the tutorial?' (telemetry) and 'Why did players who never used parry avoid it?' (video, cohort = no ability_used{parry})"
+  cost: S
+  depends_on: "studio provides its event schema at onboarding"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed questions take a person-week per game; the event catalogue gives the game's own nouns on day 0 and ties each question to a predicate the studio can verify"
+
+- id: telem-30
+  title: "When the store cannot answer and the fact lives in telemetry JEV does not hold, the chatbot returns a ready-to-run SQL snippet against the studio's event names plus 'what video would add' instead of a guess"
+  level: L4
+  cell: {part: chatbot-ui, uncertainty-policy: escalate-to-human-analyst, query-path: human-analyst-escalation, question-origin: failed-query-log, user-segment: studio-analyst, latency-tier: under-2s, mechanism-type: narrow-or-clarify-the-question}
+  object: "memo.md 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "Analyst asks 'what is day-7 retention for players who completed the tutorial in under 2 minutes'; no video field answers it and no join exists (studio on export-only tenancy); the memo would trigger a batch extraction that cannot answer a retention question"
+  consequence: "Answer in 2 s: a SQL snippet over the studio's own tables (from the event catalogue), a note that retention is not in video, and a 1-line offer ('I can tell you what fast finishers say during the tutorial: 112 recorded'); the failed-query log records 'telemetry-only' as the reason, not 'missing field'"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "memo.md: 'genuinely new questions trigger a one-time batch extraction'"
+  proposed: "Planner adds a 'telemetry-only' outcome: generate SQL from the catalogue, do not trigger backfill, log the reason; weekly review of telemetry-only questions decides which joins (telem-19) are worth setting up"
+  shallow: false
+  mechanism: "Chatbot UI: 1 new answer type; feedback loop: failed-query log gains a reason enum {no-field, telemetry-only, coverage-too-low, ambiguous}"
+  example: "'D7 retention for sub-2-minute tutorial finishers?' -> 'Not in video. Run in your warehouse: SELECT ... FROM events ... ; Video can add: 112 recorded sub-2-minute finishers; 31 said \"skip\" or \"boring\"'"
+  cost: S
+  depends_on: "event catalogue per studio"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table either has the option or returns nothing; this hands the analyst the query they need and names what video can add, and it stops backfills that cannot succeed"
+
+- id: telem-31
+  title: "Extraction priority from telemetry: sessions are ranked by anomaly score (abandonment, retries, time-in-step z-score) and the full multimodal pass runs on the top 40% first; the rest get the cheap primitives (telem-13/15) only until a question needs them"
+  level: L4
+  cell: {part: cost-governance, extraction-trigger: on-first-question, mechanism-type: approximate-then-refine, modality: game-telemetry, schema-evolution: lazy-backfill-on-demand, latency-tier: minutes, granularity: session}
+  object: "spec.md 'Ingestion time and cost are not a concern'; memo.md 'one-time batch extraction over all sessions'"
+  situation: "Even with ingestion cost tolerated, re-extraction after every schema or model change over 500 x 3-hour sessions (1,500 hours of video) takes 2 days; most sessions are uneventful completions"
+  consequence: "Re-extraction for a new field finishes on the 200 anomalous sessions in 10 hours; the 300 calm sessions get the field lazily if a cohort question needs them; coverage is printed as 'field available for 200 of 500 (telemetry-prioritised)'"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern. Answering a studio's question must be fast.'"
+  proposed: "Per-session anomaly score from telemetry (sum of z-scores over step durations, retries, abandonment flag); extraction queue ordered by score; field_coverage table per field; planner checks coverage before aggregating and triggers backfill on the remainder when a question touches it"
+  shallow: false
+  mechanism: "Cost governance: 1 score per session, 1 ordered queue, 1 coverage table; query: coverage check before any aggregate"
+  example: "New field 'parry_prompt_misread' requested: extracted on 200 anomalous sessions by morning; analyst asks a cohort question touching 38 calm sessions -> backfill those 38 in 4 min, answer with coverage 238 of 500"
+  cost: M
+  depends_on: "telem-2, telem-5; coverage column per field"
+  part: cost-governance
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "the fixed table is computed once for all videos at equal cost; this spends the expensive pass where telemetry says something happened and states coverage for the rest"
+
+- id: telem-32
+  title: "Player identity never crosses the boundary unhashed: JEV stores sha256(player_id || studio_salt); the salt lives in the studio's KMS; re-identification requires the studio to run the hash"
+  level: L4
+  cell: {part: tenancy-access-control, tenancy-and-deployment: logically-isolated-per-studio, modality: player-profile-metadata, user-segment: jev-internal-ops, build-or-buy: build-in-house, effort: XS-days}
+  object: "spec.md 'A player's gameplay session is captured as video' (minors and speech are in scope per B-perspectives privacy-counsel)"
+  situation: "Every join option above (telem-1 through telem-31) needs a player key; the studio's security reviewer asks whether JEV holds account IDs for players under 18"
+  consequence: "JEV holds hashes only; a leak of the observation store exposes no account ID; the studio can still join because they hold the salt; a hash rotation (new salt) invalidates old joins, so the rotation procedure (re-hash from the studio side, 1 job) is written down before the first join"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'whether game telemetry is joined'"
+  proposed: "Intake form posts the raw ID to a studio-hosted hashing endpoint (or the studio exports a (hash) list); JEV stores player_hash and salt_version; export and federated SQL use player_hash only"
+  shallow: false
+  mechanism: "Tenancy: 1 hashing endpoint per studio, 1 salt_version column; access control: JEV staff cannot resolve a hash"
+  example: "Studio asks 'why did step-3 abandoners quit' -> studio-side SQL hashes their 212 abandoners -> JEV matches 41 hashes -> answer; nobody at JEV sees an account ID"
+  cost: S
+  depends_on: "telem-2"
+  part: tenancy-access-control
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "the fixed table has no player key and therefore no privacy exposure and no join; this gets the join with the same exposure as the fixed table"

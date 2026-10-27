@@ -148,7 +148,7 @@
 - id: extract-8
   title: "Silent-player path: when a video has under 20 words of player speech, extraction runs in screen-only mode, each row carries modality_basis, and what-said questions abstain when speech coverage is under 50% of the cohort"
   level: L4
-  cell: {part: ingestion-extraction, modality: silence-or-absence-of-speech, uncertainty-policy: abstain-below-coverage, evidence-form: coverage-statement-n-of-m-players, question-type: what-said, representation: hybrid, collection-protocol: at-ingestion}
+  cell: {part: ingestion-extraction, modality: silence-or-absence-of-speech, uncertainty-policy: abstain-below-coverage, evidence-form: coverage-statement-n-of-m-players, question-type: what-said, representation: hybrid, scope: cohort}
   part: ingestion
   object: "spec.md item 2: 'the transcript alone is not enough; what is on screen is largely lost'"
   situation: "A cohort of 500 includes 180 players who say almost nothing; speech-derived fields (affect, goal_stated) are extracted anyway and come back as 'neutral' and 'none'"
@@ -265,7 +265,7 @@
   cost: XS
   depends_on: "video offset table from the session stitcher"
   better_than_fixed_table: "The fixed table has no timestamps at all"
-  p_typical: 0.10
+  p_typical: 0.09
   grounded: quote
   evidence: "memo.md: 'timestamped atomic observations' ; spec.md: 'how videos of one session are linked' unspecified"
   proposed: "Ids in, seconds out; never let the model write a clock time"
@@ -295,7 +295,7 @@
 - id: extract-15
   title: "REFUSED: one prompt extracting 150+ fields per video in a single call; the persona replaces it with field families of at most 12 fields per call, one call per family, because accuracy on enum fields drops past roughly 30 fields per call"
   level: L4
-  cell: {part: ingestion-extraction, representation: fixed-mcq-answers, granularity: video, question-origin: ontology-generated, mechanism-type: precompute-more, extraction-trigger: at-ingestion, cost-governance: at-ingestion}
+  cell: {part: ingestion-extraction, representation: fixed-mcq-answers, granularity: video, question-origin: ontology-generated, mechanism-type: precompute-more, extraction-trigger: at-ingestion, effort: S-weeks}
   part: ingestion
   object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes)'"
   situation: "The ontology yields 180 questions for a game; the cheapest implementation is one call with all 180 as a JSON schema"
@@ -391,7 +391,7 @@
   cost: M
   depends_on: "frame pipeline screen-class model with menu/death classes"
   better_than_fixed_table: "Answers exist on day 0 and are comparable across games; the fixed table starts empty per game"
-  p_typical: 0.10
+  p_typical: 0.09
   grounded: quote
   evidence: "spec.md: 'written per game target' ; A-frame assumption 'per-game hand-written questions do not scale'"
   proposed: "Ship the 6 primitives as the first ingestion stage; everything game-specific runs after"
@@ -484,7 +484,7 @@
 - id: extract-24
   title: "Extractor can request frames: the extraction call has a get_frames(ts, n) tool; when an utterance is deictic ('this one', 'that button') the model pulls 3 frames around ts before filling ui_element; frame requests per video are logged and capped at 40"
   level: L4
-  cell: {part: frame-pipeline, modality: frame-embeddings, query-path: agentic-multi-tool-plan, granularity: utterance, extraction-trigger: at-ingestion, mechanism-type: approximate-then-refine, cost-governance: at-ingestion}
+  cell: {part: frame-pipeline, modality: frame-embeddings, query-path: agentic-multi-tool-plan, granularity: utterance, extraction-trigger: at-ingestion, mechanism-type: approximate-then-refine, effort: M-one-quarter}
   part: ingestion
   object: "spec.md item 2: 'what is on screen is largely lost'"
   situation: "Sampling 1 frame every 10 s misses the exact click; sampling every frame into every prompt is 900 images per video"
@@ -526,7 +526,7 @@
 - id: extract-26
   title: "Speaker-role tagging before extraction: moderator, player and in-game voice lines are separated by diarisation plus a role classifier, and affect and what-said fields are extracted from player speech only"
   level: L4
-  cell: {part: ingestion-extraction, modality: speech-transcript, question-type: what-said, granularity: utterance, collection-protocol: at-ingestion, evidence-form: quote-with-timestamp, subject-domain: player-affect}
+  cell: {part: ingestion-extraction, modality: speech-transcript, question-type: what-said, granularity: utterance, extraction-trigger: at-ingestion, evidence-form: quote-with-timestamp, subject-domain: player-affect}
   part: ingestion
   object: "spec.md 'Unspecified: What a transcript contains (speech only, on-screen text, events)'"
   situation: "A moderator says 'are you finding this frustrating?' and the game's narrator says 'you have failed'; both land in the transcript and are scored as player frustration"
@@ -689,4 +689,109 @@
   grounded: quote
   evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'"
   proposed: "Run once per game at 50/50; re-run per build"
+  shallow: false
+
+- id: extract-34
+  title: "No hand-edited prompts: every extraction prompt is compiled per game and per field family from the field registry (specs, enum values, evidence requirement), the glossary and the few-shot bank, and the compiled prompt text is stored with its hash as the row's provenance"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: append-only-versioned-fields, extraction-trigger: on-new-field-added, representation: common-data-model-with-per-game-vocab-map, question-origin: ontology-generated, evidence-form: extraction-provenance-model-and-schema-version}
+  part: ingestion
+  object: "spec.md item 3: 'fixed set of questions with options, written per game target'"
+  situation: "Each game has a hand-edited prompt file; adding one field from a backfill (extract-11) means editing 10 files, and two games drift to different wordings of the same field"
+  consequence: "The same concept is extracted differently per game, so cross-game benchmarks compare different questions; adding a field takes an engineer-day"
+  mechanism: "Prompt compiler input: field_registry rows for the family (name, type, enum values, definition<=40 words, evidence_required, 3 few-shot rows), glossary for the game, shared preamble version. Output: prompt text, deterministic for the same inputs; sha stored as prompt_hash on every row (extract-10). Adding a field = inserting a registry row; the next ingestion run picks it up; old sessions get it by lazy backfill. A CI diff shows the prompt text change per game when any registry row changes"
+  example: "Studio asks a new question 'did players notice the tutorial hint arrow?'; the compiled field notice_hint_arrow (enum yes/no/unknown, evidence frame) is added to the UI-read family registry at 10:00 and every session ingested after 10:05 has it, with the same wording for all 12 games that share the family"
+  ingest_cost: S
+  query_cost: S
+  cost: S
+  depends_on: "field registry; glossary (extract-20)"
+  better_than_fixed_table: "The fixed table's questions live in a prompt file per game; here they live in a table and the prompt is derived"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'written per game target'"
+  proposed: "Registry first, compiler second; delete the hand-edited prompt files"
+  shallow: false
+
+- id: extract-35
+  title: "Redaction inside the extraction call: spoken names, emails, handles and addresses are replaced with typed placeholders in the stored quote (<=40 words), a redacted flag is set, and sessions whose profile marks the player as under 16 get affect and webcam fields set to unobserved"
+  level: L4
+  cell: {part: tenancy-access-control, modality: player-profile-metadata, tenancy-and-deployment: logically-isolated-per-studio, evidence-form: quote-with-timestamp, mechanism-type: change-data-at-source, extraction-trigger: at-ingestion}
+  part: ingestion
+  object: "memo.md item 1: 'quote with timestamp as evidence' ; spec.md 'Unspecified: ... who at the studio asks'"
+  situation: "A player says 'my brother Tom at tom99@mail.com showed me this'; the verbatim quote rule (extract-1) stores it and the chatbot can surface it to anyone at the studio"
+  consequence: "Personal data of a third party sits in a queryable evidence column; a minors cohort has affect scores nobody agreed to collect"
+  mechanism: "Extraction output includes quote_raw; a post-step runs NER plus regex on quote_raw and writes quote with placeholders ([NAME], [EMAIL], [HANDLE]) and redacted=true; quote_raw is dropped after validation (extract-1 substring check runs before redaction). Quote length capped at 40 words. If profile.age_band is under_16: affect fields and any webcam-derived field are forced to unobserved and the row carries minor_policy=true. Chatbot counts over affect exclude minor_policy rows with a coverage statement"
+  example: "Studio asks 'what did players say when they got lost in the tutorial?' Quotes appear as 'my brother [NAME] showed me this' and the footer reads 'affect unavailable for 40 players under 16'"
+  ingest_cost: S
+  query_cost: S
+  cost: XS
+  depends_on: "age band in player profile metadata; NER model"
+  better_than_fixed_table: "The fixed table stores no quotes, so it had no exposure; adding evidence without this reintroduces it"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "Redaction before storage, never at display time"
+  shallow: false
+
+- id: extract-36
+  title: "Telemetry as the free labeller: where a studio supplies game telemetry, extracted step_id, death_count and completion are reconciled against telemetry events per session, and the per-field mismatch rate becomes the accuracy metric at the scale of all sessions, not 30 labelled ones"
+  level: L4
+  cell: {part: evaluation, modality: game-telemetry, evidence-form: confidence-score, extraction-trigger: at-ingestion, user-segment: studio-data-engineer, question-type: how-many, scope: all-players}
+  part: evaluation
+  object: "spec.md 'Unspecified: whether game telemetry is joined' ; memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: "The studio has a step_completed event per player; the extraction pipeline also infers step completion from frames and speech; nobody compares them"
+  consequence: "Accuracy is known for 30 sessions; a systematic error (the frame classifier confuses steps 4 and 5 on ultrawide monitors) stays invisible on the other 470"
+  mechanism: "Join on (player_id, session start) with a clock-offset estimate (median of 5 matched events). For each overlapping field: match rate, mean timestamp error, confusion matrix per step. Written to field_quality(field, source=telemetry, n, match_rate). Fields with match rate <0.9 trigger a review; sessions with mismatch get the telemetry value and a flag. Fields telemetry cannot see (affect, quotes, why) are left to human labels"
+  example: "Studio asks 'how many players completed tutorial step 5?' Answer: '402 of 500; extraction vs telemetry match 97.4% on this field over 500 sessions; 13 sessions use the telemetry value'"
+  ingest_cost: S
+  query_cost: S
+  cost: S
+  depends_on: "studio telemetry export keyed by player id and time"
+  better_than_fixed_table: "The fixed table is never checked against anything; this checks the overlapping fields on every session for free"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'whether game telemetry is joined' listed as unspecified"
+  proposed: "Offer telemetry join as the studio's first integration; use it for QA before using it for answers"
+  shallow: false
+
+- id: extract-37
+  title: "Pinned prompt per build pair: when a new build arrives, its sessions are extracted with the exact prompt_hash and model_id used for the previous build, and pre-post answers are computed only over rows sharing that hash; prompt upgrades are applied to both builds together or neither"
+  level: L4
+  cell: {part: schema-evolution, extraction-trigger: on-game-update, question-type: did-the-fix-work-pre-post, scope: build-version-pair, moment-in-journey: new-build-version, schema-evolution: frozen-schema, evidence-form: contrast-vs-baseline}
+  part: ingestion
+  object: "memo.md item 2: 'aggregate queries over all players' ; spec.md: 'targets are mostly detecting churn in the tutorial'"
+  situation: "Build 1.2 ships with a tutorial fix on the same week the extraction prompt is improved; 1.1 rows are v3, 1.2 rows are v4"
+  consequence: "The pre-post answer mixes a prompt change with a game change; the studio credits or blames the fix wrongly"
+  mechanism: "Build registry: build_id, first_session_at, pinned_prompt_hash, pinned_model_id (inherited from the previous build at creation). Ingestion for a build uses its pinned config. A prompt upgrade creates a paired re-extraction job over both builds in the pair (or the last 2 builds) before the new hash is pinned. Planner rule for did-the-fix-work: only rows where prompt_hash matches across both builds; otherwise the answer says 'not comparable, re-extraction pending'"
+  example: "Studio asks 'did the 1.2 change to the tutorial map hint reduce lost-goal stalls?' Answer: '1.1: 19.2% (n=250) vs 1.2: 11.6% (n=250), both prompt v3; 7.6-point drop, 95% CI 1.5 to 13.7'"
+  ingest_cost: M
+  query_cost: S
+  cost: S
+  depends_on: "provenance columns (extract-10); build version metadata on sessions"
+  better_than_fixed_table: "The fixed table cannot say which prompt answered which build"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'a one-time batch extraction over all sessions whose result is cached as a new field'"
+  proposed: "Pin per build; upgrade in pairs"
+  shallow: false
+
+- id: extract-38
+  title: "Severity extracted per friction row on a 4-point anchored scale (1 noticed, 2 slowed under 30 s, 3 stalled over 2 min, 4 quit or abandoned the step), so the producer's severity-by-frequency matrix is a GROUP BY rather than a judgment call"
+  level: L4
+  cell: {part: ingestion-extraction, question-type: what-to-fix-first-prioritised, evidence-form: severity-frequency-matrix, representation: issue-list-with-severity-frequency, user-segment: producer-exec, delivery-surface: dashboard-standard-report, granularity: tutorial-step}
+  part: ingestion
+  object: "memo.md item 1: 'friction signal' as an atomic observation"
+  situation: "friction rows exist with a type and a quote but no severity; the producer asks what to fix first and the chatbot ranks by count, so a mild complaint 300 players made outranks a stall that made 40 quit"
+  consequence: "The fix list is ordered by chattiness, not by churn impact"
+  mechanism: "Every friction row gets severity 1-4 from the anchored scale, computed from measurable anchors where possible: stall duration from state cards and step windows, quit from step_presence (extract-7); the model fills severity only when the anchors are unavailable and marks severity_source in {measured, inferred}. Materialised view issue_matrix(game, build, step_id, friction_label, n_players, pct_sev3plus, n_quit). Standard report: 2x2 of frequency vs severity, top 10 issues, 3 clips each"
+  example: "Producer asks 'what should we fix first in the tutorial?' Answer: a table: 'disabled craft button: 312 players, 8% severity 3+, 0 quits' below 'stealth guard cone invisible: 61 players, 70% severity 3+, 23 quits', with clips"
+  ingest_cost: S
+  query_cost: S
+  cost: S
+  depends_on: "step windows and step_presence for measured anchors"
+  better_than_fixed_table: "The fixed table counts yes answers; this ranks by how badly each issue hurt progress"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'friction signal, sentiment'"
+  proposed: "Measured anchors first; model-inferred severity only as fallback and labelled"
   shallow: false
