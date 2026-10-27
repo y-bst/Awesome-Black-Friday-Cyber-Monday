@@ -1,0 +1,1080 @@
+- id: expfill-1
+  title: 'ASR decode-time phrase boosting from the per-game glossary plus the localisation string table: up to 500 boost phrases
+    per game (boss, zone, item, mechanic names) with weight 5-15, and noun recall tracked on a 200-term list before a game
+    goes live'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: ingestion-extraction
+    modality: speech-transcript
+    extraction-trigger: on-new-game-onboarding
+    reuse-scope-of-extraction: game-specific
+    mechanism-type: change-data-at-source
+    subject-domain: progression-difficulty
+    build-or-buy: managed-cloud-service
+    effort: XS-days
+  object: spec.md stage 2 'Each video is converted to a transcript' and the unspecified 'What a transcript contains'
+  situation: A roguelike's third boss is called 'Vessel of Ashkar'; generic ASR writes 'vessel of ask car' or 'Vessel Ashcar'
+    in 70% of mentions, so mention-based trackers and keyword search miss most of them
+  consequence: '''What do players say about the Ashkar fight before quitting'' returns 9 players instead of 31; the studio
+    concludes the boss is not a talking point and looks elsewhere'
+  p_typical: 0.08
+  grounded: inferred
+  evidence: 'spec.md: ''What a transcript contains (speech only, on-screen text, events), whether game telemetry is joined'';
+    the transcript''s vocabulary is never adapted to the game''s own nouns'
+  already_offered: false
+  proposed: Boost list compiled from extract-20 glossary + string table at onboarding; 20 minutes of audio per game hand-checked
+    for the 200 nouns; go-live gate noun recall >= 0.90
+  shallow: false
+  mechanism: At onboarding, compile boost_phrases(game_id, phrase, weight, source in {glossary, string_table, patch_notes})
+    and pass them to the ASR API's phrase-hint or custom-vocabulary parameter; after transcription, a script counts recall
+    on noun_testset(game_id, term, audio_ref) of 200 terms and stores asr_noun_recall per game and ASR version
+  example: Studio asks 'how many players named the Vessel of Ashkar in the 5 minutes before quitting run 3'; with boosting,
+    31 of 140 run-3 quitters, versus 9 from the unboosted transcript
+  cost: S
+  depends_on: extract-20 per-game glossary and access to the game's localisation string table
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Every downstream field reads a transcript in which the game's own nouns are spelled the way the
+    studio types them
+- id: expfill-2
+  title: 'Post-ASR noun repair against on-screen text: transcript n-grams within 5 s of an OCR token are re-spelled to the
+    glossary term when phonetic distance (Double Metaphone plus edit distance) is under 0.3, storing raw and repaired tokens
+    side by side'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: ingestion-extraction
+    modality: on-screen-text-ocr
+    representation: timestamped-observation-log
+    extraction-trigger: scheduled-batch
+    schema-evolution: eager-backfill-all-history
+    mechanism-type: reuse-or-cache-prior-work
+    subject-domain: economy-monetization
+    build-or-buy: open-source-component
+    effort: S-weeks
+  object: 'memo.md item 1: ''Video frames add screen state and on-screen text'''
+  situation: Historical sessions were transcribed before any boost list existed, and re-running ASR on 4,000 sessions of audio
+    is the expensive path
+  consequence: Without repair the old 4,000 sessions keep the misspellings, so 'before vs after' comparisons on any noun-based
+    field mix two transcript qualities
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'memo.md: ''Video frames add screen state and on-screen text, because speech alone cannot answer "where did they
+    click".''; OCR text is used for screen state but never fed back to fix the speech transcript'
+  already_offered: false
+  proposed: Repair job runs over stored transcripts and OCR rows only (no audio), writes utterance_token(raw, repaired, repair_source=ocr|glossary,
+    distance)
+  shallow: false
+  mechanism: For each utterance, take OCR tokens visible from t-5 s to t+5 s plus the game glossary; compute phonetic keys
+    for transcript 1-4-grams and candidate terms; replace when distance < 0.3 and the term is in the glossary; keep the raw
+    token and a repair flag so counts can be rerun without repair
+  example: Studio asks 'what did players say when the Gilded Crate offer popped up in hour 1'; the popup's OCR 'Gilded Crate'
+    repairs 'guilded great' in 58 of 73 utterances, and the answer quotes them with the corrected name
+  cost: S
+  depends_on: OCR rows with timestamps from the frame pipeline and a per-game glossary
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Fixes nouns over all history without re-transcribing audio, using text the game itself put on screen
+- id: expfill-3
+  title: 'Query-time mis-hearing expansion: each glossary term carries a learned confusion set (top 10 ASR variants seen in
+    repairs), and keyword search ORs the term with its variants, reporting how many hits came from variants'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: query-path
+    query-path: full-text-keyword-search
+    representation: inverted-full-text-index
+    question-type: what-said
+    latency-tier: under-2s
+    evidence-form: coverage-statement-n-of-m-players
+    subject-domain: core-loop
+    mechanism-type: defer-to-query-time
+    effort: XS-days
+  object: 'memo.md item 2: ''open-field questions retrieve matching observation rows across players'''
+  situation: A studio types a mechanic name ('Overdrive cancel') that ASR has rendered six different ways across 900 sessions,
+    and no ingestion-side fix has run for this game yet
+  consequence: Exact keyword retrieval returns the 22% of mentions that happen to be spelled right; the answer looks complete
+    because nothing reports the miss
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'memo.md: ''open-field questions retrieve matching observation rows across players and the model reads only those'';
+    retrieval matches on the transcript''s spelling, so a misheard noun is not retrieved'
+  already_offered: false
+  proposed: confusion_set(game_id, term, variant, count) table fed by the repair job and by studio-confirmed corrections;
+    the answer line reads '41 hits, 29 via spelling variants'
+  shallow: false
+  mechanism: On query, the planner looks up typed nouns in the glossary, expands each into its confusion set (variants with
+    count >= 3), runs one OR query over the inverted index and tags hits by variant; the studio can untick variants in the
+    UI and the answer recomputes in under 2 s
+  example: Studio asks 'how many players mention Overdrive cancel in their first 3 matches'; the expanded query finds 118
+    of 400 players (38 via 'over drive can sell' and 4 other variants) instead of 26
+  cost: S
+  depends_on: An inverted full-text index over utterances and a glossary per game
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Answers a noun the studio types on the day, with no new field and no re-extraction
+- id: expfill-4
+  title: 'Per-player speech-to-screen lag estimate: cross-correlate utterance onsets with screen-state change events over
+    the whole session, store lag_ms per player (typically -3 to +5 s), and link each utterance to the event in the shifted
+    window'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: session-stitching
+    representation: timestamped-observation-log
+    granularity: utterance
+    modality: screen-state-classifier
+    extraction-trigger: at-ingestion
+    question-type: what-said
+    mechanism-type: precompute-more
+    subject-domain: economy-monetization
+    effort: S-weeks
+  object: 'memo.md item 1: ''timestamped atomic observations across all videos of a session (... utterance ... quote with
+    timestamp as evidence)'''
+  situation: A think-aloud player comments on what they saw 2-4 s earlier, so a same-timestamp join links 'that's way too
+    expensive' to the next screen rather than to the price that triggered it
+  consequence: '''What did players say when they saw the price'' counts reactions against the wrong screen; in a 300-player
+    cohort the shop answer can be off by a third'
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'memo.md: ''timestamped atomic observations across all videos of a session (step on screen, action, utterance,
+    friction signal, sentiment, quote with timestamp as evidence)''; observations carry timestamps but nothing corrects the
+    delay between seeing and speaking'
+  already_offered: false
+  proposed: player_lag(session_id, lag_ms, peak_corr, n_events) computed after stitching; utterance_link(utt_id, event_id,
+    offset_ms, window) uses [t-lag-1.5 s, t-lag+1.5 s]
+  shallow: false
+  mechanism: Build two 100 ms-binned series per session (utterance onsets, screen-state transitions), cross-correlate over
+    -6..+8 s, take the peak as lag_ms when peak correlation > 0.15 (else the cohort median), then attach each utterance to
+    the nearest screen event in the lag-shifted window
+  example: Studio asks 'what do players say when the 1,200-gem battle pass price appears'; after lag correction 47 of 210
+    viewers comment on price, versus 29 when utterances are joined at the same second
+  cost: S
+  depends_on: Screen-state change events from the frame pipeline and utterance onsets on a stitched session clock
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: '''What did players say when X happened'' counts the utterances that were about X'
+- id: expfill-5
+  title: 'Direction-aware linking by utterance kind: deictic questions (''where is it'') look back 0-5 s, reactions (''oh
+    no'', laughter) look back 0.3-2 s, and plans (''I''ll try the left door'') look forward 2-8 s to the action they announce'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: ingestion-extraction
+    representation: entity-relation-graph
+    granularity: utterance
+    modality: input-events
+    question-type: counterfactual-why-not
+    mechanism-type: precompute-more
+    subject-domain: progression-difficulty
+    effort: S-weeks
+  object: 'memo.md item 1: ''step on screen, action, utterance'''
+  situation: A plan utterance ('I'm going to skip this one') precedes the action by 5 s, while a reaction follows it; one
+    symmetric window links plans to the previous event
+  consequence: '''Did players who said they would skip the side quest actually skip it'' cannot be answered, because the stated
+    intent and the action are never connected'
+  p_typical: 0.03
+  grounded: inferred
+  evidence: 'memo.md: ''timestamped atomic observations across all videos of a session (step on screen, action, utterance,
+    friction signal, sentiment, quote with timestamp as evidence)''; action and utterance are separate observations with no
+    link or direction between them'
+  already_offered: false
+  proposed: utterance_kind in {deictic_question, reaction, plan, narration, other} extracted per utterance; link edge carries
+    direction and offset_ms
+  shallow: false
+  mechanism: 'The extractor labels utterance_kind; a linker attaches each utterance to the nearest action or screen event
+    in a kind-specific window (deictic: -5..0 s, reaction: -2..-0.3 s, plan: +2..+8 s), storing ABOUT edges with direction
+    and offset_ms; plan edges also store kept_or_broken (the announced action happened or not within 30 s)'
+  example: Studio asks 'how often do players say they will retry the Warden and then quit instead'; 62 plan utterances 'one
+    more try' in hour 2, 19 followed by a quit within 30 s (31%)
+  cost: S
+  depends_on: Action events from input logging or frames, and a stitched session clock
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Turns stated intentions into a checkable said-versus-did field, which per-video MCQs cannot hold
+- id: expfill-6
+  title: 'Store candidate links, not decisions: every utterance keeps all screen events within -8 to +8 s with offset_ms,
+    and the query picks the window, printing the count at the chosen window and at +/-2 s as a sensitivity line'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: store
+    representation: wide-event-schema-on-read
+    granularity: variable-length-moment-or-episode
+    query-path: sql-over-closed-fields
+    latency-tier: under-2s
+    evidence-form: confidence-score
+    uncertainty-policy: answer-with-ci-and-n
+    schema-evolution: schema-on-read
+    effort: S-weeks
+  object: 'memo.md item 2: ''closed-field questions become aggregate queries over all players (instant)'''
+  situation: The correct lag differs by game (a racing game reacts in under 1 s, a strategy game narrates 6 s later), and
+    a lag fixed at ingestion is wrong for one of them
+  consequence: A window baked in at ingestion is re-extracted for every game whose lag turns out different; a schema-on-read
+    link costs one extra column
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'memo.md: ''closed-field questions become aggregate queries over all players (instant)''; the aggregate assumes
+    the utterance-to-event join is already settled at ingestion'
+  already_offered: false
+  proposed: utt_event_candidate(utt_id, event_id, offset_ms) table, about 6 rows per utterance; default window per game from
+    the lag estimator, override per query
+  shallow: false
+  mechanism: At ingestion, write one candidate row per (utterance, screen or action event) pair inside -8..+8 s; at query
+    time, SQL filters offset_ms to the game's default window and also computes the count at window +/-2 s; if the counts differ
+    by over 15%, the answer flags the result as window-sensitive
+  example: Studio asks 'what share of match losses are followed by a complaint about matchmaking'; default window (+0.5..+6
+    s) gives 18% of 1,140 losses, the +/-2 s band gives 16-21%, and the answer shows both
+  cost: S
+  depends_on: Event rows with millisecond timestamps on a shared session clock
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The link window is a query parameter, so a wrong guess costs a re-query and not a re-extraction
+- id: expfill-7
+  title: 'Minimap tracker: crop the per-game minimap rectangle at 2 fps, locate the player marker, register the crop to a
+    reference world map with feature matching, and store player_path(session_id, t_ms, x, y, zone_id, conf)'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: frame-pipeline
+    representation: time-series-signals-affect-pace-silence
+    granularity: frame
+    modality: on-screen-text-ocr
+    extraction-trigger: at-ingestion
+    question-type: what-happened
+    subject-domain: progression-difficulty
+    build-or-buy: open-source-component
+    effort: M-one-quarter
+  object: 'memo.md item 1: ''speech alone cannot answer "where did they click"'''
+  situation: In an open-world hub there is no step list; the studio asks where players were when they gave up, and speech
+    says only 'I don't know where to go'
+  consequence: Without position, 'where got lost' gets a list of quotes and no place, so the level designer cannot tell whether
+    the problem is the gate, the signposting or the path
+  p_typical: 0.07
+  grounded: inferred
+  evidence: 'memo.md: ''Video frames add screen state and on-screen text, because speech alone cannot answer "where did they
+    click".''; screen state is a label, not a position in the world'
+  already_offered: false
+  proposed: HUD layout file per game (minimap rect, marker template); a reference map image with 20 to 40 named zone polygons;
+    path rows at 2 Hz rolled up to zone x minute
+  shallow: false
+  mechanism: 'Per frame: crop minimap, template-match the player arrow, ORB/SIFT-match the crop against the reference map
+    to get a homography, project the arrow to world (x, y), assign zone by polygon; store at 2 Hz with conf; nightly rollup
+    zone_density(game_id, build, zone_id, minute_bucket, players, seconds)'
+  example: Studio asks 'where do players wander in the 10 minutes before quitting in hour 2'; 37 of 112 quitters spend over
+    4 minutes inside 60 m of the locked Bellmoor gate, versus 6 of 290 who keep playing
+  cost: M
+  depends_on: Games that show a minimap, a reference map image from the studio, and a frame pipeline at 2 fps
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Answers 'where' in open spaces where there is no step to put in a multiple-choice option
+- id: expfill-8
+  title: 'Position telemetry hook: a 30-line studio SDK snippet emits (t_ms, x, y, z, zone_name) at 2 Hz into the capture
+    stream, joined to the session clock by a sync event at capture start'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: export-integration
+    modality: game-telemetry
+    representation: hybrid
+    granularity: level-quest-match-mission
+    extraction-trigger: continuous-during-live-session
+    tenancy-and-deployment: logically-isolated-per-studio
+    subject-domain: core-loop
+    build-or-buy: studio-owned-stack
+    effort: S-weeks
+  object: 'spec.md unspecified: ''whether game telemetry is joined'''
+  situation: A 3D game without a minimap (or with a rotating one) makes frame-based position unreliable, but the engine knows
+    the exact coordinates
+  consequence: A frame tracker would cost a quarter of work for each such game and still be noisy; a telemetry hook gives
+    exact positions in a few days of studio time
+  p_typical: 0.09
+  grounded: inferred
+  evidence: 'spec.md: ''What a transcript contains (speech only, on-screen text, events), whether game telemetry is joined'';
+    telemetry is not joined today, so engine-known positions are discarded'
+  already_offered: false
+  proposed: Schema contract position_v1 with zone_name from the studio's own level data; JEV joins on session_id plus offset
+    from a capture-start beep event
+  shallow: false
+  mechanism: The capture app opens a local socket; the SDK snippet in the build posts position at 2 Hz and a sync event when
+    capture starts; JEV stores player_path(session_id, t_ms, x, y, z, zone) and a per-level heatmap grid of 5 m cells per
+    build
+  example: Studio asks 'on level 4 of the climbing game, where do the 28% of players who quit fall from'; 41 of 66 quitters'
+    last 3 falls are from the same two ledges in cells (112, 40) and (118, 44)
+  cost: S
+  depends_on: Studio willingness to add a debug-only SDK call in playtest builds
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Gives exact player positions per level with no vision model and no per-game tuning
+- id: expfill-9
+  title: 'Zone sequence without coordinates: a per-game place classifier (kNN over frame embeddings, about 30 labelled frames
+    per zone from one reference playthrough) labels the zone every 5 s and stores zone_visit(session_id, zone_id, enter_ms,
+    exit_ms)'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: store
+    representation: clip-or-frame-embeddings
+    granularity: variable-length-moment-or-episode
+    modality: frame-embeddings
+    query-path: sql-over-closed-fields
+    question-type: timeline
+    subject-domain: ui-navigation
+    mechanism-type: transfer-across-games
+    effort: S-weeks
+  object: 'spec.md problem: ''Transcript loses visual information.'''
+  situation: A game has no minimap and no telemetry hook, but its areas look distinct (forest, mines, town); the studio still
+    needs 'which area do they leave from'
+  consequence: Without a coarse place signal the only fallback is quotes; a zone-visit table answers order and dwell questions
+    with SQL
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'spec.md: ''Transcript loses visual information.''; place in the world is part of that lost visual information'
+  already_offered: false
+  proposed: JEV ops labels 30 frames per zone (about 1 hour per game); classifier retrained when a build adds zones; zone_visit
+    rows support sequence queries
+  shallow: false
+  mechanism: Sample a frame every 5 s, embed it with the existing frame-embedding model, assign the zone by kNN (k=5) over
+    labelled examples with a 0.6 vote floor, smooth with a 3-sample median, and write zone_visit intervals; query sequence
+    counts with SQL window functions
+  example: Studio asks 'what zone order do players follow before quitting in the first 2 hours'; the top sequence Town ->
+    Mines -> Town -> quit covers 24 of 95 quitters, with median Mines dwell 3 minutes versus 11 for players who stay
+  cost: S
+  depends_on: Frame embeddings at ingestion and one reference playthrough per build
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Gives place and route questions an instant SQL path for games with no step list, minimap or telemetry
+- id: expfill-10
+  title: 'Blocked randomisation of build arm at recruitment: within one cohort, testers are assigned build A or B in blocks
+    of 4 stratified by platform and genre experience, and arm, block and stratum are stored on every session'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: collection-protocol
+    question-type: did-the-fix-work-pre-post
+    scope: build-version-pair
+    granularity: build-version
+    modality: build-version-metadata
+    evidence-form: contrast-vs-baseline
+    mechanism-type: change-data-at-source
+    moment-in-journey: new-build-version
+    subject-domain: progression-difficulty
+    effort: S-weeks
+  object: 'spec.md constraint: ''Buyers are gaming studios. Their questions are not known in advance.'''
+  situation: A fix ships in build 1.4 and is tested on testers recruited 2 weeks after build 1.3's cohort; the new cohort
+    skews to PC and to genre veterans
+  consequence: '''Did the fix work'' compares two different populations; a 9-point drop in quits can be all recruitment drift'
+  p_typical: 0.09
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: Recruitment form writes stratum; a randomiser service hands out build download links; the chatbot routes 'did
+    X work' to the arm comparison when arms exist
+  shallow: false
+  mechanism: Randomiser keeps a block list per stratum (platform x genre_experience, 4 strata); each new tester gets the next
+    arm in a shuffled block of 4; session rows store arm, block_id and stratum; the answer is a stratified difference in proportions
+    with a 95% interval
+  example: Studio asks 'did lowering the Bellmoor gate from 5 relics to 3 reduce hour-2 quits'; arms of 120 and 118 give 31%
+    versus 19% (difference 12 pp, 95% CI 1-23 pp), computed in 1 s
+  cost: S
+  depends_on: Control over build distribution at recruitment and a cohort large enough for two arms
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Answers 'did the fix work' from a randomised two-arm design instead of comparing cohorts recruited
+    in different weeks
+- id: expfill-11
+  title: 'Arm verification from the build watermark: OCR of the version string on the title screen or debug overlay sets observed_arm
+    per session, and sessions where observed and assigned arm differ are reported and analysed as assigned (intention-to-treat)'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: frame-pipeline
+    modality: on-screen-text-ocr
+    granularity: session
+    question-type: compare-versions
+    evidence-form: extraction-provenance-model-and-schema-version
+    uncertainty-policy: answer-with-ci-and-n
+    mechanism-type: precompute-more
+    effort: XS-days
+  object: 'memo.md item 1: ''Video frames add screen state and on-screen text'''
+  situation: Testers reinstall, receive the wrong download link, or play a cached old build; in practice 3-8% of a cohort
+    play the other arm
+  consequence: Arm labels from the recruitment sheet silently mix the two builds, which dilutes any measured effect toward
+    zero
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'memo.md: ''Video frames add screen state and on-screen text, because speech alone cannot answer "where did they
+    click".''; the build version shown on screen is never checked against the build the tester was meant to play'
+  already_offered: false
+  proposed: Per-game version-string regex; observed_arm stored with OCR confidence; the answer prints 'assigned 120 / 118,
+    crossed over 7'
+  shallow: false
+  mechanism: In the first 120 s of each session, OCR the corner region where the build string appears, match it to the build
+    registry, set observed_arm; the comparison uses assigned arm and also prints a per-protocol result on sessions where both
+    agree
+  example: Studio asks 'did the new first-match tutorial reduce match-1 quits'; 7 of 238 testers played the other build, intention-to-treat
+    difference 8 pp, per-protocol 9 pp, both shown
+  cost: XS
+  depends_on: A visible build string in at least one screen per session
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Detects build mix-ups that a per-video MCQ table records as clean data
+- id: expfill-12
+  title: 'Group-sequential monitoring of a randomised arm pair: the comparison is re-tested after every 40 completed sessions
+    against O''Brien-Fleming boundaries, and the studio gets a push when the result crosses a boundary or futility is reached'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: evaluation
+    query-path: push-alert-no-query
+    latency-tier: push-no-query
+    delivery-surface: alert
+    question-type: did-the-fix-work-pre-post
+    scope: build-version-pair
+    evidence-form: contrast-vs-baseline
+    mechanism-type: push-instead-of-pull
+    user-segment: producer-exec
+    effort: S-weeks
+  object: 'spec.md constraint: ''Answering a studio''s question must be fast.'''
+  situation: A studio runs an A/B over 3 weeks and asks the chatbot daily whether the fix worked, which with repeated looks
+    inflates false positives to about 20%
+  consequence: The studio stops early on a noise peak, ships the 'fix', and the next cohort shows no change
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: Look schedule set at study creation (5 looks, alpha 0.05 two-sided); the answer before a boundary reads 'not yet
+    decidable, look 2 of 5'
+  shallow: false
+  mechanism: On each 40-session increment per arm, recompute the z statistic of the arm difference on the target field and
+    compare with precomputed O'Brien-Fleming bounds (look 1 about |z| > 4.56, final about 2.04); emit an alert on efficacy
+    or futility; daily chatbot questions return the latest look rather than a fresh p-value
+  example: Studio running 'shorter first-match matchmaking wait' sees at look 3 (120 per arm) that match-1 quits fell from
+    26% to 14%, z = 2.9 against a bound of 2.63, and gets a 'stop, effect detected' alert
+  cost: S
+  depends_on: Randomised arms stored on the session and a declared target field
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Lets a studio watch an experiment daily without the answer turning into a false positive
+- id: expfill-13
+  title: Session-quality screen with five flags (AFK over 5 min, second-screen pattern, voice not the enrolled tester, repeat
+    tester across studies, scripted speed-through); flagged sessions leave every denominator by default and answers print
+    'excluded (n=14)'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: evaluation
+    granularity: session
+    evidence-form: count-with-denominator
+    uncertainty-policy: answer-with-ci-and-n
+    modality: silence-or-absence-of-speech
+    extraction-trigger: at-ingestion
+    subject-domain: social-multiplayer
+    mechanism-type: precompute-more
+    effort: S-weeks
+  object: 'spec.md stage 4: ''a question over, say, 500 players is fast'''
+  situation: In a paid co-op beta, some testers leave the game idle on a second monitor, let a sibling play, or have joined
+    the same studio's last 3 studies
+  consequence: The 'quit' rate counts idle and staged sessions as real churn; a producer deck reports 22% hour-1 churn when
+    the clean rate is 17%
+  p_typical: 0.08
+  grounded: inferred
+  evidence: 'spec.md: ''a question over, say, 500 players is fast''; nothing says which of the 500 sessions are valid play'
+  already_offered: false
+  proposed: session_quality(session_id, flag, evidence_ms, score) with one row per flag; a toggle 'include flagged sessions'
+    on every answer
+  shallow: false
+  mechanism: 'AFK: no input, no speech and static frames for 5 min; second-screen: off-game speech topic for over 40% of a
+    5-min window with idle input; wrong voice: speaker-verification score against a 20 s enrolment clip below 0.5 (score kept,
+    embedding discarded); repeat tester: hashed tester id seen in 2+ prior studies of the same studio; speed-through: all
+    dialogue skipped and unit durations below the 5th percentile'
+  example: 'Studio asks ''what share of players quit before the end of their first co-op match''; answer ''17% (52 of 306),
+    excluded (n=14): 6 AFK, 4 second-screen, 3 repeat tester, 1 wrong voice'''
+  cost: S
+  depends_on: Input events or frame-diff idle detection, a speaker-verification model, and a tester id from recruitment
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Churn rates are computed over real play sessions, and the exclusions are visible
+- id: expfill-14
+  title: 'Grey-zone review queue for quality flags: sessions with a quality score between 0.4 and 0.7 go to a 2-minute JEV
+    ops review of 6 sampled 10-s clips, and each decision becomes a training label for the screen'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: feedback-loop-from-query-log
+    mechanism-type: human-in-the-loop
+    extraction-trigger: on-low-confidence-or-disagreement
+    granularity: session
+    user-segment: jev-internal-ops
+    evidence-form: clip-montage-n-examples
+    uncertainty-policy: escalate-to-human-analyst
+    effort: S-weeks
+  object: 'memo.md item 3: ''accuracy against hand-labelled sessions'''
+  situation: Automatic flags are uncertain for players who are silent by nature, or who pause to read a guide; auto-exclusion
+    would remove genuine slow players, often the ones most likely to churn
+  consequence: An over-eager screen removes the hardest-struggling players and makes the game look easier than it is
+  p_typical: 0.03
+  grounded: inferred
+  evidence: 'memo.md: ''judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions.'';
+    the hand-labelled set is used for extraction accuracy but not for which sessions count'
+  already_offered: false
+  proposed: Review UI with keep / exclude / unsure; 6 clips sampled from the flagged windows; about 5% of sessions reach review
+  shallow: false
+  mechanism: Scores under 0.4 are kept, over 0.7 excluded, 0.4-0.7 queued; reviewers see 6 clips and the flag reasons and
+    decide in about 2 minutes; decisions are stored as session_quality_label and the flag thresholds are refit monthly from
+    them
+  example: Of 2,000 sessions from a survival game's early access, 96 enter review; reviewers keep 58 (slow readers, not AFK),
+    which moves the reported day-1 quit rate from 24% back to 26%
+  cost: S
+  depends_on: The automatic session-quality screen and a clip extractor
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Keeps slow but genuine players in the data instead of trading one bias for another
+- id: expfill-15
+  title: 'Prevent bad sessions at capture: the capture app pauses after 5 minutes idle with a ''still playing?'' prompt, checks
+    the tester against a hashed cross-study registry at sign-in, and records a 20-s voice enrolment'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: collection-protocol
+    mechanism-type: change-data-at-source
+    moment-in-journey: game-onboarding-day-0
+    modality: input-events
+    tenancy-and-deployment: shared-multi-tenant
+    granularity: session
+    subject-domain: onboarding-tutorial
+    effort: S-weeks
+  object: 'spec.md stage 1: ''A player''s gameplay session is captured as video.'''
+  situation: Filtering bad sessions after the fact wastes paid sessions and ingestion; the AFK hour is already recorded, transcribed
+    and extracted
+  consequence: About 5-10% of capture and extraction spend goes to sessions that are then excluded, and repeat testers keep
+    entering new studies
+  p_typical: 0.05
+  grounded: inferred
+  evidence: 'spec.md: ''A player''s gameplay session is captured as video.''; capture has no presence or identity check'
+  already_offered: false
+  proposed: Idle pause stored as a gap observation with reason=afk_prompt; registry keyed by salted hash of email and device
+    id; studio sets the max prior studies (default 2)
+  shallow: false
+  mechanism: Capture app watches input and audio; after 300 s idle it pauses recording and shows a prompt, resuming on input;
+    at sign-in it hashes email and device id and queries the registry for prior studies; a 20 s read-aloud at start produces
+    the enrolment clip used by the wrong-voice flag
+  example: 'A studio''s tutorial study of 400 testers: 31 were blocked as repeat testers at sign-in and 3.2 idle hours were
+    never recorded, so the ''quit in tutorial'' rate is computed over 369 clean sessions from day one'
+  cost: S
+  depends_on: Control of the capture app and a registry shared across studies (hashed ids only)
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Bad sessions are never ingested, so no answer needs an exclusion rule for them
+- id: expfill-16
+  title: 'Saturation curve for open why-questions: after each batch of 25 sessions, reasons are clustered and the curve of
+    new clusters per batch is shown; the answer is marked saturated after 2 batches with no new cluster'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: question-generation
+    question-type: why
+    representation: behaviour-archetype-clusters
+    query-path: sampled-map-reduce-with-ci
+    evidence-form: coverage-statement-n-of-m-players
+    uncertainty-policy: give-range-then-refine
+    latency-tier: progressive-streaming
+    subject-domain: narrative
+    effort: S-weeks
+  object: 'memo.md item 2: ''open-field questions retrieve matching observation rows across players and the model reads only
+    those'''
+  situation: A studio asks why players drop the main quest in chapter 2; the chatbot lists 5 reasons from 60 sessions and
+    nothing says whether a sixth reason exists
+  consequence: The studio fixes 5 reasons, misses the 6th (players thought the quest was optional), and churn barely moves
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'memo.md: ''open-field questions retrieve matching observation rows across players and the model reads only those'';
+    the open answer has no statement of whether more sessions would add new reasons'
+  already_offered: false
+  proposed: 'Answer footer ''reasons saturated at 150 sessions (6 clusters, none new in the last 50)'' or ''not saturated:
+    2 new reasons in the last batch'''
+  shallow: false
+  mechanism: The planner processes matching sessions in shuffled batches of 25; per batch the model extracts reason statements,
+    an embedding clusterer (cosine threshold 0.8) assigns them to existing or new clusters; the curve new_clusters_per_batch
+    is stored with the answer and streamed to the UI
+  example: Studio asks 'why do players abandon the main quest in chapter 2'; batches 1-6 add 3, 1, 1, 1, 0, 0 new reasons,
+    so the answer reports 6 reasons, saturated at 150 sessions
+  cost: S
+  depends_on: Reason extraction for open why-fields and a clusterer
+  part: question-generation
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: Says when a qualitative answer is complete, which a fixed list of options cannot
+- id: expfill-17
+  title: 'Unseen-reason estimate with Chao1: from how many reason clusters appear once (f1) and twice (f2), estimate total
+    reasons and how many more sessions are needed to see 95% of them'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: evaluation
+    question-type: what-surprised-unknown-unknowns
+    evidence-form: recall-estimate
+    uncertainty-policy: answer-with-ci-and-n
+    query-path: precomputed-aggregate
+    latency-tier: under-2s
+    subject-domain: economy-monetization
+    effort: XS-days
+  object: 'spec.md constraint: ''Buyers are gaming studios. Their questions are not known in advance.'''
+  situation: A why-answer covers 90 sessions; a batch curve alone cannot say how many reasons are still unseen when budget
+    allows no more batches
+  consequence: Studios read a list of 7 reasons as complete when the estimate says about 10 exist
+  p_typical: 0.02
+  grounded: inferred
+  evidence: 'spec.md: ''Buyers are gaming studios. Their questions are not known in advance.''; if questions are unknown,
+    so is the number of distinct answers to an open question'
+  already_offered: false
+  proposed: 'Footer: ''seen 7 reasons; estimated 9.8 (95% CI 7.6-19); about 70 more sessions to see 95%'''
+  shallow: false
+  mechanism: Chao1 = S_obs + f1^2 / (2 f2) on per-session reason cluster counts; the required extra sample uses the Chao-Jost
+    coverage extrapolation; computed in milliseconds from the cluster frequency table stored with each why-answer
+  example: Studio asks 'why do players close the starter-pack offer without buying'; 7 reasons seen in 90 sessions, 4 seen
+    once and 3 twice, Chao1 = 9.7, so about 3 reasons likely unseen and roughly 70 more sessions needed
+  cost: XS
+  depends_on: Per-session reason cluster assignments for why-answers
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Puts a number on what the answer has not yet seen, instead of treating the option list as the universe
+- id: expfill-18
+  title: 'Saturation drives recruiting: unsaturated why-questions request the next 25-session batch, aimed at the segment
+    where new reasons still appear (by platform, experience or language), and recruiting stops for a question once it saturates'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: collection-protocol
+    mechanism-type: push-instead-of-pull
+    question-type: why
+    scope: query-time-defined-cohort
+    moment-in-journey: steady-state-weekly
+    delivery-surface: scheduled-digest
+    user-segment: ux-researcher
+    subject-domain: social-multiplayer
+    effort: M-one-quarter
+  object: 'spec.md stage 1: ''A player''s gameplay session is captured as video.'''
+  situation: A studio recruits a fixed 500 testers per study; why-questions saturate after 150, while one segment (solo-queue
+    players) still produces new reasons
+  consequence: Recruiting spend goes to more of the same reasons, and the segment with the open reasons stays under-sampled
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_offered: false
+  proposed: 'Weekly digest: ''Why do new players leave ranked after match 1: not saturated in solo-queue (2 new reasons last
+    batch); recruit 25 solo-queue testers'''
+  shallow: false
+  mechanism: For each tracked why-question, compute new clusters per segment for the last batch; if a segment added 1 or more,
+    issue a recruiting request for 25 testers matching that segment; if all segments saturated for 2 batches, close the question
+  example: '''Why do new players leave ranked after match 1'' saturates for partied players at 100 sessions, but solo-queue
+    keeps adding reasons (toxic chat, role forced) until 175; recruiting shifts 75 slots to solo-queue'
+  cost: M
+  depends_on: Saturation curves per segment and a recruiting channel the studio controls
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Tells the studio whom to recruit next to finish an answer
+- id: expfill-19
+  title: 'Per-genre distilled extractor: an open 8B model fine-tuned on about 20,000 frontier-extracted rows that passed verification
+    plus the golden set runs every backfill and re-extraction, and the frontier model sees only rows with confidence under
+    0.7'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: cost-governance
+    schema-evolution: eager-backfill-all-history
+    reuse-scope-of-extraction: genre-shared
+    extraction-trigger: on-new-field-added
+    build-or-buy: open-source-component
+    mechanism-type: transfer-across-games
+    subject-domain: progression-difficulty
+    effort: M-one-quarter
+  object: 'memo.md item 2: ''genuinely new questions trigger a one-time batch extraction over all sessions whose result is
+    cached as a new field'''
+  situation: Every new field means a frontier pass over all history; at 4,000 sessions of 3 hours each that is about $10,000
+    per field, so the question set stops growing
+  consequence: Backfills get rationed to big customers, and 'grow the question set from real use' stops after a few dozen
+    fields
+  p_typical: 0.07
+  grounded: inferred
+  evidence: 'memo.md: ''genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached
+    as a new field, so the question set grows from real use.''; every new field is paid for at frontier price over the whole
+    history'
+  already_offered: false
+  proposed: One student per genre (action-RPG, shooter, roguelike, mobile casual); retrain monthly; per-field agreement vs
+    frontier on 200 held-out sessions must be >= 0.85 F1 before the student serves that field
+  shallow: false
+  mechanism: Collect accepted (input window, field spec, output) triples from frontier runs and the golden set; LoRA fine-tune
+    an 8B open model per genre; at backfill, the student extracts every window and outputs confidence; windows under 0.7 (about
+    8%) go to the frontier model
+  example: 'New field ''opened the map before abandoning a quest'' backfills over 4,000 roguelike-RPG sessions overnight for
+    about $500 instead of about $10,000, and ''how many quest abandoners opened the map first'' is answered next morning:
+    212 of 640'
+  cost: M
+  depends_on: Logged frontier outputs with verification status and a golden set per genre
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Makes adding a field over all history cheap enough to do for every new studio question
+- id: expfill-20
+  title: 'Per-field tiny classifiers on stored embeddings: for each closed enum field, a logistic-regression or small MLP
+    head is trained on 500 frontier-labelled windows over existing transcript and frame embeddings, and backfills cost one
+    forward pass per window'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: cost-governance
+    representation: clip-or-frame-embeddings
+    modality: frame-embeddings
+    schema-evolution: lazy-backfill-on-demand
+    query-path: lazy-backfill-extraction
+    latency-tier: minutes
+    extraction-trigger: on-first-question
+    subject-domain: economy-monetization
+    effort: S-weeks
+  object: 'memo.md item 2: ''whose result is cached as a new field'''
+  situation: A yes/no field ('player looked at the price before closing the offer') is asked once; even a distilled generative
+    model takes hours over all history
+  consequence: Simple binary fields wait overnight; a head over stored embeddings answers in minutes
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'memo.md: ''genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached
+    as a new field, so the question set grows from real use.''; the batch extraction is a model call per session, even for
+    a yes/no field'
+  already_offered: false
+  proposed: Embeddings for every 10-s window are stored at ingestion; field head trained on 500 frontier labels with 5-fold
+    CV; served only if CV F1 >= 0.85, else a fallback to the distilled model
+  shallow: false
+  mechanism: On a new closed field, label 500 windows with the frontier model (stratified by game and build), train a classifier
+    head on the stored window embeddings, run it on all windows of all sessions (milliseconds each), and write the field with
+    model=head_v1 provenance
+  example: 'Studio asks ''what share of players who dismissed the 4.99 starter pack had opened its detail view''; the head
+    backfills 1.4M windows over 3,100 sessions in 12 minutes: 38% (412 of 1,085 dismissers)'
+  cost: S
+  depends_on: Window-level embeddings stored at ingestion and a frontier labeller
+  part: ingestion
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: A new closed field over all history is ready in minutes, inside the same chat
+- id: expfill-21
+  title: 'Budget-triggered distillation: when a backfill estimate exceeds $400, the planner labels 500 sessions with the frontier
+    model, trains a field-specific student, checks agreement on 200 held-out sessions, and uses the student for the rest only
+    if F1 >= 0.85'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: cost-governance
+    mechanism-type: approximate-then-refine
+    schema-evolution: lazy-backfill-on-demand
+    extraction-trigger: on-cohort-size-threshold
+    evidence-form: extraction-provenance-model-and-schema-version
+    uncertainty-policy: give-range-then-refine
+    subject-domain: core-loop
+    effort: S-weeks
+  object: 'memo.md item 2: ''genuinely new questions trigger a one-time batch extraction over all sessions'''
+  situation: Most new fields are cheap (one game, 200 sessions); a few span a whole publisher portfolio and would cost thousands
+    at frontier price
+  consequence: Without a rule, either every backfill is distilled (slow to set up for small ones) or none is (expensive for
+    big ones)
+  p_typical: 0.03
+  grounded: inferred
+  evidence: 'memo.md: ''genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached
+    as a new field, so the question set grows from real use.''; no cost rule decides which model runs the batch'
+  already_offered: false
+  proposed: Estimate = sessions x hours x per-hour price; threshold $400 per field set by cost governance; the answer's provenance
+    names student or frontier
+  shallow: false
+  mechanism: Planner estimates the frontier cost; under $400 it runs the frontier model directly; over $400 it runs the frontier
+    model on a stratified 700 sessions, trains a student on 500, evaluates on 200; if F1 >= 0.85 the student runs the remainder,
+    else the frontier model runs everything and the studio is told the cost and ETA
+  example: Publisher asks 'across our 6 shooters, how often does a player rage-quit after being killed by the same enemy 3
+    times in a row'; frontier cost estimate $6,800 over 9,000 sessions, student F1 0.89, full backfill for about $900
+  cost: S
+  depends_on: A cost estimator per field and a held-out agreement check
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Cost of a new field scales with how much history it covers, not with the frontier model's price
+- id: expfill-22
+  title: 'Multi-POV match sync from on-screen clocks: match timer, scoreboard and kill-feed OCR from each recorded player''s
+    video are matched to align sessions on one match clock, stored as match(match_id) and match_participant(match_id, session_id,
+    team, offset_ms)'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: session-stitching
+    granularity: level-quest-match-mission
+    modality: on-screen-text-ocr
+    representation: entity-relation-graph
+    scope: cohort
+    subject-domain: social-multiplayer
+    question-type: find-players-who
+    effort: M-one-quarter
+  object: 'spec.md unspecified: ''how videos of one session are linked'''
+  situation: Five recorded testers play in the same 5v5 matches, but each video is processed alone, so 'a teammate left' exists
+    only as a kill-feed line in one player's video
+  consequence: Social questions cannot be answered, and the same match is counted 5 times in match-level rates
+  p_typical: 0.07
+  grounded: inferred
+  evidence: 'spec.md: ''languages, how videos of one session are linked''; the spec names linking videos within a session,
+    but not across players in one match'
+  already_offered: false
+  proposed: Join key from OCR of lobby code or match id where visible, else kill-feed sequence matching (same 3 kill events
+    within 2 s); offset_ms per participant
+  shallow: false
+  mechanism: Per video, extract timer readings and kill-feed events with timestamps; candidate matches are pairs of videos
+    with overlapping wall-clock time and the same map; confirm when 3+ kill-feed events (killer, victim) match in order, fit
+    offset_ms by least squares; write match and participant rows, and per-match facts (teammate_left_at, score_diff)
+  example: Studio asks 'do new players quit after a first match where a teammate left'; 34 of 88 new players whose first match
+    had a leaver quit within the session (39%), versus 21% of 160 without one
+  cost: M
+  depends_on: Several recorded testers in the same matches (scheduled playtest lobbies) and kill-feed OCR
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Turns teammate behaviour into a join, so multiplayer questions get counted at match level
+- id: expfill-23
+  title: 'Audio-fingerprint match alignment: the game-audio channel of each recorded player is fingerprinted (spectral peak
+    pairs), and shared match sounds (round-start horn, objective announcer) give per-session offsets within 50 ms without
+    any visible clock'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: session-stitching
+    modality: audio-non-speech
+    granularity: level-quest-match-mission
+    build-or-buy: open-source-component
+    subject-domain: social-multiplayer
+    mechanism-type: precompute-more
+    effort: S-weeks
+  object: 'spec.md unspecified: ''how videos of one session are linked'''
+  situation: A co-op game has no timer or kill feed on screen, but every player hears the same scripted announcer lines and
+    wave horns
+  consequence: OCR-based sync fails on HUD-light games; without sync, 'who was talking when the team wiped' cannot be answered
+  p_typical: 0.03
+  grounded: inferred
+  evidence: 'spec.md: ''languages, how videos of one session are linked''; sync across players needs a signal shared by all
+    their recordings'
+  already_offered: false
+  proposed: Requires two-channel capture (game audio separate from mic, ops-9); fingerprints of announcer lines stored per
+    game as anchors
+  shallow: false
+  mechanism: Compute landmark fingerprints of the game-audio channel per video; match against other videos recorded in the
+    same 3-hour window; take the 5 strongest matching anchors and their median offset; reject alignments with under 3 agreeing
+    anchors
+  example: Studio asks 'in 4-player co-op, do new players leave after a wave-7 wipe when nobody called out the flank'; 46
+    wipes aligned across 4 POVs, in 29 of them no player spoke in the 10 s before the wipe, and 11 of those were followed
+    by a new player leaving
+  cost: S
+  depends_on: Separate game-audio channel at capture and co-recorded players
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Syncs several players' recordings in games with no on-screen clock
+- id: expfill-24
+  title: 'Studio match id via telemetry: the playtest build writes match_id, server tick and player slot into a capture-side
+    log with one sync event per match, so multi-POV alignment is an exact join with no OCR'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: export-integration
+    modality: game-telemetry
+    granularity: level-quest-match-mission
+    tenancy-and-deployment: logically-isolated-per-studio
+    build-or-buy: studio-owned-stack
+    user-segment: studio-data-engineer
+    subject-domain: social-multiplayer
+    effort: XS-days
+  object: 'spec.md unspecified: ''whether game telemetry is joined'''
+  situation: The studio's server already knows exactly who was in each match and when each event happened; reconstructing
+    that from video is slower and noisier
+  consequence: JEV spends a quarter building OCR sync that the studio could replace with 3 fields
+  p_typical: 0.06
+  grounded: inferred
+  evidence: 'spec.md: ''What a transcript contains (speech only, on-screen text, events), whether game telemetry is joined'';
+    telemetry is not joined, so match membership is unknown'
+  already_offered: false
+  proposed: Contract match_v1 {match_id, server_tick_at_start, slot, team, left_at_tick}; capture app records the wall clock
+    at the sync event
+  shallow: false
+  mechanism: Build emits match_start(match_id, tick) and player_left(slot, tick) to a local file read by the capture app;
+    JEV stores the mapping and converts ticks to session time via the sync event; teammates of a recorded player who are not
+    recorded appear only as aggregate features (team size, leaver count), never as people
+  example: Studio asks 'do solo-queued players quit after their first match more than partied ones'; 31% of 210 solo vs 17%
+    of 140 partied, from an exact match join in under 1 s
+  cost: XS
+  depends_on: Studio willingness to log 3 fields in playtest builds
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Gives exact team and match context, and so supports social questions without any vision work
+- id: expfill-25
+  title: 'Prosodic arousal track from the mic channel: pitch range, RMS energy and speech-rate change at 1 Hz, z-scored against
+    the player''s own first 10 minutes, stored as a time series and summarised per unit of play'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: ingestion-extraction
+    representation: time-series-signals-affect-pace-silence
+    modality: audio-non-speech
+    granularity: variable-length-moment-or-episode
+    question-type: how-felt
+    subject-domain: player-affect
+    build-or-buy: open-source-component
+    effort: S-weeks
+  object: 'memo.md item 1: ''friction signal, sentiment'''
+  situation: Players are polite on a recorded playtest or speak a second language, so their words read neutral while their
+    voice rises and speeds up on the hard boss
+  consequence: Text sentiment undercounts frustration; 'were players frustrated at the Warden' gets 'mostly neutral' when
+    the voice says otherwise
+  p_typical: 0.07
+  grounded: inferred
+  evidence: 'memo.md: ''timestamped atomic observations across all videos of a session (step on screen, action, utterance,
+    friction signal, sentiment, quote with timestamp as evidence)''; sentiment is extracted from words only'
+  already_offered: false
+  proposed: arousal_series(session_id, t_s, pitch_range_z, energy_z, rate_z, arousal_z); per-attempt max and mean; uses the
+    ops-9 two-channel capture
+  shallow: false
+  mechanism: On the mic channel, compute F0 (pYIN), RMS energy and syllable rate in 1 s frames; z-score each against the player's
+    first 10 minutes of speech; arousal_z = mean of the three; store at 1 Hz and roll up per boss attempt, match or step with
+    max and time above z = 1.5
+  example: Studio asks 'were players frustrated on Warden attempts 3 and later'; 23 of 64 players exceed arousal z 1.5 for
+    20+ s, of whom 14 used no negative words; text-only sentiment reported 9 of 64
+  cost: S
+  depends_on: Clean mic-only channel and enough speech per player (60 s or more) for a baseline
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Affect answers no longer depend on what players chose to say
+- id: expfill-26
+  title: 'Words-voice disagreement flag: utterances whose text sentiment is neutral or positive while arousal_z exceeds 2
+    are tagged masked_tension, and how-felt answers report them as a separate column next to text sentiment'
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: query-path
+    question-type: prevalence-of-quoted-sentiment
+    evidence-form: contrast-vs-baseline
+    uncertainty-policy: answer-with-ci-and-n
+    query-path: sql-over-closed-fields
+    latency-tier: under-2s
+    subject-domain: player-affect
+    effort: XS-days
+  object: 'memo.md item 1: ''quote with timestamp as evidence'''
+  situation: A studio quotes 'players said the raid was fine' in a deck; 30% of those 'fine' utterances were said with high
+    arousal
+  consequence: Quote-based affect answers overstate comfort, and the studio cannot see the gap because the evidence is a calm-looking
+    quote
+  p_typical: 0.03
+  grounded: inferred
+  evidence: 'memo.md: ''timestamped atomic observations across all videos of a session (step on screen, action, utterance,
+    friction signal, sentiment, quote with timestamp as evidence)''; a quote shows the words but not how they were said'
+  already_offered: false
+  proposed: 'Answer shows three columns: text-negative, masked_tension, calm; clicking masked_tension plays the 5-s audio
+    clips'
+  shallow: false
+  mechanism: Join utterance rows with the arousal track over the utterance span; tag masked_tension when text sentiment >=
+    0 and max arousal_z > 2.0; aggregates are plain SQL over the tag
+  example: Studio asks 'how did players feel about the first raid'; of 180 players, 41 negative by words, 33 masked_tension
+    (said 'it's fine' or 'okay' with arousal z over 2), 106 calm; text-only would have put the 33 in calm
+  cost: XS
+  depends_on: The prosodic arousal track and per-utterance text sentiment
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Shows where players' words and voices disagree, which a single sentiment option cannot
+- id: expfill-27
+  title: 'REFUSE: categorical speech-emotion labels (angry, sad, happy) per player from a pretrained speech emotion model,
+    because accuracy across accents and recording setups is low and a per-player ''angry'' label is a sensitive inference;
+    only the relative arousal series is kept'
+  level: L3
+  perspective: expert-fill
+  cell:
+    part: ingestion-extraction
+    modality: audio-non-speech
+    representation: per-session-summary
+    question-type: how-felt
+    subject-domain: player-affect
+    tenancy-and-deployment: shared-multi-tenant
+    build-or-buy: third-party-video-understanding-api
+    effort: XS-days
+  object: 'memo.md item 1: ''sentiment'''
+  situation: An off-the-shelf speech emotion API returns 'angry 0.71' per utterance; it is tempting to show per-player emotion
+    profiles to the studio
+  consequence: 'Low willingness: labels trained on acted speech misclassify non-native and quiet players, and per-player emotion
+    profiles from voice raise consent and privacy issues; JEV would publish confident numbers that fail a hand-label check'
+  p_typical: 0.04
+  grounded: inferred
+  evidence: 'memo.md: ''timestamped atomic observations across all videos of a session (step on screen, action, utterance,
+    friction signal, sentiment, quote with timestamp as evidence)''; sentiment is a field, but its source and validity are
+    not specified'
+  already_offered: false
+  proposed: Keep arousal only as a within-player z-score, aggregated per unit of play; no categorical emotion per player is
+    stored or shown
+  shallow: false
+  mechanism: 'Refused design: a third-party speech-emotion API classifies each utterance into 6 emotions and the store keeps
+    per-player emotion distributions; replaced by the relative arousal track'
+  example: A studio asks 'which 20 players were angriest in the match-1 defeat'; JEV answers with an aggregate ('arousal rose
+    for 46% of players after a defeat') and declines to rank individual players by emotion
+  cost: S
+  depends_on: nothing
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Not adopted; the fixed table's text sentiment is no worse than an unvalidated emotion label
+- id: expfill-28
+  title: 'Noun-recall gate per field: any field whose extraction depends on a game noun (mention trackers, what-said about
+    a named boss or item) is shown in the chatbot only when ASR recall on that noun is at least 0.85 on the game''s 200-term
+    test set, else marked ''low transcript recall'''
+  level: L4
+  perspective: expert-fill
+  cell:
+    part: evaluation
+    modality: speech-transcript
+    uncertainty-policy: abstain-below-coverage
+    evidence-form: recall-estimate
+    question-type: what-said
+    moment-in-journey: first-cohort-ingested
+    subject-domain: narrative
+    effort: XS-days
+  object: 'memo.md item 3: ''accuracy against hand-labelled sessions'''
+  situation: A narrative game's character names ('Ysolde', 'Caer Mhorn') are misheard 60% of the time even with boosting;
+    a 'mentions Ysolde' count looks precise but finds 40% of mentions
+  consequence: The studio concludes players do not talk about a character who is in fact the most-mentioned one
+  p_typical: 0.03
+  grounded: inferred
+  evidence: 'memo.md: ''judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions.'';
+    accuracy is measured on extracted answers, not on whether the transcript holds the noun at all'
+  already_offered: false
+  proposed: noun_recall(game_id, term, asr_version, recall, n) table; the planner checks it for every noun in a query and
+    adds a recall line to the answer
+  shallow: false
+  mechanism: At onboarding, 20 minutes of audio per game are hand-transcribed for the 200 test terms; recall is computed per
+    term and ASR version; at query time the planner extracts nouns from the question, looks up recall, and if below 0.85 prints
+    'Ysolde is transcribed correctly about 41% of the time; counts are a lower bound'
+  example: 'Studio asks ''how many players mention Ysolde after the chapter 3 betrayal cutscene''; answer ''52 of 300 (lower
+    bound: Ysolde recall 0.41 on our test set; expect about 120)'''
+  cost: XS
+  depends_on: A per-game noun test set with hand-checked audio
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Says when a speech-based count is a lower bound because the transcript lost the noun
