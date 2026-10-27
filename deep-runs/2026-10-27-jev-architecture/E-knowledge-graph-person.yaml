@@ -1,0 +1,692 @@
+- id: kg-1
+  title: Store each session as a temporal property graph (Player, Session, Video, Step, UIElement, Mechanic, Utterance nodes; every edge carries t_start, t_end, video_id) instead of one answers row per video
+  level: L3
+  cell: {part: store, representation: entity-relation-graph, granularity: session, mechanism-type: precompute-more, build-or-buy: open-source-component, tenancy-and-deployment: logically-isolated-per-studio}
+  object: "spec.md step 3: 'The answers form a structured table per video'"
+  situation: A studio asks a question whose answer spans two videos of one session or joins step and utterance, which a per-video row cannot express.
+  consequence: Every observation becomes a node or an edge with a time interval; a 4-hour session of 16 videos becomes roughly 2,000 to 6,000 nodes; questions become pattern matches rather than new columns.
+  p_typical: 0.35
+  grounded: quote
+  evidence: "spec.md: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos.'"
+  proposed: Node types Player, Session, Video, Step, UIElement, Mechanic, Utterance, FrictionEvent; edge types ATTEMPTED, COMPLETED, ABANDONED, CLICKED, SAID, MENTIONS, NEXT_VIDEO; every edge has t_start, t_end (seconds from session start), video_id, confidence.
+  shallow: false
+  mechanism: Ingestion writes the memo's observation log as nodes and edges rather than rows; the store is a labelled property graph with a per-studio database; the chatbot's planner compiles questions to graph patterns.
+  example: "'How many players quit during tutorial step 3?' compiles to MATCH (p:Player)-[a:ATTEMPTED]->(s:Step {idx:3}) WHERE NOT (p)-[:COMPLETED]->(s) AND a.t_end = p.session_end RETURN count(p); over 500 players it returns 41 of 500 in 180 ms."
+  cost: M
+  depends_on: Step entity resolution (kg-2) and session stitching edges (kg-14)
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: A new question is a new pattern over existing nodes and edges, not a new column that requires re-running 500 sessions.
+
+- id: kg-2
+  title: Resolve tutorial steps into one canonical Step node per game via OCR of the on-screen prompt text plus an ordinal, so 500 players' attempts attach to the same 12 Step nodes
+  level: L4
+  cell: {part: ingestion-extraction, modality: on-screen-text-ocr, granularity: tutorial-step, reuse-scope-of-extraction: game-specific, extraction-trigger: at-ingestion, subject-domain: onboarding-tutorial}
+  object: "memo.md item 1: 'step on screen' as an observation field"
+  situation: Two players see the same tutorial prompt but the model names it 'move tutorial' for one and 'WASD prompt' for the other; without resolution the per-step count is split across aliases.
+  consequence: The Step registry holds exactly one node per prompt text hash; ATTEMPTED edges from all 500 players converge on it; the funnel count per step is a node degree.
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "memo.md: 'Video frames add screen state and on-screen text, because speech alone cannot answer \"where did they click\".'"
+  proposed: Step node key = sha1(normalised OCR prompt text) plus first-seen ordinal; aliases from the model's free text are stored as ALIAS_OF edges with a similarity score; merge when cosine over prompt text exceeds 0.92.
+  shallow: false
+  mechanism: At ingestion, every frame where a tutorial prompt is on screen yields the prompt text; the registry upserts a Step node; the player's interval on that prompt becomes one ATTEMPTED edge with t_start, t_end and outcome.
+  example: "Studio asks 'which step loses the most players'; the answer is the Step node with the highest ratio of ABANDONED to ATTEMPTED in-degree: step 'Equip your weapon' (idx 4), 37 abandoned of 500 attempted (7.4%)."
+  cost: S
+  depends_on: frame pipeline with OCR at 1 frame per 2 s
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: The fixed table needs a hand-written option list of step names per game; the registry discovers the 12 steps from the prompts themselves.
+
+- id: kg-3
+  title: Precompute Allen interval relations (BEFORE, MEETS, OVERLAPS, DURING) as edges between co-occurring observation intervals within a session, so 'while' and 'during' questions are one hop
+  level: L4
+  cell: {part: ingestion-extraction, representation: entity-relation-graph, granularity: variable-length-moment-or-episode, question-type: when, mechanism-type: precompute-more, latency-tier: under-2s}
+  object: "memo.md item 1: 'timestamped atomic observations across all videos of a session'"
+  situation: A designer asks 'did players open the inventory while the equip prompt was still on screen', which over an observation log requires a self-join on time ranges across 500 sessions.
+  consequence: Temporal relation edges are written once per pair of overlapping intervals (bounded to pairs within 60 s of each other, roughly 15 to 40 edges per minute of play); the question becomes MATCH (a)-[:DURING]->(b).
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md: 'closed-field questions become aggregate queries over all players (instant)'; interval overlap is not a closed field."
+  proposed: For each session, sort intervals by t_start; for each pair within a 60 s window emit one of the 13 Allen relations as an edge type; store on the graph; cap at 50,000 temporal edges per session.
+  shallow: false
+  mechanism: An ingestion pass after observation extraction computes pairwise interval relations and stores them as typed edges; the query planner maps 'while', 'during', 'before', 'after' in the question to the matching edge type.
+  example: "'How many players opened the inventory while the equip prompt was on screen?' becomes MATCH (p)-[:CLICKED]->(ui:UIElement {name:'inventory'})-[:DURING]->(s:Step {name:'Equip your weapon'}) RETURN count(DISTINCT p): 212 of 500, in 90 ms."
+  cost: S
+  depends_on: kg-1
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: The fixed table has no notion of two things happening at the same time; it records at most one answer per question per video.
+
+- id: kg-4
+  title: Materialise the per-step funnel as node properties on each Step node (n_attempted, n_completed, n_abandoned, p50_duration_s) refreshed on every ingest, so churn-by-step is a property read
+  level: L4
+  cell: {part: store, query-path: precomputed-aggregate, granularity: tutorial-step, representation: step-funnel-state-machine-per-player, latency-tier: sub-200ms-cached, question-type: how-many}
+  object: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  situation: The producer asks the churn-by-step question every Monday; a graph traversal over 500 players and 12 steps each time is wasteful when the counts only change on ingest.
+  consequence: Each Step node carries 4 counters and 3 duration quantiles; the chatbot reads 12 nodes; the answer returns in under 50 ms and is the same number every time it is asked.
+  p_typical: 0.2
+  grounded: quote
+  evidence: "spec.md: 'Answering a studio's question must be fast.'"
+  proposed: After each session is ingested, increment the counters on the touched Step nodes and recompute p50/p90 duration from a t-digest stored on the node.
+  shallow: false
+  mechanism: An ingest-time trigger updates aggregate properties on Step, UIElement and Mechanic nodes; the query planner answers count and duration questions over these properties and falls through to traversal only for filtered cohorts.
+  example: "'Where in the tutorial do we lose players?' reads 12 Step nodes and returns a table: step 4 'Equip your weapon' 37 abandoned / 500 attempted (7.4%), step 7 'Craft a torch' 29 / 463 (6.3%), remaining steps under 2%."
+  cost: S
+  depends_on: kg-1, kg-2
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Same speed as the fixed table for the common question, with the full graph underneath for any follow-up filter.
+
+- id: kg-5
+  title: Add UIElement nodes from the screen-state classifier and OCR bounding boxes, with CLICKED and HOVERED edges carrying screen coordinates, so 'where did they click' is answerable
+  level: L3
+  cell: {part: frame-pipeline, modality: screen-state-classifier, representation: entity-relation-graph, granularity: frame, question-type: what-happened, subject-domain: ui-navigation}
+  object: "memo.md item 1: 'speech alone cannot answer \"where did they click\"'"
+  situation: A UX researcher asks which button players pressed when the equip prompt appeared; the transcript has no clicks and the observation log has free text only.
+  consequence: UIElement nodes (one per distinct on-screen control per game, typically 30 to 80) receive CLICKED edges with (x, y, t, screen_state); a 2-hop query gives the click distribution per step.
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'what is on screen is largely lost'"
+  proposed: Classifier labels screen state at 2 fps; OCR gives control labels and boxes; cursor or tap position relative to boxes yields CLICKED edges; controls are resolved to one UIElement node per label per game.
+  shallow: false
+  mechanism: The frame pipeline writes UIElement nodes and CLICKED edges per player session; the planner maps 'click', 'press', 'tap', 'open' to the CLICKED edge type.
+  example: "'What did players press first when the equip prompt appeared?' returns a histogram over UIElement nodes reached by CLICKED within 10 s of the Step's t_start: Inventory 212, Map 61, Settings 19, nothing 208."
+  cost: M
+  depends_on: frame pipeline with screen-state classifier and OCR
+  part: ingestion
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: The fixed table could only record a click if someone had written a question about that exact button in advance.
+
+- id: kg-6
+  title: Share Mechanic and UIElement vocabulary across games of one genre through a genre ontology with per-game ALIAS_OF edges, so a question written for one game runs on another
+  level: L3
+  cell: {part: question-generation, representation: common-data-model-with-per-game-vocab-map, reuse-scope-of-extraction: genre-shared, mechanism-type: transfer-across-games, question-origin: genre-template-library, moment-in-journey: game-onboarding-day-0}
+  object: "A-frame.yaml assumption: 'per-game hand-written questions do not scale'"
+  situation: A second survival-crafting game onboards; its tutorial has 'Craft a campfire' where the first had 'Craft a torch'; the churn question pattern is identical but the node names differ.
+  consequence: Genre ontology nodes (Mechanic:Crafting, Mechanic:Inventory, Mechanic:Combat) sit in a read-only shared graph; each game's Step and UIElement nodes link to them with ALIAS_OF; questions are written against the ontology layer and resolve through the alias edge at query time.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  proposed: Maintain 1 ontology per genre with 40 to 120 concept nodes; at onboarding the model proposes ALIAS_OF edges from each game's Step and UIElement nodes to ontology nodes with a confidence; a human confirms those under 0.8.
+  shallow: false
+  mechanism: Question templates reference ontology nodes; the planner expands them through ALIAS_OF to the game's own nodes before running; one template library serves every game in the genre.
+  example: "Template 'churn at first Crafting step' runs unchanged on game B: resolves Mechanic:Crafting -> Step 'Craft a campfire' and returns 22 abandoned of 480 (4.6%) versus game A's 29 of 463 (6.3%)."
+  cost: M
+  depends_on: kg-1, kg-2, a hand-curated genre ontology for the first 3 genres
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: One question library per genre instead of one per game; day-0 questions exist before any video is ingested.
+
+- id: kg-7
+  title: Link Utterance nodes to Step, Mechanic and UIElement nodes with MENTIONS edges at ingestion (entity linking on the transcript), so 'what did players say about step 4' is a 2-hop read
+  level: L4
+  cell: {part: ingestion-extraction, modality: speech-transcript, representation: entity-relation-graph, granularity: utterance, question-type: what-said, evidence-form: quote-with-timestamp}
+  object: "memo.md item 1: 'utterance, friction signal, sentiment, quote with timestamp as evidence'"
+  situation: A designer wants every complaint about the equip step; retrieval over utterance embeddings returns utterances about equipping in general, including ones said 40 minutes later.
+  consequence: Each Utterance node gets 0 to 3 MENTIONS edges resolved against the game's Step, Mechanic and UIElement registry; the query intersects MENTIONS with the time interval of the ATTEMPTED edge, which removes the late mentions.
+  p_typical: 0.1
+  grounded: quote
+  evidence: "memo.md: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  proposed: Entity linker with the game's registry as the candidate set; link if the model's confidence exceeds 0.7; store the quote text, t, and sentiment on the Utterance node.
+  shallow: false
+  mechanism: An ingestion pass over the transcript emits Utterance nodes and MENTIONS edges; the planner answers 'what did they say about X' by collecting Utterance nodes reachable through MENTIONS to X, then passes at most 200 quotes to the model for synthesis.
+  example: "'What do players say when they fail to equip the weapon?' returns 88 utterances from 61 players linked to Step 4 with sentiment negative, with the top theme 'could not find the equip button' (31 quotes), each quote with session id and t=00:14:32 style timestamp."
+  cost: S
+  depends_on: kg-2
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Quotes stay attached to the thing they are about and to the moment, so evidence is a traversal result, not a re-read of 500 transcripts.
+
+- id: kg-8
+  title: Type friction as FRICTION_AT edges with a closed cause enum (unclear-prompt, control-mapping, cannot-find-ui, difficulty, bug, waiting) and an EVIDENCED_BY edge to the frame and utterance
+  level: L4
+  cell: {part: ingestion-extraction, representation: entity-relation-graph, question-type: why, evidence-form: clip, uncertainty-policy: answer-with-ci-and-n, subject-domain: onboarding-tutorial}
+  object: "memo.md item 1: 'friction signal' as an observation field"
+  situation: The producer asks why players quit at step 4; a free-text friction field across 500 sessions cannot be counted, and the memo's open-field path reads hundreds of rows through the model on every ask.
+  consequence: Each FRICTION_AT edge carries cause (6-value enum), severity 1-3, and an EVIDENCED_BY edge to the exact frame id and utterance id; 'why' becomes a GROUP BY on an edge property plus a clip per group.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured.'"
+  proposed: At ingestion the model labels each friction interval with the enum and points to the frame and utterance that justify it; low-confidence labels (under 0.6) are stored with cause 'unknown' and counted separately.
+  shallow: false
+  mechanism: A closed friction taxonomy as edge properties, with provenance edges to the media; the planner answers 'why' by grouping FRICTION_AT edges on a Step node and returning one clip per cause group.
+  example: "'Why do players abandon the equip step?' returns cause counts over the 37 abandoners: cannot-find-ui 19, control-mapping 9, unclear-prompt 5, unknown 4, each with one 8 s clip and the denominators (n=37 of 500)."
+  cost: M
+  depends_on: kg-2, kg-5, frame ids addressable for clip cut
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: The fixed table records that friction happened; the typed edge records what kind, how bad, and where to look, and the categories are countable.
+
+- id: kg-9
+  title: REFUSED - free-form text-to-Cypher by the chatbot over the whole graph schema; the persona would not ship it because the model invents labels and edge types that do not exist in the studio's graph
+  level: L3
+  cell: {part: query-path, query-path: agentic-multi-tool-plan, question-type: outside-game-target, uncertainty-policy: always-answer, latency-tier: under-2s, user-segment: studio-analyst}
+  object: "memo.md item 2: 'The chatbot runs a query planner'"
+  situation: A studio analyst types 'players who rage quit after dying twice' and the model writes MATCH (p)-[:RAGE_QUIT]->() against a schema that has no RAGE_QUIT edge; the query returns 0 and the chatbot reports 'no players'.
+  consequence: Low willingness. In the persona's experience 20 to 40% of generated graph queries on a schema with more than 25 edge types reference a non-existent label or wrong direction, and a 0-row result is indistinguishable from a true zero; one wrong zero costs the studio's trust.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast.' - a wrong fast answer is the failure mode this option creates."
+  proposed: Replace with kg-10 (templated patterns with slot filling) and return the compiled query to the user for any question that did not match a template.
+  shallow: false
+  mechanism: The chatbot would hand the natural-language question and the schema to the model, run whatever graph query comes back, and report the number.
+  example: "'How many players quit during tutorial step 3?' might compile to MATCH (p:Player)-[:QUIT_AT]->(s:Step {number:3}); the edge is called ABANDONED and the property is idx, so the answer is 0 instead of 41."
+  cost: S
+  depends_on: kg-1
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Nothing; it is faster to write and worse to trust than the fixed table.
+
+- id: kg-10
+  title: Templated graph-pattern library with slot filling - 30 to 60 patterns per genre, each with typed slots (Step, UIElement, Mechanic, duration, cohort) and a fixed answer type - as the chatbot's only compiled query path
+  level: L4
+  cell: {part: query-path, query-path: text-to-semantic-layer-metrics, mechanism-type: narrow-or-clarify-the-question, uncertainty-policy: ask-clarifying-question, latency-tier: under-2s, question-origin: genre-template-library}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: The question 'how long did players spend on crafting' arrives; the planner matches template 'duration on <Step|Mechanic>' with slot Mechanic:Crafting, and asks only if two Step nodes alias Crafting.
+  consequence: Every compiled query is one of a known set; each template has a unit test; a no-match question is answered with 'I can answer these 3 nearby questions' rather than a guessed number.
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'each with an answer type and an evidence requirement'"
+  proposed: Template = pattern + slot types + answer type + evidence form; slot filling by the model from the question text constrained to registry nodes; unmatched questions go to the lazy backfill path (kg-16) or a human.
+  shallow: false
+  mechanism: Replaces free query generation with pattern selection and slot filling; the planner's output is auditable and the template set grows from the failed-query log.
+  example: "'How many players quit during tutorial step 3?' matches template T07 'abandon count at <Step>' with slot Step idx 3; answer '41 of 500 (8.2%)'; the 'why' follow-up matches T12 'friction causes at <Step>'."
+  cost: M
+  depends_on: kg-1, kg-2, kg-6
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The question set is a slot grammar over the graph (60 templates x hundreds of slot values) rather than a list of literal questions.
+
+- id: kg-11
+  title: Run node2vec over the per-studio Player-Step-Mechanic-UIElement graph nightly and cluster player embeddings (k chosen by silhouette, 3 to 8) into behaviour archetypes with no question asked
+  level: L3
+  cell: {part: feedback-loop-from-query-log, representation: behaviour-archetype-clusters, mechanism-type: auto-discover-without-question, question-type: who-are-the-churners-segment-discovery, extraction-trigger: scheduled-batch, latency-tier: overnight}
+  object: "spec.md: 'Their questions are not known in advance.'"
+  situation: The studio does not know which kind of player churns; nobody has typed a segment question; the graph already encodes who did what.
+  consequence: Each Player node gets a 64-dim embedding and an archetype id; archetypes are described by their 5 most over-represented edges; the churn rate per archetype is a precomputed property.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'what to improve (b) the framework for generating the questions so that any type of question can be answered'"
+  proposed: node2vec (walk length 40, 10 walks per node, dim 64) over the cohort graph; k-means on Player embeddings; label each cluster by the top edges by lift; store archetype id on the Player node.
+  shallow: false
+  mechanism: An overnight graph-embedding job adds a discovered dimension (archetype) that becomes a slot value for templates and a push candidate for digests.
+  example: "Archetype C (n=74) has lift 3.1 on CLICKED Settings during step 1 and lift 2.4 on ABANDONED step 4; its tutorial churn is 31% versus 6% overall; the digest reports 'controller-remapping players churn at equip'."
+  cost: M
+  depends_on: kg-1 with at least 200 players ingested
+  part: query
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: It surfaces a segment nobody asked about; the fixed table can only answer the segments someone wrote options for.
+
+- id: kg-12
+  title: Automatic contrast subgraph - compute edge-type and edge-property frequency lift between the churned set and the retained set after each ingest batch, report the top 10 lifts
+  level: L4
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, mechanism-type: auto-discover-without-question, question-type: what-surprised-unknown-unknowns, evidence-form: contrast-vs-baseline, scope: all-players}
+  object: "memo.md item 3: 'coverage of real studio questions'"
+  situation: The studio asks 'what is different about the players who quit' with no hypothesis.
+  consequence: For every (edge type, target node, property bucket) triple, compute P(triple | churned) / P(triple | retained) with a minimum support of 10 players; the chatbot returns the top 10 by lift with both denominators.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured.'"
+  proposed: Materialise a contrast table of at most 5,000 triples per cohort after ingest; expose as template 'what differs between <cohort A> and <cohort B>'.
+  shallow: false
+  mechanism: A graph-level BubbleUp - triple counting over two player sets, lift with support threshold, stored as a table keyed by cohort pair.
+  example: "'What is different about players who quit in the tutorial?' returns: CLICKED Settings during step 1 (lift 3.1, 38 of 41 churned vs 149 of 459 retained), SAID negative about 'controls' (lift 2.7), FRICTION_AT step 4 cause control-mapping (lift 2.5)."
+  cost: M
+  depends_on: kg-1, a churn label per Player node
+  part: query
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Answers the question the studio did not know to ask; the fixed table answers only the ones written down.
+
+- id: kg-13
+  title: Answer per-player timeline questions as variable-length time-ordered path queries (up to 40 hops) from a Step node to the session's last node, rendered as an ordered event list
+  level: L4
+  cell: {part: query-path, question-type: timeline, scope: one-player, granularity: player, evidence-form: quote-with-timestamp, latency-tier: under-2s}
+  object: "spec.md: 'Reading 500 transcripts per question was too slow'"
+  situation: A designer asks 'what did player 2371 do between the equip prompt and quitting'; the transcript for that 30 minutes is 2 videos long and the observation log has 400 rows.
+  consequence: The path from Step 4's ATTEMPTED edge to the Session end node, ordered by t_start and limited to 40 hops, lists at most 40 typed events with timestamps; the chatbot returns the list without calling the model.
+  p_typical: 0.1
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data'"
+  proposed: Path query with time monotonicity constraint on edges; compress runs of identical edge types into 'x3' entries; attach the 3 utterances with the most negative sentiment on the path.
+  shallow: false
+  mechanism: One-player timeline questions bypass the model entirely and read a path from the graph; the model is called only to narrate if the user asks for prose.
+  example: "'What happened to player 2371 after the equip prompt?' returns 11 events: ATTEMPTED step 4 (00:14:02), CLICKED Inventory x3, SAID 'where is it' (00:14:40, negative), CLICKED Settings, FRICTION_AT step 4 cannot-find-ui, ABANDONED step 4 (00:17:55), session end (00:18:10)."
+  cost: S
+  depends_on: kg-1, kg-14
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The fixed table has no order within a video and nothing across videos; a path has both.
+
+- id: kg-14
+  title: Stitch the n videos of a session with NEXT_VIDEO edges carrying gap_s and offset_s, and merge any observation interval that spans a 15-minute boundary into one edge keyed on session time
+  level: L4
+  cell: {part: session-stitching, granularity: session, representation: entity-relation-graph, extraction-trigger: at-ingestion, modality: build-version-metadata, question-type: how-long}
+  object: "spec.md step 1: 'each video is capped at 15 minutes, so one session is many videos'"
+  situation: Player is on step 7 from 14:30 of video 2 to 01:10 of video 3; the per-video extraction records two attempts of 30 s and 70 s instead of one of 100 s.
+  consequence: Video nodes form a chain with NEXT_VIDEO(gap_s, offset_s); the stitcher merges same-Step ATTEMPTED edges that touch a video boundary within 2 s into one edge with t_start and t_end on the session clock; per-step durations become correct.
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md Unspecified: 'how videos of one session are linked'"
+  proposed: Session clock = cumulative video durations plus recorded gaps; merge rule on boundary-touching intervals of the same node pair; store original video-local times as properties for clip lookup.
+  shallow: false
+  mechanism: A stitching pass that runs after per-video extraction and before aggregation; its output is the session-time edge set the rest of the graph uses.
+  example: "'How long do players spend on step 7?' returns p50 96 s, p90 310 s over 463 players; without stitching, 112 of those players would have shown two short attempts and p50 would read 48 s."
+  cost: S
+  depends_on: kg-1
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The per-video table double-counts anything that crosses a boundary and cannot state a session-level duration at all.
+
+- id: kg-15
+  title: Attach EXTRACTED_BY(model_id, schema_version, prompt_hash, run_ts) edges to every observation node and edge, so any answer can state which model and schema produced its numbers
+  level: L4
+  cell: {part: schema-evolution, evidence-form: extraction-provenance-model-and-schema-version, schema-evolution: append-only-versioned-fields, extraction-trigger: on-model-upgrade, mechanism-type: reuse-or-cache-prior-work, user-segment: studio-data-engineer}
+  object: "memo.md item 2: 'result is cached as a new field, so the question set grows from real use'"
+  situation: The ingestion model is upgraded in week 6; the step-4 abandon count moves from 41 to 36 and the studio asks whether the game changed or the model did.
+  consequence: Every count can be split by extraction run; the chatbot shows 'model v2 on 500 sessions gives 36; model v1 on the same 500 gave 41' and the data engineer can diff the 5 players.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  proposed: One ExtractionRun node per batch; every node and edge written in the run links to it; re-extraction writes a new run and marks the old edges superseded rather than deleting them.
+  shallow: false
+  mechanism: Provenance as graph structure rather than a column; answers carry the run id; mixed-run cohorts are flagged.
+  example: "'How many players quit during step 3?' answers '36 of 500 (run r14, model v2, schema s3); the previous run r09 said 41; 5 players differ, 4 of them were relabelled from ABANDONED to COMPLETED'."
+  cost: S
+  depends_on: kg-1
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The fixed table overwrites; mixed-model answers are invisible to the studio.
+
+- id: kg-16
+  title: Drive lazy backfill from the graph itself - a new edge type's backlog is the set of Session nodes with no edge of that type from the latest ExtractionRun, processed in cohort-size order
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: lazy-backfill-on-demand, query-path: lazy-backfill-extraction, extraction-trigger: on-first-question, latency-tier: minutes, mechanism-type: defer-to-query-time}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: A studio asks 'how many players read the lore panel' and there is no READ_PANEL edge type; the planner must know which sessions lack it and which already have it from a partial run.
+  consequence: The backlog query is MATCH (s:Session) WHERE NOT (s)-[:HAS_EXTRACTION {type:'READ_PANEL'}]->(:ExtractionRun); the backfill processes those sessions, writes edges and the run link, and the chatbot streams the count as coverage rises from 0 of 500 to 500 of 500.
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'cached as a new field, so the question set grows from real use'"
+  proposed: Each new edge type registers a schema node with its extractor prompt; coverage per edge type per studio is a property on the schema node; the planner refuses to give a final number below 80% coverage.
+  shallow: false
+  mechanism: Backfill state lives in the graph as extraction-run links, so the planner, the chatbot and the cost governor all read the same coverage number.
+  example: "'How many players opened the lore panel during the tutorial?' first answers '12 of 60 processed so far, 500 queued, about 6 minutes'; final '71 of 500 (14.2%), coverage 500 of 500, run r15'."
+  cost: M
+  depends_on: kg-1, kg-15
+  part: query
+  ingest_cost: L
+  query_cost: L
+  better_than_fixed_table: New questions grow the schema without a human editing the question list, and partial progress is visible.
+
+- id: kg-17
+  title: Induce candidate questions by mining frequent subgraph motifs (support at least 5% of players, size 2 to 4 edges) in the cohort's session graphs, and turning each motif into a 'how many players did X then Y' template
+  level: L3
+  cell: {part: question-generation, question-origin: induced-from-data, mechanism-type: auto-discover-without-question, extraction-trigger: on-cohort-size-threshold, moment-in-journey: first-cohort-ingested, representation: entity-relation-graph}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes)'"
+  situation: The ontology enumerates thousands of entity x dimension x outcome triples; most never occur in play; the studio's first cohort of 200 sessions already shows which combinations are real.
+  consequence: Frequent motif mining (gSpan-style, capped at 4 edges) yields 50 to 300 motifs per cohort; each becomes a question with a known count, and the ontology list is pruned to what the data supports.
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'pruned by the game target'"
+  proposed: Run motif mining once the cohort passes 200 players; emit one template per motif with its support and a plain-language rendering; rank by support x novelty against existing templates.
+  shallow: false
+  mechanism: Question generation reads the data's own structure instead of enumerating an ontology; the output is templates that already have answers.
+  example: "Motif (ATTEMPTED step 4) -> (CLICKED Settings) -> (ABANDONED step 4) has support 7.2% (36 players); the generated question 'How many players open Settings during the equip step and then quit?' is pre-answered: 36 of 500."
+  cost: M
+  depends_on: kg-1 with at least 200 players
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Questions come from observed behaviour with counts already attached, not from a person guessing what to ask.
+
+- id: kg-18
+  title: Let the studio define trackers as graph patterns through a 3-field builder (subject node, relation, object node, optional time window) that compiles to a saved pattern with a count refreshed on ingest
+  level: L4
+  cell: {part: chatbot-ui, representation: customer-defined-trackers-over-universal-primitives, question-origin: studio-written-at-runtime, extraction-trigger: on-studio-tracker-defined, user-segment: game-designer, delivery-surface: dashboard-standard-report}
+  object: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  situation: A designer wants to watch 'players who open the map before step 3 completes' every week; it is not a template and typing it into the chatbot each Monday is friction.
+  consequence: The builder offers only registry nodes and the 8 edge types; the saved tracker is a pattern node in the graph with a count property; the Monday report lists all trackers with current counts and week-over-week deltas.
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "memo.md: 'judged by two tests: coverage of real studio questions'"
+  proposed: Tracker node with pattern, owner, created_ts; recount on every ingest; a tracker whose pattern references an edge type with coverage under 80% shows the coverage next to its count.
+  shallow: false
+  mechanism: Studio-written questions become first-class graph objects over universal primitives, with no free text and no re-extraction.
+  example: "Tracker 'map-before-step-3' = (p)-[:CLICKED]->(UIElement Map)-[:BEFORE]->(COMPLETED Step 3): week 1 count 143 of 500, week 2 count 88 of 420 after the patch moved the map tutorial earlier."
+  cost: M
+  depends_on: kg-1, kg-3, kg-10
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The studio adds its own questions without JEV editing a question list, and those questions have counts the next morning.
+
+- id: kg-19
+  title: Pre-seed the Step, Mechanic and UIElement registry on day 0 from the game's design document, store page and patch notes, so questions exist before the first video is ingested
+  level: L3
+  cell: {part: question-generation, question-origin: design-doc-patch-notes-store-page-derived, moment-in-journey: game-onboarding-day-0, extraction-trigger: on-new-game-onboarding, granularity: game-system, user-segment: product-owner-jev}
+  object: "B-perspectives.yaml product-owner-jev: 'time to onboard a new game'"
+  situation: A new studio signs; no sessions exist yet; the owner wants the first dashboard the day the first cohort lands, and the fixed table needs someone to write the questions first.
+  consequence: The model reads the design doc (or the store page and the tutorial script) and emits 10 to 30 expected Step nodes, 20 to 60 Mechanic nodes and the UI vocabulary as 'expected' nodes; ingestion later links observed nodes to them with OBSERVED_AS edges; unmatched expected nodes become the 'never seen' list.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "A-frame.yaml: 'studios are many and each game differs, so per-game hand-written questions do not scale'"
+  proposed: Onboarding job - ingest the doc, emit expected nodes with source citations, generate the day-0 template set from them; after the first 50 sessions, report expected nodes with zero OBSERVED_AS edges.
+  shallow: false
+  mechanism: The question registry starts from the studio's own documents instead of from the first cohort or a hand-written list.
+  example: "Design doc lists tutorial steps 1-12; after 50 sessions step 9 'Fast travel' has 0 OBSERVED_AS edges because 48 of 50 players quit before it; the day-0 question 'churn before fast travel' already has an answer: 96%."
+  cost: S
+  depends_on: a document per game (design doc, tutorial script or store page)
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Day-0 question coverage with no hand-written list, plus a 'what we expected but never saw' report the fixed table cannot produce.
+
+- id: kg-20
+  title: Model BuildVersion as a node with every Session linked by ON_BUILD, so 'did the fix work' runs the same pattern per build and diffs the two counts with denominators
+  level: L4
+  cell: {part: query-path, question-type: did-the-fix-work-pre-post, scope: build-version-pair, granularity: build-version, modality: build-version-metadata, moment-in-journey: new-build-version}
+  object: "spec.md Unspecified: current question count and answer types - versions are not in the table"
+  situation: The studio moved the equip prompt in build 1.3 and asks whether step 4 churn dropped; the answers table has no build column.
+  consequence: Pattern 'abandon at Step 4' is run with ON_BUILD = 1.2 and ON_BUILD = 1.3; the chatbot returns both fractions, the difference, and a two-proportion z-test p-value, and marks the answer 'inconclusive' when either side has under 30 players.
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md: 'closed-field questions become aggregate queries over all players'"
+  proposed: BuildVersion node from the video's metadata or the on-screen version string via OCR; ON_BUILD edge per Session; template 'compare <pattern> across builds'.
+  shallow: false
+  mechanism: Version becomes a graph dimension every template can group by, rather than a new column per question.
+  example: "'Did moving the equip prompt reduce churn at step 4?' returns build 1.2: 37 of 500 (7.4%), build 1.3: 11 of 240 (4.6%), difference -2.8 points, p=0.14, 'not conclusive at n=240; re-ask at 400'."
+  cost: S
+  depends_on: kg-1, kg-4, build version captured per video
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The fixed table cannot split any answer by build without a new column; here every pattern splits for free.
+
+- id: kg-21
+  title: Evaluate extraction as edge-level precision and recall per edge type against 20 hand-labelled session graphs, reported per studio and per ExtractionRun
+  level: L4
+  cell: {part: evaluation, evidence-form: recall-estimate, extraction-trigger: on-model-upgrade, granularity: session, schema-evolution: model-upgrade-reextract, user-segment: jev-internal-ops}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: Memo proposes accuracy against hand-labelled sessions but the unit of accuracy is undefined; a per-answer accuracy hides that ABANDONED edges are 95% precise while FRICTION_AT edges are 60%.
+  consequence: Gold = 20 sessions per game labelled as graphs by an annotator (about 2 hours each); for each edge type compute precision, recall and interval IoU; publish a per-edge-type scorecard that the chatbot reads to attach a recall estimate to each answer.
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'accuracy against hand-labelled sessions'"
+  proposed: Annotation tool that shows the video and lets the annotator place typed edges on a timeline; matching rule - same node pair and interval IoU over 0.5; scorecard stored as properties on the schema node per run.
+  shallow: false
+  mechanism: Evaluation is per relation type rather than per answer, so the chatbot can say which answers rest on weak edge types.
+  example: "'How many players quit during step 3?' returns '41 of 500; ABANDONED edge recall 0.93, precision 0.96 on 20 gold sessions, so the true count is likely 39 to 46'."
+  cost: M
+  depends_on: kg-1, 20 labelled sessions per game
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: The fixed table's accuracy is one number per question; the scorecard says which relation types are trustworthy and feeds that into every answer.
+
+- id: kg-22
+  title: Return the matched subgraph as evidence for every aggregate answer - the player list with each player's matching edge timestamps - and cut an 8 s clip per edge on demand
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: per-player-list, query-path: clip-lookup, uncertainty-policy: answer-with-ci-and-n, delivery-surface: clip-reel, user-segment: ux-researcher}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: The count '41 of 500' is challenged by the lead designer; the fixed table can only point to 41 rows with no way to see the moment.
+  consequence: Every count answer includes the 41 Player ids with (session_id, video_id, t_start, t_end) from the matched edge; a 'show me' click cuts clips from those intervals; the first 5 are shown, the rest paginated.
+  p_typical: 0.1
+  grounded: quote
+  evidence: "memo.md: 'each with an answer type and an evidence requirement'"
+  proposed: Planner returns the bound variables of the pattern alongside the aggregate; UI renders a list; clip service maps session time back to video-local time through the NEXT_VIDEO offsets.
+  shallow: false
+  mechanism: Evidence is the query result itself; no second query and no model call.
+  example: "'41 players quit during step 3' expands to a list with player 2371 at video 2, 00:17:55; clicking plays 00:17:47 to 00:17:55 showing the player closing the game on the equip prompt."
+  cost: S
+  depends_on: kg-1, kg-14, clip cutting service
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The table's evidence is a row; the graph's evidence is the moment.
+
+- id: kg-23
+  title: REFUSED - frame-level nodes in the graph (one node per sampled frame); the persona keeps frames in object storage keyed by (video_id, t) and links only intervals, because 500 players x 4 h x 1 fps is 7.2 million nodes per cohort
+  level: L3
+  cell: {part: store, granularity: frame, representation: clip-or-frame-embeddings, modality: frame-embeddings, latency-tier: under-2s, build-or-buy: open-source-component}
+  object: "A-frame.yaml assumption: 'original videos remain available for re-processing, including frames'"
+  situation: A colleague proposes storing every sampled frame as a node with an embedding so clip similarity queries can run in the graph.
+  consequence: Low willingness. 7.2 million frame nodes per 500-player cohort, plus 14,400 NEXT edges per session, makes every traversal from a Step node cross thousands of frame nodes; p95 pattern latency measured on similar stores moves from under 200 ms to over 4 s. Frames belong in a time-indexed blob store with a vector index beside it; the graph holds intervals that reference (video_id, t).
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast.'"
+  proposed: Keep frame embeddings in a vector index keyed by (session_id, t); graph nodes carry frame references, never frames.
+  shallow: false
+  mechanism: Would store frames as nodes; the refusal is to keep the graph at interval granularity (minimum 1 s) and at most 10,000 nodes per session.
+  example: "'Show me players who saw the same error screen as player 2371 at 00:17:50' is served by vector lookup on the frame index (12 hits), then a graph hop from those (session, t) references to Player nodes; the graph never stores the frames."
+  cost: L
+  depends_on: nothing
+  part: store
+  ingest_cost: L
+  query_cost: L
+  better_than_fixed_table: Nothing at the graph layer; clip similarity is better served outside the graph.
+
+- id: kg-24
+  title: REFUSED - a static entity graph without time on edges (player LIKES mechanic, player USED item); the persona refuses because 'how long', 'when' and 'before' questions become unanswerable
+  level: L3
+  cell: {part: store, representation: entity-relation-graph, question-type: how-long, granularity: player, mechanism-type: precompute-more, subject-domain: core-loop}
+  object: "memo.md item 1: 'timestamped atomic observations'"
+  situation: A quick first version proposes to extract 'facts' about each player (used crafting, disliked combat) as untimed triples because they are easy to prompt for.
+  consequence: Low willingness. Untimed triples answer 'how many used crafting' but not 'how long on step 7', 'who opened the map before step 3' or 'what happened after the equip prompt'; 4 of the 19 question types in the axis (when, how-long, timeline, did-the-fix-work-pre-post) have no path. Retrofitting time later means re-extracting every session.
+  p_typical: 0.04
+  grounded: quote
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session'"
+  proposed: Every edge carries t_start and t_end from the first version; untimed facts are derived views, never the source.
+  shallow: false
+  mechanism: Would store player-entity triples without intervals; refused in favour of interval edges (kg-1).
+  example: "'How long do players spend on step 7 before quitting?' has no answer in a triple store of (player, ATTEMPTED, step7); with interval edges the answer is p50 96 s over 29 abandoners."
+  cost: S
+  depends_on: nothing
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Nothing; it is the fixed table with a different serialisation.
+
+- id: kg-25
+  title: Join game telemetry events as nodes aligned to the session clock, with SAME_MOMENT edges to video observations within 2 s, and route counting questions to the telemetry node when one exists
+  level: L4
+  cell: {part: ingestion-extraction, modality: game-telemetry, representation: hybrid, mechanism-type: change-data-at-source, user-segment: studio-data-engineer, question-type: why}
+  object: "spec.md Unspecified: 'whether game telemetry is joined'"
+  situation: The studio already logs 'tutorial_step_complete' events; the video-derived COMPLETED edge disagrees with the event for 3% of players; the studio trusts its own events for counts and wants video only for the why.
+  consequence: Telemetry events become TelemetryEvent nodes with exact timestamps; alignment offset per session is estimated from the first 3 matched events (median error under 1 s); the planner prefers telemetry for counts and video edges for FRICTION_AT, SAID, CLICKED.
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'whether game telemetry is joined' is listed as unspecified"
+  proposed: Telemetry ingest via a per-studio schema map (event name -> Step or Mechanic node); SAME_MOMENT edge where abs(t_video - t_event) under 2 s; disagreement rate stored as a property on the Step node.
+  shallow: false
+  mechanism: Two sources of edges on the same nodes, with provenance; the planner picks by question type.
+  example: "'How many players quit during step 3?' answers from telemetry (43 of 500) and adds 'video agrees on 41; 2 players quit between the event and the next frame'; 'why' then reads FRICTION_AT from video for those 43."
+  cost: M
+  depends_on: kg-1, kg-14, studio exporting an event feed
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: Where the studio already has the number, the chatbot gives the studio's number and adds what only video can say.
+
+- id: kg-26
+  title: Cache compiled pattern results keyed by (pattern hash, slot values, cohort hash, latest ExtractionRun id), with invalidation only when a run touches an edge type the pattern reads
+  level: L4
+  cell: {part: query-path, query-path: semantic-cache-similar-question, mechanism-type: reuse-or-cache-prior-work, latency-tier: sub-200ms-cached, moment-in-journey: steady-state-weekly, user-segment: producer-exec}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: Five people at the studio ask the step-4 churn question in different words during the same week; each phrasing compiles to the same pattern and slots.
+  consequence: Cache hit rate above 60% in steady state on the persona's comparable deployments; the hit returns in under 50 ms; the key includes the run id so a model upgrade invalidates exactly the patterns whose edge types were re-extracted.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'a question over, say, 500 players is fast'"
+  proposed: Cache entry stores the aggregate, the bound player list and the run id; a dependency map from edge type to pattern hashes drives invalidation.
+  shallow: false
+  mechanism: Semantic equivalence is decided at the compiled-pattern level, not by embedding the question text, so two phrasings that compile identically share one entry.
+  example: "'How many quit at the equip step?' and 'step 4 drop-off?' both compile to T07(Step idx 4); the second asker gets the cached '37 of 500 (7.4%)' with the same player list and run id r14."
+  cost: S
+  depends_on: kg-10, kg-15
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Same speed as the table for repeated questions, with correct invalidation when the extraction changes.
+
+- id: kg-27
+  title: One graph database per studio with the genre ontology replicated read-only into each; cross-studio benchmark served only from per-studio aggregates with at least 5 studios, never from a joined graph
+  level: L3
+  cell: {part: tenancy-access-control, tenancy-and-deployment: logically-isolated-per-studio, scope: cross-studio-benchmark, reuse-scope-of-extraction: genre-shared, user-segment: publisher-portfolio, uncertainty-policy: abstain-below-coverage}
+  object: "B-perspectives.yaml privacy-counsel: 'per-studio isolation'"
+  situation: A publisher asks whether its step-4 churn of 7.4% is high for the genre; a shared graph would make this one query but would expose other studios' player nodes.
+  consequence: Each studio's graph is its own database; the ontology layer is copied in at onboarding and refreshed weekly; benchmarks are computed from per-studio Step-node aggregates (kg-4) mapped through ALIAS_OF to ontology nodes, and shown only when 5 or more studios contribute.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "A-frame.yaml: 'studios are many and each game differs'"
+  proposed: Database-per-tenant; benchmark job reads only aggregate properties; benchmark answer shows n_studios and abstains under 5.
+  shallow: false
+  mechanism: Isolation at the database level with transfer at the ontology level; no cross-tenant traversal path exists.
+  example: "'Is 7.4% churn at the first equip step high?' returns 'genre median 5.1%, interquartile 3.8 to 6.9%, from 7 studios' or 'not enough studios in this genre yet (3 of 5)'."
+  cost: M
+  depends_on: kg-4, kg-6
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: Benchmarks become possible without a shared store; the fixed table has no shared vocabulary to benchmark on.
+
+- id: kg-28
+  title: Export each studio's graph weekly as two Parquet files (nodes, edges) with the ExtractionRun id, so the studio's data engineer can join it to telemetry in their own warehouse
+  level: L4
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, tenancy-and-deployment: export-only-no-hosting, user-segment: studio-data-engineer, build-or-buy: studio-owned-stack, effort: XS-days}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: The studio's data engineer wants to join tutorial churn to day-7 retention from the live game, which JEV does not have.
+  consequence: nodes.parquet (id, label, properties as JSON) and edges.parquet (src, dst, type, t_start, t_end, run_id); about 3 to 10 MB per 500-player cohort; the studio runs the join in its warehouse.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'who at the studio asks and what they ask'"
+  proposed: Weekly export job to the studio's bucket; schema documented as a versioned contract tied to the schema node.
+  shallow: false
+  mechanism: The graph is portable as an edge list; no query needs the chatbot.
+  example: "Studio joins edges.parquet ABANDONED Step 4 rows to its retention table and finds the 37 equip-step abandoners have day-7 retention of 11% versus 48% for completers."
+  cost: S
+  depends_on: kg-1, kg-15
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The table is a per-video snapshot with no keys the studio can join on; the edge list carries session clock and player ids.
+
+- id: kg-29
+  title: Push an alert when a tracked pattern's weekly count crosses a threshold or when a new motif enters the top 10 contrast list, delivered to the studio's channel with the player list attached
+  level: L4
+  cell: {part: feedback-loop-from-query-log, mechanism-type: push-instead-of-pull, delivery-surface: alert, query-path: push-alert-no-query, latency-tier: push-no-query, moment-in-journey: live-ops-update}
+  object: "memo.md item 2: 'The chatbot runs a query planner'"
+  situation: Build 1.4 ships on Thursday; by Saturday 60 new sessions show a new motif (CLICKED Settings x3 during step 1) that nobody has asked about.
+  consequence: A nightly job re-runs every tracker (kg-18) and the contrast job (kg-12) on the last 7 days; a tracker count moving more than 2 standard deviations, or a new motif with lift over 2 and support over 10 players, posts one message with the count, the denominator and 3 clip links.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Their questions are not known in advance.'"
+  proposed: Alert rules stored as properties on Tracker nodes; one message per rule per day maximum; alerts include the pattern so the recipient can re-run it in the chatbot.
+  shallow: false
+  mechanism: The graph's own change over time is the question; the studio reads instead of asking.
+  example: "Saturday 02:00: 'New since build 1.4: 19 of 60 players (32%) pressed Settings 3+ times during step 1; before 1.4 it was 4%. 3 clips attached. Pattern: tracker map-before-step-3 unchanged.'"
+  cost: M
+  depends_on: kg-12, kg-18, kg-22
+  part: ui
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: The fixed table waits for a question; this reports the change before anyone thinks to ask.
+
+- id: kg-30
+  title: Store a hierarchical summary tree per session as graph nodes (Session -> Episode (5 to 20 min) -> Moment (30 to 120 s)) with a 1 to 3 sentence summary property each, linked to the interval edges they cover
+  level: L3
+  cell: {part: store, representation: hierarchical-temporal-summary-tree, granularity: variable-length-moment-or-episode, question-type: what-happened, query-path: retrieval-then-llm, latency-tier: under-30s}
+  object: "spec.md: 'Long multi-video sessions.'"
+  situation: The producer asks 'what happened in the first hour for players who quit' - an open question that the closed edges answer only in part and that reading 41 full transcripts answers too slowly.
+  consequence: Each session gets about 12 Episode nodes and 60 to 120 Moment nodes with summaries written at ingestion; the planner collects Episode summaries for the 41 players' first hour (about 500 short texts) and the model synthesises from those in under 20 s.
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data'"
+  proposed: Episode boundaries from screen-state changes and 5-minute caps; Moment boundaries from utterance clusters; summaries carry COVERS edges to the interval edges they describe so any sentence can be expanded to evidence.
+  shallow: false
+  mechanism: Summaries are nodes in the same graph as the edges, so open questions retrieve by pattern (which players, which hour) and read summaries, not transcripts.
+  example: "'What happened in the first hour for the 41 who quit?' reads 41 x 4 Episode summaries and returns: 29 spent over 10 minutes in the inventory screen before the equip step; 7 never found the weapon; 5 hit a loading stall; each theme with a COVERS link to the edges."
+  cost: M
+  depends_on: kg-1, kg-14
+  part: store
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: Open 'what happened' questions over a cohort read 500 summaries instead of 500 transcripts, and every sentence points to its evidence.
+
+- id: kg-31
+  title: REFUSED - OWL/RDFS reasoning over the ontology at query time (inferring Step subClassOf TutorialStep and transitive BEFORE closure); the persona precomputes the closure at ingestion instead
+  level: L3
+  cell: {part: query-path, representation: entity-relation-graph, latency-tier: minutes, mechanism-type: defer-to-query-time, build-or-buy: open-source-component, effort: M-one-quarter}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes)'"
+  situation: An ontology colleague proposes a triple store with a reasoner so that 'any tutorial step' questions follow subclass axioms automatically.
+  consequence: Low willingness. Reasoner-backed queries over a 2-million-edge cohort graph take seconds to minutes on the persona's past deployments, which breaks the under-2s target; transitive closure of BEFORE across 5,000 intervals per session is 12 million inferred edges. The same effect is had by materialising subclass membership as a label at ingestion and bounding BEFORE to the 60 s window (kg-3).
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast.'"
+  proposed: Labelled property graph with ontology membership materialised as extra labels at ingestion; no query-time inference.
+  shallow: false
+  mechanism: Would run an inference engine per query; refused in favour of ingest-time materialisation.
+  example: "'How many players quit during any tutorial step?' with a reasoner infers 12 subclass facts then counts, 3 to 8 s; with materialised label :TutorialStep the count is one index scan, 60 ms: 103 of 500."
+  cost: L
+  depends_on: nothing
+  part: query
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: Nothing at query time; the expressiveness is available more cheaply by materialising at ingestion.
+
+- id: kg-32
+  title: Generate the ontology's questions directly from the graph schema - enumerate (node label x edge type x aggregate x optional time relation) and keep only combinations with non-zero support in the first cohort
+  level: L4
+  cell: {part: question-generation, question-origin: ontology-generated, granularity: tutorial-step, evidence-form: count-with-denominator, moment-in-journey: first-cohort-ingested, mechanism-type: auto-discover-without-question}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: The memo's ontology is a separate artefact from the store; it can generate questions the store cannot answer and miss ones it can.
+  consequence: The schema graph (8 node labels, 8 to 12 edge types, 6 aggregates, 4 time relations) enumerates about 2,300 candidate templates; running each against the first 200 sessions and dropping those with zero support leaves 150 to 400 answerable templates, each already carrying its count and denominator.
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'each with an answer type and an evidence requirement'"
+  proposed: Template generator reads the schema node; support check runs as a batch overnight; surviving templates are rendered to plain language by the model and reviewed in a list by the JEV owner (about 1 hour per game).
+  shallow: false
+  mechanism: The ontology is the store's schema, so every generated question is answerable by construction.
+  example: "Generated template (Player)-[ABANDONED]->(Step) GROUP BY Step renders as 'How many players abandoned each tutorial step?' with support 103; (Player)-[HOVERED]->(Mechanic) has support 0 for this game and is dropped."
+  cost: M
+  depends_on: kg-1, kg-2
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: The question list is derived from what the store can answer, so coverage and answerability are the same number.
+
+- id: kg-33
+  title: Add a cost governor on the graph - per-studio node and edge budget (10,000 nodes per session, 5 million edges per cohort) with the backfill queue (kg-16) ordered by expected answers per dollar
+  level: L4
+  cell: {part: cost-governance, mechanism-type: defer-to-query-time, schema-evolution: lazy-backfill-on-demand, user-segment: jev-internal-ops, extraction-trigger: on-first-question, effort: S-weeks}
+  object: "spec.md Constraints: 'Ingestion time and cost are not a concern.'"
+  situation: The lazy backfill path adds an edge type per new question; after 40 new questions the per-session edge count has tripled and traversals from Player nodes slow from 80 ms to 600 ms.
+  consequence: Budget enforced at write time; new edge types beyond the budget are stored as Session-level summary properties rather than per-interval edges; backfill queue ordered by (number of askers x number of sessions) per extraction cost so the questions asked most grow the graph first.
+  p_typical: 0.04
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' - but query latency is, and graph size drives query latency."
+  proposed: Counters on the Session and Studio nodes; a weekly report of edge types by count and by last-query date; edge types unqueried for 90 days are demoted to properties.
+  shallow: false
+  mechanism: Graph size is treated as a query-latency budget, not an ingestion-cost budget.
+  example: "The 41st question 'did players read the lore panel' is asked by 1 person; the queue puts it behind 'settings opens during step 1' asked by 4 people; its edges are written as a count per Session rather than per interval, keeping Player traversals under 100 ms."
+  cost: S
+  depends_on: kg-16
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: The fixed table never grows and therefore never slows; this keeps the growing graph as fast as the table.

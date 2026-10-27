@@ -1,0 +1,629 @@
+- id: stat-1
+  title: "Every count answer carries a three-part denominator: n_positive / n_eligible / n_recorded, with the excluded players listed by reason"
+  level: L4
+  cell: {part: query-path, representation: fixed-mcq-answers, granularity: player, query-path: sql-over-closed-fields, question-type: how-many, evidence-form: count-with-denominator, uncertainty-policy: answer-with-ci-and-n, user-segment: producer-exec, scope: all-players}
+  object: "spec.md item 3: 'The answers form a structured table per video'; item 4: 'a question over, say, 500 players is fast'"
+  situation: "Studio asks 'how many players quit during the tutorial'. 500 players recorded; 61 sessions have no video covering the tutorial, 24 have a failed transcript, 12 answered 'not applicable' because the player skipped the tutorial"
+  consequence: "Today the chatbot returns one integer (say 97) and the studio divides by whatever number it has in its head; 97/500 and 97/403 differ by 4.7 points, enough to change a roadmap call"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "spec.md: 'The answers form a structured table per video'; nothing in spec.md or memo.md names a denominator or a coverage field"
+  proposed: "Answer template: '97 of 403 eligible players (24.1%); 97 excluded: 61 no tutorial footage, 24 transcript failed, 12 tutorial skipped'"
+  shallow: false
+  mechanism: "Add a per-question status enum to the answers table {positive, negative, not-applicable, no-coverage, extraction-failed}; the chatbot's aggregate path groups by status and renders the triple; status is written at ingestion for every (session, question) pair, never left null"
+  example: "'Tutorial churn rate?' -> '97 of 403 eligible (24.1%); 500 recorded; 97 excluded (61 no footage, 24 failed, 12 skipped)'"
+  cost: S
+  depends_on: "Session stitching so that eligibility is counted per player, not per video (stat-7)"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Same table, but the integer becomes a ratio whose base the studio can see and dispute"
+
+- id: stat-2
+  title: "Wilson 95% interval on every proportion the chatbot reports, suppressed to a range when n_eligible is under 30"
+  level: L4
+  cell: {part: chatbot-ui, query-path: precomputed-aggregate, question-type: how-many, evidence-form: confidence-score, uncertainty-policy: answer-with-ci-and-n, delivery-surface: chatbot, latency-tier: under-2s, user-segment: game-designer}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Designer asks 'what share of players failed the dodge prompt' and the studio has 38 recorded players for the new build"
+  consequence: "A point estimate of 21% from 38 players is reported with the same typography as one from 900; the designer changes the dodge timing on a number whose true value is anywhere between 11% and 36%"
+  p_typical: 0.30
+  grounded: quote
+  evidence: "memo.md: 'aggregate queries over all players (instant)' with no mention of interval or n"
+  proposed: "Render '21% (95% CI 11-36%, n=38)'; below n=30 render only the interval, no point estimate"
+  shallow: false
+  mechanism: "The aggregate query returns (k, n); the chatbot formats Wilson score bounds; a config threshold n_min=30 switches the rendering to interval-only; cached answers store (k, n, computed_at) so the interval is reproducible"
+  example: "'Did players get stuck on the dodge prompt?' -> 'Yes for 8 of 38 eligible players: 21% (11-36%). Interval is wide; 120 more players would narrow it to about +/-7 points'"
+  cost: S
+  depends_on: "stat-1 denominators"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table gives a count; this gives the count plus how much it could move"
+
+- id: stat-3
+  title: "Sequential sampled map-reduce for open-field questions: read random sessions until the Wilson interval is narrower than 10 points or 400 sessions, whichever first"
+  level: L4
+  cell: {part: query-path, query-path: sampled-map-reduce-with-ci, representation: timestamped-observation-log, question-type: why, latency-tier: under-30s, mechanism-type: approximate-then-refine, uncertainty-policy: answer-with-ci-and-n, scope: all-players}
+  object: "spec.md item 4: 'Reading 500 transcripts per question was too slow'; memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "Studio asks 'why do players leave at the crafting step', a why-question with no closed field; 2,100 sessions in the store"
+  consequence: "Reading all 2,100 sessions takes minutes; reading 60 gives an answer with no stated precision; the memo's retrieval path answers only if the rows were extracted"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data'"
+  proposed: "Sample sessions in blocks of 40 with a fixed seed; after each block compute the share of sessions whose crafting-step observations contain a stated reason, and the top-3 reason shares with intervals; stop at CI width under 10 points or 400 sessions"
+  shallow: false
+  mechanism: "Query planner path: uniform random sample over sessions (not videos), model reads the crafting-step window of each sampled session, emits one closed reason label per session, aggregator computes Wilson bounds per label and a stopping rule; the sampled labels are written back as a partially-populated field with the sample mask"
+  example: "'Why do players quit at crafting?' -> after 160 sessions: 'inventory full 38% (31-46%), recipe not found 22% (16-29%), no reason stated 27%; based on a random 160 of 2,100 sessions; full pass scheduled'"
+  cost: M
+  depends_on: "Session-level random sampling key; observation log windows per step (memo item 1)"
+  part: query
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Answers a question the table never had, in under 30 seconds, with a stated error bar instead of a full read"
+
+- id: stat-4
+  title: "Backfill a new field in two phases: stratified 200-session sample within 60 seconds, remainder overnight, with the answer labelled by phase"
+  level: L4
+  cell: {part: query-path, query-path: progressive-answer-then-refine, extraction-trigger: on-first-question, schema-evolution: lazy-backfill-on-demand, latency-tier: progressive-streaming, mechanism-type: approximate-then-refine, granularity: session, question-type: outside-game-target}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Producer asks 'how many players read the tooltip before the first boss', a field nobody extracted; 3,400 sessions across 4 build versions"
+  consequence: "The memo's one-time batch over all sessions returns in hours; the producer gets nothing until then, or an unstratified first slice that over-represents the latest build"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'one-time batch extraction over all sessions whose result is cached as a new field'"
+  proposed: "Phase 1: 200 sessions drawn with strata proportional to build version and session length quartile; answer with CI and phase label. Phase 2: remaining 3,200 overnight; answer re-sent with the final count"
+  shallow: false
+  mechanism: "Backfill job keeps a strata table (build_version x length_quartile); phase-1 draws proportional allocation; the field is stored with a per-row extraction_phase value; the chatbot answer carries phase=1 or phase=2 and the sampled-n"
+  example: "'Tooltip read before boss?' -> 60 s later: '31% (25-38%), stratified sample of 200 of 3,400; final count arrives tomorrow 06:00' -> next day: '29.4% of 3,312 eligible'"
+  cost: M
+  depends_on: "memo item 2 backfill path; build-version metadata per session"
+  part: query
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "A new field gets a first answer in a minute instead of after the full batch, and the first answer is not biased toward whichever sessions were ingested last"
+
+- id: stat-5
+  title: "Per-studio question ledger with Benjamini-Hochberg correction across every comparison asked in the trailing 7 days"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, question-type: compare-steps, query-path: sql-over-closed-fields, evidence-form: contrast-vs-baseline, uncertainty-policy: answer-with-ci-and-n, user-segment: studio-analyst, moment-in-journey: steady-state-weekly, mechanism-type: narrow-or-clarify-the-question}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "An analyst asks 52 'is step X worse than step Y' questions in one afternoon over 12 tutorial steps; at alpha 0.05, 2.6 of them are expected to come back significant by chance"
+  consequence: "Three steps get flagged as problems and a sprint is spent on them; one is noise. Nobody at the studio knows how many questions were asked that week"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: questions 'are not known in advance'; no per-studio ledger of asked comparisons exists in spec.md or memo.md"
+  proposed: "Each comparison answer is written to a ledger (studio, question hash, p, timestamp); the answer shows the raw p and the BH-adjusted q over the trailing 7 days: 'raw p=0.03, adjusted q=0.21 across 52 comparisons this week'"
+  shallow: false
+  mechanism: "Query planner tags any answer that contrasts two groups; ledger table keyed by studio; on each new comparison, recompute BH over the window and attach q; comparisons that were significant last week but drop below the threshold are listed in the weekly digest"
+  example: "'Is the parry step worse than the dodge step?' -> 'Parry 31% vs dodge 22% abandonment (diff 9 pts, 2-16); raw p 0.03; across the 52 step comparisons you asked this week the adjusted q is 0.21, so this is not separable from noise yet'"
+  cost: M
+  depends_on: "Query log with per-answer statistics; stat-2"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table answers each question in isolation; this makes the number of questions asked part of the answer"
+
+- id: stat-6
+  title: "Automatic churner-vs-retainer contrast reports expected false discoveries: 'top 5 of 380 attributes, 19 expected by chance at alpha 0.05, 2 survive FDR 0.10'"
+  level: L4
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, mechanism-type: auto-discover-without-question, question-type: who-are-the-churners-segment-discovery, representation: wide-event-schema-on-read, evidence-form: contrast-vs-baseline, uncertainty-policy: answer-with-ci-and-n, scope: cohort}
+  object: "memo.md item 1: 'closed enum fields and short open fields'; D-critique observability perspective: automatic contrast of churned vs baseline"
+  situation: "The system auto-diffs 380 closed fields between 97 tutorial churners and 306 retainers and surfaces the top 5 differences"
+  consequence: "With 380 tests, 19 are expected to pass p<0.05 under no effect; without a correction the studio reads the top 5 as findings and three are noise"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md item 1 names closed enum fields across all observations; D-critique names BubbleUp-style contrast. Neither mentions how many fields are tested"
+  proposed: "Contrast output lists: attribute, churner rate, retainer rate, difference with CI, raw p, FDR q; header line states number of attributes tested and expected chance hits"
+  shallow: false
+  mechanism: "Contrast job runs a two-proportion test per closed field, applies Benjamini-Hochberg at q=0.10, ranks by effect size among survivors, and prints the count of attributes tested; attributes with fewer than 20 players in either arm are excluded and counted in the header"
+  example: "'What separates tutorial churners?' -> '380 attributes tested, 19 expected by chance. Surviving FDR 0.10: inventory-full event before step 4 (churners 44% vs 12%), no speech in first 3 minutes (61% vs 29%). 3 more differences did not survive correction'"
+  cost: M
+  depends_on: "Closed-field observation log (memo item 1); player-level churn label"
+  part: query
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Finds the question the studio did not ask, and says how many of its findings are likely accidents"
+
+- id: stat-7
+  title: "Player is the unit of inference: stitch videos into sessions and sessions into players before any count, so n is players, never video rows"
+  level: L3
+  cell: {part: session-stitching, granularity: player, representation: step-funnel-state-machine-per-player, question-type: how-many, evidence-form: coverage-statement-n-of-m-players, scope: all-players, schema-evolution: append-only-versioned-fields, moment-in-journey: first-cohort-ingested}
+  object: "spec.md item 1: 'each video is capped at 15 minutes, so one session is many videos'; item 3: 'structured table per video'; Unspecified: 'how videos of one session are linked'"
+  situation: "A 3-hour session is 12 video rows; 'how many players said the tutorial was confusing' summed over rows counts one player who said it in 4 videos as 4"
+  consequence: "Per-video counting inflates both numerator and denominator by the number of videos per session, so long-session players (who are the retainers) dominate every aggregate; churn rates are biased low"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'The answers form a structured table per video'; 'how videos of one session are linked' is listed as unspecified"
+  proposed: "Stitching key (player_id, session_id, video_index, start_offset_ms); a player-level view reduces each question with a declared reducer (any / max / first-time / last-value); every aggregate reads the player view"
+  shallow: false
+  mechanism: "Ingestion writes video rows with the stitching key; a materialised player view applies the per-question reducer declared in the question schema; the chatbot is forbidden from querying the video table for counts"
+  example: "'Players who called the tutorial confusing' -> video table says 212 rows; player view says 88 of 403 players (21.8%)"
+  cost: S
+  depends_on: "A session id and player id in the capture metadata (spec lists linking as unspecified)"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Same questions, but counts are of players, and a player who speaks a lot no longer counts more than one who speaks once"
+
+- id: stat-8
+  title: "Cluster-robust intervals: when the unit counted is an utterance or step but the claim is about players, bootstrap over players (1,000 resamples)"
+  level: L4
+  cell: {part: query-path, granularity: utterance, query-path: precomputed-aggregate, evidence-form: confidence-score, uncertainty-policy: answer-with-ci-and-n, question-type: how-felt, representation: timestamped-observation-log, user-segment: ux-researcher}
+  object: "memo.md item 1: 'timestamped atomic observations ... utterance, friction signal, sentiment'"
+  situation: "Researcher asks 'what share of tutorial utterances are frustrated'; 4,800 utterances from 403 players, but 30 players produce 40% of utterances"
+  consequence: "A naive binomial interval on 4,800 utterances is 3x too narrow; the researcher reports 'frustration up 4 points, significant' when the player-level bootstrap says the difference is inside noise"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: observations are 'atomic' and per utterance; nothing states the inference unit"
+  proposed: "Aggregates over sub-player units compute the interval by resampling players with replacement 1,000 times; the answer states both units: '18% of 4,800 utterances (player-bootstrap 95% CI 14-23%), 403 players'"
+  shallow: false
+  mechanism: "Aggregate query returns per-player (k_i, n_i); the chatbot's stats layer resamples players; intervals are cached by (question, cohort, data_version)"
+  example: "'Frustrated utterances in tutorial?' -> '18% of 4,800 utterances; player-level CI 14-23% (not 17-19%); 30 players contribute 40% of utterances'"
+  cost: S
+  depends_on: "stat-7 player ids on every observation"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table's per-video rows make every utterance look independent; this makes the error bar honest about who is talking"
+
+- id: stat-9
+  title: "Measurement-error correction per question: hand-label 100 sessions per game, store sensitivity and specificity, report the Rogan-Gladen corrected prevalence"
+  level: L4
+  cell: {part: evaluation, extraction-trigger: on-new-game-onboarding, evidence-form: recall-estimate, uncertainty-policy: answer-with-ci-and-n, question-type: how-many, granularity: game, question-origin: ontology-generated, mechanism-type: human-in-the-loop}
+  object: "memo.md item 3: questions 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "Question 'player abandoned during tutorial' has sensitivity 0.82 and specificity 0.95 on 100 labelled sessions; the raw table says 24%"
+  consequence: "Raw prevalence 24% implies true prevalence (0.24-0.05)/(0.82-0.05) = 24.7%, but for a question with sensitivity 0.6 the same raw 24% means 34.5%; today accuracy is measured once and never flows into the answer"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "memo.md: 'accuracy against hand-labelled sessions' is a test on the question set, not a stored per-question parameter"
+  proposed: "Store (sens, spec, n_labelled, labelled_at) per (game, question, model_version); chatbot shows raw and corrected prevalence with an interval that includes the labelling uncertainty"
+  shallow: false
+  mechanism: "Labelling job draws 100 sessions per game, two labellers, computes sens/spec with Clopper-Pearson bounds; the aggregate path applies the Rogan-Gladen estimator and propagates both uncertainties by parametric bootstrap"
+  example: "'Tutorial churn?' -> 'Raw 24.1%; corrected for extractor error (sens 0.82, spec 0.95 on 100 labelled sessions) 24.7% (19-31%)'"
+  cost: M
+  depends_on: "A labelling tool and 2 labellers per game onboarding; model_version on every answer row"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table reports what the extractor said; this reports what likely happened, with the extractor's error folded in"
+
+- id: stat-10
+  title: "Model-upgrade anchor set: re-extract a frozen 200-session panel on every model change and block mixed aggregates when per-field kappa falls under 0.7"
+  level: L4
+  cell: {part: schema-evolution, extraction-trigger: on-model-upgrade, schema-evolution: model-upgrade-reextract, evidence-form: extraction-provenance-model-and-schema-version, question-type: did-the-fix-work-pre-post, granularity: build-version, uncertainty-policy: abstain-below-coverage, moment-in-journey: new-build-version}
+  object: "A-frame assumption: 'a modern long-context multimodal model is available at ingestion'; memo.md item 1 observation log"
+  situation: "Build 1.3 sessions were extracted by model v2, build 1.4 sessions by model v3; the studio asks whether the new tutorial reduced churn"
+  consequence: "A 6-point drop in churn is reported; 4 of those points are the new model being stricter about 'abandoned'. The studio ships a release note on a model artefact"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md and memo.md do not mention model versioning; A-frame assumes the model can change"
+  proposed: "Frozen panel of 200 sessions re-extracted on each model version; per-field Cohen's kappa stored; a pre/post query spanning two model versions on a field with kappa under 0.7 is refused with the kappa shown and a re-extraction of the older cohort offered"
+  shallow: false
+  mechanism: "Every answer row carries model_version; a drift table (field, v_old, v_new, kappa, n=200); the query planner checks drift before any compare-versions answer; re-extraction of old sessions is queued overnight when kappa is low"
+  example: "'Did 1.4 fix tutorial churn?' -> 'Cannot compare yet: 1.3 extracted by v2, 1.4 by v3, kappa on abandoned=0.61. Re-extracting 1.3 with v3 tonight (1,100 sessions)'"
+  cost: M
+  depends_on: "Videos retained for re-processing (A-frame assumption); model_version column"
+  part: evaluation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table silently mixes extractors; this refuses to attribute a model change to the game"
+
+- id: stat-11
+  title: "Generated questions enter the production table only after two independent extraction runs agree at kappa 0.6 or better on 50 sessions; the rest are tagged exploratory"
+  level: L4
+  cell: {part: question-generation, question-origin: ontology-generated, evaluation: none, evidence-form: confidence-score, extraction-trigger: on-new-game-onboarding, granularity: tutorial-step, uncertainty-policy: abstain-below-coverage, mechanism-type: narrow-or-clarify-the-question}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target, each with an answer type and an evidence requirement'"
+  situation: "The ontology emits 640 questions for a new game; 'did the player understand the crafting UI' is one of them and two runs of the same model disagree on 38% of sessions"
+  consequence: "Unreliable questions sit in the same table as reliable ones; the chatbot aggregates them with the same confidence; the studio learns which are junk only when a number contradicts their telemetry"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: questions 'judged by two tests: coverage ... and accuracy' with no per-question admission threshold"
+  proposed: "Admission gate: two runs (temperature or prompt-variant) on 50 sessions, kappa >= 0.6 to be 'production'; 0.4-0.6 'exploratory' (answers shown with a warning and no aggregate); under 0.4 dropped and logged for rewording"
+  shallow: false
+  mechanism: "Question-generation output goes to a staging table; a reliability job computes kappa per question; a status column {production, exploratory, rejected} gates the query planner's aggregate path"
+  example: "640 generated -> 410 production, 140 exploratory, 90 rejected; 'Did players understand crafting UI?' is exploratory (kappa 0.48), chatbot says so and offers 10 clips instead of a percentage"
+  cost: M
+  depends_on: "memo item 3 ontology generator; 50-session staging sample per game"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no reliability column; this keeps unreliable questions from producing percentages"
+
+- id: stat-12
+  title: "Pre/post build comparisons are standardised on recorded player mix (platform, prior-genre-experience, session length) before the difference is reported"
+  level: L4
+  cell: {part: query-path, question-type: did-the-fix-work-pre-post, scope: build-version-pair, query-path: sql-over-closed-fields, evidence-form: contrast-vs-baseline, modality: player-profile-metadata, moment-in-journey: live-ops-update, uncertainty-policy: answer-with-ci-and-n}
+  object: "spec.md Unspecified: 'whether game telemetry is joined'; memo.md item 2 aggregate path"
+  situation: "Build 1.3 cohort was 70% mobile, build 1.4 cohort 40% mobile; mobile players abandon the tutorial at twice the rate"
+  consequence: "Raw churn falls from 28% to 21% and the studio credits the tutorial rewrite; after standardising to the 1.3 mix the drop is 2 points"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md lists telemetry join as unspecified; no covariate adjustment is named in memo.md"
+  proposed: "Every compare-versions answer reports raw and direct-standardised rates, with the covariate mix table shown; standardisation covariates are a per-game config list defaulting to platform, prior-genre-experience, session-length quartile"
+  shallow: false
+  mechanism: "Player-profile fields are closed fields in the store; the planner computes stratum-specific rates in both cohorts and reweights the post cohort to the pre cohort's stratum shares; CI by stratified bootstrap"
+  example: "'Did 1.4 reduce tutorial churn?' -> 'Raw 28% -> 21%. Standardised to the 1.3 player mix: 28% -> 26% (diff 2 pts, -3 to 7). The cohorts differ: mobile 70% vs 40%'"
+  cost: M
+  depends_on: "Player profile metadata captured per session; stat-2 intervals"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table compares two averages; this compares like with like"
+
+- id: stat-13
+  title: "Tutorial churn stored as a survival record per player: time-to-abandon in steps and minutes, with censoring flags for session end and video cap"
+  level: L3
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: tutorial-step, question-type: when, evidence-form: chart, subject-domain: onboarding-tutorial, query-path: precomputed-aggregate, modality: screen-state-classifier}
+  object: "spec.md item 3: targets are 'detecting churn in the tutorial and just after it'; item 1: 'each video is capped at 15 minutes'"
+  situation: "A player's last video ends at step 6 of 9 while still playing; another's recording stops because the capture app crashed at step 3; a third quits at step 3"
+  consequence: "A fixed MCQ 'did the player abandon the tutorial? yes/no' codes all three the same or drops two; abandonment rate per step is undefined"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it'; 'one session is many videos'"
+  proposed: "Per player row: (last_step_reached, minutes_to_last_step, event in {abandoned, completed, censored_session_end, censored_capture_gap}); chatbot renders Kaplan-Meier step curves with at-risk counts"
+  shallow: false
+  mechanism: "Screen-state classifier emits step transitions; ingestion folds them into one survival record per player; the aggregate path exposes hazard per step and median time-to-step; censoring is computed from stitching gaps over 2 minutes"
+  example: "'Where do players churn in the tutorial?' -> 'Hazard peaks at step 4 (parry): 14% of players at risk abandon there (403 at risk at step 1, 212 at step 4); 31 players censored by capture gaps, shown separately'"
+  cost: M
+  depends_on: "Screen-state classifier from frames; stat-7 stitching"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "A yes/no per video becomes a curve with a denominator at every step and censoring made visible"
+
+- id: stat-14
+  title: "REFUSED: always-answer policy with a bare point estimate and no n shown"
+  level: L3
+  cell: {part: chatbot-ui, uncertainty-policy: always-answer, evidence-form: none, question-type: how-many, latency-tier: under-2s, delivery-surface: chatbot, user-segment: producer-exec, mechanism-type: defer-to-query-time}
+  object: "spec.md item 4: 'a question over, say, 500 players is fast'; memo.md item 2: '(instant)'"
+  situation: "Query-time-defined cohort 'players over 40 who use a controller' matches 9 players; chatbot answers '33% churned'"
+  consequence: "The statistician refuses this option: one wrong-looking number from n=9 is remembered longer than 50 right ones; the studio stops trusting the chatbot and goes back to reading transcripts, which is the slow path spec.md says was abandoned"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'Answering a studio's question must be fast'; speed is specified, a minimum n is not"
+  proposed: "Do not build. Replace with stat-2 (interval-only under n=30) and stat-30 (abstain under 10)"
+  shallow: false
+  mechanism: "Would be: the planner returns k/n as a percentage with no n; no threshold; no interval"
+  example: "'Churn among controller players over 40?' -> '33%' (3 of 9)"
+  cost: S
+  depends_on: "nothing"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Nothing; it is the fixed table's failure mode with a chat front end"
+
+- id: stat-15
+  title: "Cached prior answers expire when the eligible cohort grows by 10% or the denominator definition differs; the cache key includes (k, n, data_version)"
+  level: L4
+  cell: {part: query-path, query-path: semantic-cache-similar-question, mechanism-type: reuse-or-cache-prior-work, latency-tier: sub-200ms-cached, evidence-form: count-with-denominator, schema-evolution: append-only-versioned-fields, question-type: how-many, moment-in-journey: steady-state-weekly}
+  object: "memo.md item 2: new question results are 'cached as a new field'; C-axes query-path 'semantic-cache-similar-question'"
+  situation: "'What share of players skip the tutorial' was answered Monday over 403 players; Thursday 120 new players arrive and someone asks 'how many players skipped onboarding'"
+  consequence: "A semantic cache serves Monday's 11% as Thursday's answer; the two questions also differ in denominator (all players vs players who reached the tutorial screen) and the cache does not know"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'cached as a new field'; no invalidation rule is named"
+  proposed: "Cache entries store (question hash, denominator definition id, k, n, data_version, computed_at); a hit is served only if the eligible n has grown under 10% and the denominator id matches; otherwise recompute and show both"
+  shallow: false
+  mechanism: "Query planner normalises the question into (field, cohort filter, denominator id); cache lookup on that tuple; staleness check against the player count in the store"
+  example: "Thursday: 'Monday's answer was 11% of 403; cohort is now 523 (+30%), recomputed: 12.6% of 523. Note: this counts all players; the earlier question counted players who reached the tutorial screen'"
+  cost: S
+  depends_on: "stat-1 denominator ids; data_version counter on ingestion"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Reuse without serving a stale or differently-based number as if it were the same"
+
+- id: stat-16
+  title: "Power statement attached to every two-group comparison: players per arm needed for 80% power at the observed baseline, versus players available"
+  level: L4
+  cell: {part: chatbot-ui, question-type: compare-versions, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: give-range-then-refine, delivery-surface: chatbot, user-segment: game-designer, scope: build-version-pair, mechanism-type: narrow-or-clarify-the-question}
+  object: "spec.md item 4: 'a question over, say, 500 players'"
+  situation: "Designer compares step-3 abandonment between builds with 230 and 190 recorded players; baseline 25%; the difference of interest is 5 points"
+  consequence: "At 25% baseline, detecting a 5-point drop with 80% power needs about 1,090 players per arm; with 230 the test has about 25% power, so 'no difference found' is reported and read as 'the fix did nothing'"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md gives 500 players as the scale; no power or minimum-detectable-effect appears in spec.md or memo.md"
+  proposed: "Comparison answers end with: 'minimum detectable difference at this n: 11 points; to detect 5 points you need about 1,090 per arm'"
+  shallow: false
+  mechanism: "Stats layer computes the MDE from (n1, n2, baseline) with a two-proportion formula and the inverse for a studio-configured target difference (default 5 points); rendered on every compare-versions and compare-steps answer"
+  example: "'Did 1.4 reduce step-3 churn?' -> '25% vs 22%, diff 3 pts (-5 to 11). Not separable at this n: smallest difference you could detect is 11 points; 5 points needs ~1,090 players per build'"
+  cost: XS
+  depends_on: "stat-2"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Turns 'no difference found' into 'not enough players to tell', which is a different decision"
+
+- id: stat-17
+  title: "Recording-cohort size planner at game onboarding: players to record for +/-5 points on the expected tutorial churn rate, per build and per segment the studio names"
+  level: L4
+  cell: {part: collection-protocol, mechanism-type: change-data-at-source, moment-in-journey: game-onboarding-day-0, question-origin: onboarding-interview-with-studio, scope: cohort, evidence-form: coverage-statement-n-of-m-players, user-segment: ux-researcher, effort: XS-days}
+  object: "A-frame assumptions: 'studios are many and each game differs'; spec.md item 4: '500 players'"
+  situation: "A studio expects 30% tutorial churn and wants to compare mobile vs PC and two builds"
+  consequence: "500 players total gives +/-4 points overall but +/-8 points per (platform x build) cell of 125; the studio learns this after the recordings are paid for"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern'; the number of players to record is not derived anywhere"
+  proposed: "Onboarding form asks expected rate, target half-width, and the segments to compare; outputs the players per cell (for 30%, +/-5 points: 323 per cell) and the recording order"
+  shallow: false
+  mechanism: "Planner uses the normal approximation with a finite-population option; stores the plan next to the game target so the chatbot can later say which answers are inside the planned precision"
+  example: "'We expect 30% churn, want +/-5 points per platform and build' -> 'Record 323 per cell, 4 cells, 1,292 players; your current 500 gives +/-8 points per cell'"
+  cost: XS
+  depends_on: "nothing"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table never says how many players were enough; this says it before recording"
+
+- id: stat-18
+  title: "Duration answers report median and IQR, and the share of durations truncated at a 15-minute video boundary or a capture gap"
+  level: L4
+  cell: {part: query-path, question-type: how-long, granularity: variable-length-moment-or-episode, evidence-form: count-with-denominator, representation: timestamped-observation-log, query-path: precomputed-aggregate, subject-domain: onboarding-tutorial, uncertainty-policy: answer-with-ci-and-n}
+  object: "spec.md item 1: 'each video is capped at 15 minutes'; memo.md item 1: 'timestamped atomic observations across all videos of a session'"
+  situation: "'How long do players spend on the crafting tutorial' where 23% of crafting episodes span a video boundary and 6% end at a capture gap"
+  consequence: "A mean over per-video durations under-reports every episode that crosses a boundary; a few 40-minute stuck players pull the mean to 9 minutes when the median is 4"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'capped at 15 minutes, so one session is many videos'"
+  proposed: "Answer: 'median 4.1 min (IQR 2.5-7.8), n=380 episodes from 380 players; 23% of episodes cross a video boundary (stitched), 6% truncated by a capture gap and reported as lower bounds'"
+  shallow: false
+  mechanism: "Episode durations computed on the stitched session timeline; a truncation flag per episode; the aggregate path uses quantiles with bootstrap intervals and reports the truncated share"
+  example: "'Time on crafting tutorial?' -> 'Median 4.1 min (IQR 2.5-7.8); 10% of players over 15 min; 6% of durations are lower bounds (capture gap)'"
+  cost: S
+  depends_on: "stat-7 stitching with start_offset_ms"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table has per-video answers that cannot see a 20-minute episode; this measures the episode and admits where it is cut"
+
+- id: stat-19
+  title: "Affect answers report prevalence among speakers and the silent share separately, with Manski bounds that assume silent players could be all or none"
+  level: L4
+  cell: {part: query-path, modality: silence-or-absence-of-speech, question-type: how-felt, uncertainty-policy: give-range-then-refine, evidence-form: coverage-statement-n-of-m-players, representation: time-series-signals-affect-pace-silence, subject-domain: player-affect, user-segment: ux-researcher}
+  object: "spec.md item 2: 'what is on screen is largely lost'; memo.md item 1: 'sentiment' as an observation"
+  situation: "'How many players were frustrated in the tutorial': 403 players, 148 said nothing during the tutorial; of the 255 speakers, 61 sounded frustrated"
+  consequence: "Reported as 61/403 = 15% it is a floor; as 61/255 = 24% it assumes silent players feel like speakers; frustrated players are plausibly the quiet ones, so the true value lies anywhere in 15-52%"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "spec.md: 'The transcript alone is not enough'; nothing states how a missing utterance is counted"
+  proposed: "Answer shows 'among speakers 24% (19-30%); 37% of players silent; bounds if silent players are all/none frustrated: 15-52%'; offers to narrow with the screen-state friction signal for silent players"
+  shallow: false
+  mechanism: "Observation log marks tutorial windows with zero utterances; the aggregate path computes speaker-only prevalence, the silent share, and worst-case bounds; a follow-up path uses the frame-based friction signal (retries, menu loops) as a proxy with its own labelled accuracy"
+  example: "'Frustrated in tutorial?' -> '24% of speakers (19-30%); 148 of 403 silent; bounds 15-52%. Using screen friction for silent players narrows it to 21-33%'"
+  cost: M
+  depends_on: "Frame-based friction signal (memo item 1); stat-9 accuracy for the proxy"
+  part: query
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table codes silence as 'no' or null; this says what the silence could hide"
+
+- id: stat-20
+  title: "Hierarchical shrinkage across games in a genre: per-step churn for a game with 60 players borrows strength from 14 sibling games, reported as a posterior interval"
+  level: L4
+  cell: {part: query-path, mechanism-type: transfer-across-games, scope: cross-game, reuse-scope-of-extraction: genre-shared, representation: common-data-model-with-per-game-vocab-map, tenancy-and-deployment: shared-multi-tenant, uncertainty-policy: answer-with-ci-and-n, user-segment: indie-solo-dev}
+  object: "A-frame assumption: 'studios are many'; D-critique clinical perspective: 'standard concepts (step, mechanic, UI element, affect), with each game's local names mapped onto them'"
+  situation: "An indie with 60 recorded players asks 'is our step-2 abandonment high'; 14 other action-roguelikes in the store have mapped step types"
+  consequence: "Raw 18% from 60 players (CI 10-30%) is useless alone; with a genre prior (step-2 'first combat' abandonment across 14 games: mean 12%, sd 4) the posterior is 15% (10-21%) and the question 'is it high' gets an answer"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "A-frame: 'studios are many and each game differs'; memo.md says nothing about pooling across games"
+  proposed: "Beta-binomial hierarchical model per mapped step type; chatbot reports raw, pooled, and the genre percentile; only aggregate rates cross tenant boundaries, never rows"
+  shallow: false
+  mechanism: "Per-game vocab map to common step types; nightly job fits the hierarchical model over per-game (k, n); the aggregate path for small-n games shows the posterior; tenancy config can opt a studio out of contributing"
+  example: "'Is our step-2 churn high?' -> 'Raw 18% (10-30%, n=60). Pooled with 14 similar games: 15% (10-21%), 68th percentile of the genre'"
+  cost: L
+  depends_on: "Per-game vocabulary map to common step types; multi-tenant aggregate sharing agreement"
+  part: query
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table answers only within one game; this tells a 60-player studio whether its number is unusual"
+
+- id: stat-21
+  title: "Prevalence-of-a-quote tracker: studio pastes one quote, system builds a tracker, reports prevalence with CI and the tracker's precision on a 50-item labelled sample"
+  level: L4
+  cell: {part: question-generation, question-type: prevalence-of-quoted-sentiment, question-origin: few-shot-tracker-from-examples, extraction-trigger: on-studio-tracker-defined, evidence-form: recall-estimate, representation: customer-defined-trackers-over-universal-primitives, uncertainty-policy: answer-with-ci-and-n, latency-tier: minutes}
+  object: "spec.md Constraint: 'Their questions are not known in advance'; D-critique conversation-analytics perspective: customer-defined trackers backfilled overnight"
+  situation: "A producer watched one clip where a player says 'I thought the glowing door was decoration' and asks how common that is"
+  consequence: "Without a precision estimate the tracker's 14% could be 14% of players or 14% of false matches on the word 'door'; the producer cannot tell"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'Their questions are not known in advance'; memo.md item 2 names new-field backfill but not tracker precision"
+  proposed: "Tracker run over all tutorial utterances; 50 random matches shown to the producer for yes/no; precision with Clopper-Pearson bounds; prevalence corrected for precision; 10 clips as evidence"
+  shallow: false
+  mechanism: "Semantic+keyword tracker over the utterance index; match set sampled for labelling in the chat; corrected prevalence = matches x precision / n_players with bootstrap interval; tracker saved as a field with its precision"
+  example: "'How many thought the glowing door was decoration?' -> '14% raw matches; you rated 38 of 50 as true (precision 0.76, 0.62-0.87); corrected 10.6% (8-14%) of 403 players'"
+  cost: M
+  depends_on: "Utterance index with player ids; in-chat labelling widget"
+  part: question-generation
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "A question invented at 3pm gets a number by 3:10pm, and the number says how much to trust the matcher"
+
+- id: stat-22
+  title: "Coverage of generated questions measured as recall over a held-out set of 100 real studio questions, reported with Clopper-Pearson bounds per question type"
+  level: L4
+  cell: {part: evaluation, question-origin: failed-query-log, evidence-form: recall-estimate, moment-in-journey: renewal-review, user-segment: jev-internal-ops, uncertainty-policy: answer-with-ci-and-n, question-type: outside-game-target, effort: S-weeks}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "Ontology v2 is claimed to 'cover more' than v1; the comparison was done on 20 questions chosen by the team"
+  consequence: "62% coverage on 20 questions has bounds 38-82%; two ontology versions cannot be told apart, and the team ships the one they like"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md names coverage as a test but gives no sample, denominator or interval"
+  proposed: "Held-out bank: 100 real questions from the query log per quarter, stratified by question-type axis value; coverage = answered-from-store without backfill; report per type with intervals; the bank is frozen before the ontology is changed"
+  shallow: false
+  mechanism: "Query log tags each question with answered-from-store / backfilled / failed; quarterly job draws the held-out 100 by strata; ontology changes are evaluated against it and the delta is reported with a McNemar test"
+  example: "'v2 vs v1 coverage' -> 'v1 62% (52-71%), v2 71% (61-79%) on 100 held-out questions; paired difference +9 (2-16); why-questions still at 40%'"
+  cost: S
+  depends_on: "Query log with answer-path tag (memo item 2)"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Makes 'the question set grows from real use' a measured claim with a denominator"
+
+- id: stat-23
+  title: "Why-questions answered as associations with a confounder panel: the chatbot never says 'because'; it says 'players who X abandoned at A% vs B%' and lists the closed fields that also differ"
+  level: L4
+  cell: {part: chatbot-ui, question-type: counterfactual-why-not, query-path: sql-over-closed-fields, evidence-form: contrast-vs-baseline, uncertainty-policy: answer-with-ci-and-n, user-segment: producer-exec, mechanism-type: narrow-or-clarify-the-question, delivery-surface: chatbot}
+  object: "memo.md item 2: 'the model reads only those' rows; question-type axis 'why' and 'counterfactual-why-not'"
+  situation: "'Why did players who skipped the dodge tutorial churn more?' Skippers abandoned at 41% vs 18%; skippers are also 80% returning players on a second account"
+  consequence: "A model reading 40 skipper transcripts writes 'because they lacked the dodge skill', a causal story that the covariate table contradicts; the studio makes the dodge tutorial mandatory"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: open-field questions are answered by 'the model' reading rows; no constraint on causal wording"
+  proposed: "Answer template for why/counterfactual: contrast with CI, then a table of the 5 closed fields that differ most between the groups, then quotes as illustration labelled 'examples, not evidence of cause'"
+  shallow: false
+  mechanism: "Planner routes why-questions to contrast-then-quotes; the LLM summary is constrained by a template that forbids causal connectives; the confounder panel is the stat-6 contrast restricted to the two groups"
+  example: "'Why do dodge-skippers churn?' -> '41% vs 18% (diff 23, 14-31). Skippers also differ: returning player 80% vs 22%, PC 70% vs 45%. 6 quotes from skippers follow as examples'"
+  cost: S
+  depends_on: "stat-6 contrast job; closed-field player profile"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table cannot answer why at all; this answers with the comparison and the reasons it might be wrong"
+
+- id: stat-24
+  title: "Post-stratification to the studio's live player base: studio uploads platform, region and age-bucket marginals; every rate is reported raw and reweighted"
+  level: L4
+  cell: {part: export-integration, modality: player-profile-metadata, scope: all-players, question-type: how-many, evidence-form: count-with-denominator, user-segment: studio-data-engineer, tenancy-and-deployment: logically-isolated-per-studio, uncertainty-policy: answer-with-ci-and-n}
+  object: "spec.md item 4: '500 players'; A-frame audience: 'the JEV owner'; the recorded players are a recruited panel, not the studio's population"
+  situation: "Recorded panel is 55% PC, 45% mobile; the studio's live base is 15% PC, 85% mobile; mobile tutorial churn is 2x PC"
+  consequence: "Panel churn 24% is reported; the live population's expected churn under the same step design is 31%; the studio's own telemetry shows 31% and concludes JEV's numbers are wrong"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "spec.md says nothing about how recorded players are recruited; telemetry join is listed as unspecified"
+  proposed: "Studio settings page takes marginals (CSV: platform, region, age bucket, share); raking weights computed per player; every aggregate shows raw and weighted with design-effect-adjusted intervals"
+  shallow: false
+  mechanism: "Weights table per (studio, marginals_version); the aggregate path multiplies by weights; effective sample size = n / (1 + cv^2 of weights) drives the interval"
+  example: "'Tutorial churn?' -> 'Panel 24% (20-28%, n=403); reweighted to your live base (85% mobile) 31% (25-37%, effective n=241)'"
+  cost: M
+  depends_on: "Player profile fields per session; a studio settings surface"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table describes the recorded panel; this describes the studio's players"
+
+- id: stat-25
+  title: "Churner segment discovery by cross-validated decision tree with bootstrap stability: a segment is reported only if it appears in 80% of 200 resamples"
+  level: L4
+  cell: {part: query-path, question-type: who-are-the-churners-segment-discovery, representation: behaviour-archetype-clusters, query-path: automatic-contrast-cohort-diff, granularity: player-segment-cluster, evidence-form: per-player-list, mechanism-type: auto-discover-without-question, uncertainty-policy: abstain-below-coverage}
+  object: "C-axes representation 'behaviour-archetype-clusters'; memo.md item 1 closed enum fields"
+  situation: "The system clusters 403 players on 380 fields and names 5 archetypes; a re-run with a different seed names 4 different ones"
+  consequence: "A studio builds a persona deck on 'the impatient explorer', a cluster that does not exist on the next refresh"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "memo.md: 'closed enum fields' make tree splits possible; no stability criterion exists"
+  proposed: "Supervised tree on churn label, depth chosen by 5-fold CV, 200 bootstrap refits; a leaf rule is reported with its support (n players), churn rate with CI, and stability (share of refits containing the rule)"
+  shallow: false
+  mechanism: "Nightly job per game; rules stored as closed-field predicates so the chatbot can turn 'who are they' into a per-player list with the rule shown; rules under 80% stability are withheld"
+  example: "'Who are the tutorial churners?' -> 'Rule 1 (stable 94%): mobile AND no speech in first 3 min AND inventory-full before step 4: 48 players, 63% churn (48-76%). Rule 2 (stable 82%): ... Two further rules withheld as unstable'"
+  cost: M
+  depends_on: "Player-level churn label; closed-field player view (stat-7)"
+  part: query
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Finds segments nobody asked for, and only reports the ones that survive resampling"
+
+- id: stat-26
+  title: "Daily random audit of 2% of chatbot answers against clips by a human, tracked on a p-chart with a 3-sigma alarm"
+  level: L4
+  cell: {part: evaluation, mechanism-type: human-in-the-loop, query-path: human-analyst-escalation, evidence-form: clip, moment-in-journey: steady-state-weekly, user-segment: jev-internal-ops, delivery-surface: alert, uncertainty-policy: escalate-to-human-analyst}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions' (one-time); spec.md item 4 chatbot"
+  situation: "Accuracy was measured at onboarding; three months later a game patch renamed the tutorial steps and the screen-state classifier drifted"
+  consequence: "Answers degrade silently; the first signal is a studio cancelling, which spec.md's problem list does not mention because nobody measures answer accuracy after day 0"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: accuracy test is described once, at question generation; no ongoing measurement"
+  proposed: "Sampler picks 2% of answers per day (min 10), auditor opens the evidence clips and marks correct/incorrect; p-chart per game; alarm at 3 sigma above the baseline error rate or 5 consecutive days above it"
+  shallow: false
+  mechanism: "Answer log with evidence pointers; audit queue; control-chart job; alarm posts to the ops channel and freezes the affected field's aggregate path pending re-extraction"
+  example: "Game X: baseline error 6%; day 94: 4 of 12 audited answers wrong (33%) -> alarm; root cause: step rename after patch 1.5; field 'last_step_reached' frozen, re-extraction queued"
+  cost: M
+  depends_on: "Evidence pointers on every answer; one auditor-hour per day"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table's accuracy is unknown after the day it was built; this keeps measuring it"
+
+- id: stat-27
+  title: "CUSUM change-point alert on daily tutorial abandonment per build, tuned to one false alarm per 100 days"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, mechanism-type: push-instead-of-pull, query-path: push-alert-no-query, latency-tier: push-no-query, delivery-surface: alert, question-type: technical-issue-bug-perf, moment-in-journey: live-ops-update, user-segment: live-ops-community}
+  object: "spec.md item 3: targets 'detecting churn in the tutorial'; C-axes mechanism-type 'push-instead-of-pull'"
+  situation: "A hotfix on day 40 breaks the step-5 prompt on one device family; daily abandonment at step 5 rises from 9% to 20% on 30 new sessions a day"
+  consequence: "Nobody asks the chatbot because nobody suspects; a plain threshold alert at 15% fires every few days on noise from n=30"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "spec.md: churn in the tutorial is the target; no alerting path exists in spec.md or memo.md"
+  proposed: "Per (game, build, step) daily Bernoulli CUSUM with reference shift from 9% to 15% and threshold h set by simulation for ARL0 of 100 days; alert carries the run length, the players involved and 5 clips"
+  shallow: false
+  mechanism: "Nightly aggregate per step feeds the CUSUM state; alarm resets after acknowledgement; alert text includes the pre and post rates with intervals and the device-family contrast from stat-6"
+  example: "Day 44 alert: 'Step-5 abandonment 21% over the last 4 days (n=118) vs 9% baseline; CUSUM crossed on day 44; 83% of the new abandoners are on device family Z; 5 clips attached'"
+  cost: M
+  depends_on: "Daily ingestion cadence; stat-13 per-step records; build metadata"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table waits for a question; this raises the question, and does not cry wolf more than once a quarter"
+
+- id: stat-28
+  title: "Store the extractor's per-answer probability and aggregate as an expected count with variance instead of a hard count"
+  level: L4
+  cell: {part: store, representation: fixed-mcq-answers, evidence-form: confidence-score, extraction-trigger: at-ingestion, query-path: precomputed-aggregate, uncertainty-policy: answer-with-ci-and-n, question-type: how-many, granularity: video}
+  object: "spec.md item 3: 'a fixed set of questions with options ... The answers form a structured table per video'"
+  situation: "The model's answer to 'did the player abandon' is a label chosen at probability 0.55 for 90 of 403 players"
+  consequence: "Hard labels count 0.55 as 1 and 0.45 as 0; the count swings by up to 90 players depending on a rounding rule nobody chose"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'questions with options' implies one chosen option per row; no probability column is named"
+  proposed: "Answers table gains p_option per option (calibrated on the stat-9 labelled set); aggregates report sum of p with variance sum of p(1-p); the chatbot shows 'expected 97 +/- 9' and the number of low-confidence rows"
+  shallow: false
+  mechanism: "Extraction prompt returns option probabilities or a 5-sample vote; a calibration map per (game, question) from the labelled sessions; the aggregate path sums probabilities"
+  example: "'Tutorial churn?' -> 'Expected 97 of 403 (24%), +/-9 players; 90 rows are under 0.6 confidence; 10 of those shown as clips for you to decide'"
+  cost: S
+  depends_on: "stat-9 calibration set; a probability or vote column in the answers table"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Same table plus one column, and the count stops depending on a hidden rounding rule"
+
+- id: stat-29
+  title: "REFUSED: a p-value printed on every chatbot answer"
+  level: L3
+  cell: {part: chatbot-ui, evidence-form: confidence-score, uncertainty-policy: always-answer, delivery-surface: chatbot, user-segment: producer-exec, question-type: compare-steps, latency-tier: under-2s, mechanism-type: defer-to-query-time}
+  object: "memo.md item 2 aggregate path; spec.md item 4 chatbot"
+  situation: "A producer sees 'step 4 churn 24%, p=0.03' and asks what p means; a colleague says 'there is a 3% chance it is wrong'"
+  consequence: "The statistician refuses this option: a p-value on a descriptive number has no null, and on comparisons it is read as the probability the finding is false; it also invites the 50-questions multiplicity problem that stat-5 exists to contain"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "no p-values appear in spec.md or memo.md; the risk is that a 'make it look rigorous' pass adds them"
+  proposed: "Do not build. Comparisons show the difference with an interval (stat-2, stat-16) and the adjusted q only inside the ledger view (stat-5)"
+  shallow: false
+  mechanism: "Would be: every answer appends p from a test chosen by the planner"
+  example: "'Step 4 churn?' -> '24%, p=0.03' (against what?)"
+  cost: XS
+  depends_on: "nothing"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Nothing; it adds a number that is misread more often than it is read"
+
+- id: stat-30
+  title: "Minimum-cell rule for query-time cohorts: under 10 matching players the chatbot returns 'fewer than 10 match', with the nearest larger cohort offered"
+  level: L4
+  cell: {part: tenancy-access-control, scope: query-time-defined-cohort, uncertainty-policy: abstain-below-coverage, question-type: find-players-who, evidence-form: coverage-statement-n-of-m-players, delivery-surface: chatbot, user-segment: studio-analyst, mechanism-type: narrow-or-clarify-the-question}
+  object: "memo.md item 2: 'aggregate queries over all players'; C-axes scope 'query-time-defined-cohort'"
+  situation: "Analyst asks 'churn among players who mentioned the Steam Deck and are over 50': 4 players match"
+  consequence: "A rate from 4 players is reported as 75%; it is also re-identifying, since 4 players with those attributes can be named from the recording roster"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: aggregate path is 'over all players'; no minimum cohort size is set anywhere"
+  proposed: "Planner checks n before computing; under 10 returns the count bucket '<10' and proposes relaxing one filter (drops 'over 50': 41 players match)"
+  shallow: false
+  mechanism: "Cohort filter resolves to a player set; threshold k=10 per studio config; the planner enumerates single-filter relaxations and shows their n; the <10 event is logged for the question ledger"
+  example: "'Churn among Steam Deck mentioners over 50?' -> 'Fewer than 10 players match. Without the age filter: 41 players, 29% (17-44%)'"
+  cost: XS
+  depends_on: "Cohort resolution in the planner"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table would return 3 of 4; this refuses a number that is both meaningless and identifying"
