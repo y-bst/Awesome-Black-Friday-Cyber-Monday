@@ -1,0 +1,671 @@
+- id: stitch-1
+  title: "Session manifest table built at ingestion: one row per video with session_id, segment_index, wall_clock_start, duration_ms, gap_before_ms, source_file, stitch_confidence"
+  level: L4
+  cell: {part: session-stitching, representation: timestamped-observation-log, granularity: session, extraction-trigger: at-ingestion, effort: XS-days, mechanism-type: precompute-more}
+  object: "spec.md section 1: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos' and Unspecified: 'how videos of one session are linked'"
+  situation: "A 2h40m session arrives as 11 files; nothing in the current pipeline records which file is first, and the answers table is per video"
+  consequence: "Every session-level question (did the player finish the tutorial, how long did the whole session last) is unanswerable or answered off a single video picked at random"
+  p_typical: 0.45
+  grounded: quote
+  evidence: "spec.md: 'The answers form a structured table per video'; Unspecified: 'how videos of one session are linked'"
+  proposed: "Create table session_videos(session_id, segment_index, video_id, wall_clock_start, duration_ms, gap_before_ms, source_file, stitch_confidence 0-1) populated from file metadata and recorder timestamps before any extraction runs"
+  mechanism: "Changes the store: a manifest keyed by session_id is written per upload batch; every downstream row (observation, answer) carries video_id and the manifest resolves video_id to session position; 11 rows for an 11-video session, each with duration_ms (900000 for a full segment) and gap_before_ms"
+  example: "Studio asks 'how many of the 500 players quit during the tutorial'; the planner joins answers to session_videos, finds the last segment per session, and counts sessions whose last segment has tutorial_complete=false, instead of counting videos"
+  cost: S
+  depends_on: nothing
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no session key, so 'per player' counts today are really 'per 15-minute video' counts"
+  shallow: false
+
+- id: stitch-2
+  title: "Every observation carries two clocks: (video_id, video_ms) for clip lookup and session_offset_ms = sum of prior segment durations plus gaps for duration arithmetic"
+  level: L4
+  cell: {part: store, representation: timestamped-observation-log, granularity: utterance, question-type: how-long, evidence-form: quote-with-timestamp, effort: XS-days}
+  object: "memo.md item 1: 'timestamped atomic observations across all videos of a session'"
+  situation: "Tutorial step 3 starts at 13:50 in video 2 and ends at 02:10 in video 3; a single video-local timestamp gives a negative duration"
+  consequence: "Step durations that straddle a cut are dropped or negative; 'how long did step 3 take' over 500 players is biased toward short steps that fit inside one video"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session'"
+  proposed: "Observation schema gains session_offset_ms (int64) alongside video_id and video_ms; a SQL view computes step duration as max(session_offset_ms) - min(session_offset_ms) per (session_id, step)"
+  mechanism: "Changes ingestion and store: the extractor writes video-local timestamps; a post-step adds session_offset_ms from the manifest (segment start offset plus video_ms); queries about duration use session_offset_ms, queries that need a clip use video_id+video_ms"
+  example: "'Median time on tutorial step 3' becomes SELECT percentile(0.5, max(so)-min(so)) GROUP BY session_id, step=3 and returns 4m20s including the 20 players whose step 3 crossed a cut"
+  cost: S
+  depends_on: stitch-1
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table cannot express any duration longer than 15 minutes or crossing a cut"
+  shallow: false
+
+- id: stitch-3
+  title: "Boundary re-extraction window: run the extractor a second time on the 120s tail of segment k concatenated with the 120s head of segment k+1, deduplicate against both single-video runs"
+  level: L4
+  cell: {part: ingestion-extraction, representation: timestamped-observation-log, granularity: variable-length-moment-or-episode, extraction-trigger: at-ingestion, modality: speech-transcript, mechanism-type: precompute-more}
+  object: "spec.md: 'each video is capped at 15 minutes' and known problem 'Long multi-video sessions'"
+  situation: "A player says 'okay I give up' at 14:58 of segment 4 and closes the game at 00:03 of segment 5; the per-video extractor sees the utterance without the quit and the quit without the utterance"
+  consequence: "Quit-reason field for that session reads 'unknown'; for a 2.5h session with 10 cuts, roughly 10 x 4 minutes = 40 minutes (27%) of the session lies within 2 minutes of a cut"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'Each video is converted to a transcript' (per video, no cross-video context)"
+  proposed: "Ingestion job emits, per cut, a 240s window (transcript lines plus sampled frames) and runs the same question set; observations whose session_offset_ms is within 2s and whose text cosine similarity is over 0.9 of an existing row are merged, others appended with source=boundary_window"
+  mechanism: "Changes ingestion: for an n-segment session there are n-1 additional small extraction runs (each 240s of content) producing observation rows tagged source=boundary_window; the store dedupes on (session_id, session_offset_ms +-2000ms, text similarity)"
+  example: "'Why did players quit during the tutorial' retrieves quit observations; 14 of 500 players had their quit utterance within 2 minutes of a cut and now have a quote-with-timestamp instead of 'unknown'"
+  cost: S
+  depends_on: stitch-2
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed per-video questions have no way to see an event split across two files"
+  shallow: false
+
+- id: stitch-4
+  title: "Carry-forward state snapshot: the extractor for segment k+1 receives a 300-token JSON state emitted at the end of segment k (current step, level, last 3 friction signals, running sentiment, open goals)"
+  level: L4
+  cell: {part: ingestion-extraction, representation: hierarchical-temporal-summary-tree, granularity: video, extraction-trigger: at-ingestion, mechanism-type: precompute-more, effort: S-weeks}
+  object: "spec.md section 3: 'The transcript is run through a fixed set of questions' (each video independently)"
+  situation: "Segment 6 opens on a combat screen with the player silent for 3 minutes; without context the extractor cannot say whether this is tutorial step 5 (combat tutorial) or free play after the tutorial"
+  consequence: "Step attribution for segments after the first is guessed from in-video cues alone; the 'which step were they on when they churned' answer is wrong whenever the step label was only stated in an earlier video"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "spec.md: 'Transcript loses visual information'; memo.md item 1 asks for 'step on screen' per observation"
+  proposed: "Extractor prompt gets a fixed prefix 'STATE AT START OF SEGMENT: {...}' and must emit 'STATE AT END OF SEGMENT' as its last field; segments are processed sequentially per session, in parallel across sessions"
+  mechanism: "Changes ingestion: adds a sequential dependency within a session (segment k+1 waits for k), state JSON stored in session_videos.end_state; extraction latency per session becomes sum of segment latencies, not max"
+  example: "'How many players churned on the combat tutorial step' counts sessions whose last segment's end_state.current_step = 'combat-tutorial' and tutorial_complete=false; players who entered that step in segment 5 and quit silently in segment 6 are now attributed correctly"
+  cost: M
+  depends_on: stitch-1
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table answers each video blind; step labels stated once in video 1 are lost for videos 2 to n"
+  shallow: false
+
+- id: stitch-5
+  title: "Gap typing: when wall_clock_start(k+1) minus wall_clock_end(k) exceeds 2000ms, emit a gap observation classified from the first 5 frames of k+1 into {recording-pause, crash-restart, afk-same-scene, main-menu-return, segment-lost}"
+  level: L4
+  cell: {part: session-stitching, question-type: technical-issue-bug-perf, modality: screen-state-classifier, granularity: variable-length-moment-or-episode, evidence-form: count-with-denominator, mechanism-type: auto-discover-without-question}
+  object: "spec.md Unspecified: 'how videos of one session are linked'; known problem 'Long multi-video sessions'"
+  situation: "Segment 3 ends at 14:59:58 and segment 4 starts 4 minutes later on the game's title screen"
+  consequence: "A crash-and-relaunch is invisible to the question set; the studio's 'did anyone hit a crash in the tutorial' question returns 0 while 23 of 500 sessions have a 2-10 minute gap that reopens on the title screen"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern'"
+  proposed: "Gap classifier (frame embedding of first 5 frames of k+1 vs last 5 of k, plus gap length) writes observation type=gap with gap_ms and gap_class; chatbot exposes gap_class counts with denominator = sessions"
+  mechanism: "Changes session-stitching and ingestion: a new observation row per gap with closed enum gap_class and int gap_ms; frame embeddings for 10 frames per cut; count query is precomputed per game per build"
+  example: "'Why did players quit the tutorial' answer now includes 'crash-restart gaps occurred in 23 of 500 sessions (4.6%), 17 of those 23 did not resume the tutorial afterwards' with 3 example clips"
+  cost: S
+  depends_on: stitch-1
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table only has fields about what is inside a video; a gap between videos is by construction never a field"
+  shallow: false
+
+- id: stitch-6
+  title: "Content-based ordering when filenames and timestamps disagree: order segments by OCR'd in-game clock or level counter plus transcript continuity (embedding similarity of last 3 lines of k to first 3 lines of candidate), write ordering_confidence"
+  level: L4
+  cell: {part: session-stitching, modality: on-screen-text-ocr, granularity: video, uncertainty-policy: answer-with-ci-and-n, extraction-trigger: at-ingestion, effort: S-weeks}
+  object: "spec.md Unspecified: 'how videos of one session are linked'"
+  situation: "A recorder names files by upload time; two segments uploaded out of order give session_video_3.mp4 a wall_clock_start earlier than session_video_2.mp4"
+  consequence: "Carry-forward state and session_offset_ms are computed in the wrong order; step funnel shows the player going from step 5 back to step 2"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'what is on screen is largely lost' (no OCR today)"
+  proposed: "Ordering job computes three orderings (filename, wall clock, content) and stores the agreed ordering with ordering_confidence = fraction of adjacent pairs where all three agree; sessions under 0.8 are flagged and excluded from duration questions unless the studio opts in"
+  mechanism: "Changes session-stitching: adds OCR of any HUD clock or level label on 1 frame per 30s and a transcript-continuity score per candidate pair; output is segment_index plus ordering_confidence in session_videos"
+  example: "'Median tutorial duration' reports 'n=471 of 500 sessions (29 excluded for ordering_confidence under 0.8)' instead of silently including 29 scrambled sessions"
+  cost: M
+  depends_on: stitch-1
+  part: session-stitching
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table never checks ordering, so a scrambled session silently corrupts every duration answer"
+  shallow: false
+
+- id: stitch-7
+  title: "Each generated question declares scope in {video, step, session, player} and, for scope above video, a reducer in {first, last, any, all, max, sum, latest-nonnull} applied over segment-level answers"
+  level: L4
+  cell: {part: question-generation, question-origin: ontology-generated, granularity: session, representation: fixed-mcq-answers, schema-evolution: append-only-versioned-fields, user-segment: studio-data-engineer}
+  object: "memo.md item 3: questions generated 'each with an answer type and an evidence requirement'"
+  situation: "The question 'did the player complete the tutorial' is asked per video: segment 1 says no, segment 4 says yes, segment 9 says no (free play, no tutorial visible)"
+  consequence: "A naive aggregate over videos says 33% completed the tutorial for a player who completed it; without a declared reducer the chatbot picks one at random or averages booleans"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "memo.md: 'each with an answer type and an evidence requirement'; spec.md: 'The answers form a structured table per video'"
+  proposed: "Question schema gains scope and reducer fields; ontology generator emits reducer by default from outcome type (completion -> any, quit -> last, max_frustration -> max, time_on_step -> sum)"
+  mechanism: "Changes question-generation and query path: the planner rewrites a session-scope question as reducer(video answers) grouped by session_id; the reducer is part of the question's version so changing it creates a new field version"
+  example: "'How many players completed the tutorial' = count(sessions where any(tutorial_complete)) = 312 of 500; 'where did they quit' = last(step_on_screen) over segments where tutorial_complete=false"
+  cost: S
+  depends_on: stitch-1
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no notion of scope, so every answer is a video answer and session answers are undefined"
+  shallow: false
+
+- id: stitch-8
+  title: "Hierarchical summary tree per session: leaf = 5-minute chunk summary (120 tokens), node = segment summary (200 tokens), root = session summary (300 tokens), each node storing child offsets; retrieval descends from root"
+  level: L4
+  cell: {part: store, representation: hierarchical-temporal-summary-tree, granularity: session, query-path: retrieval-then-llm, latency-tier: under-30s, question-type: what-happened}
+  object: "spec.md section 4: 'Reading 500 transcripts per question was too slow and too much data'"
+  situation: "Studio asks an open question 'what did players do right after finishing the tutorial' that no closed field covers"
+  consequence: "Today the chatbot either cannot answer or reads 500 x 2.5h of transcript (about 500 x 25k tokens)"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists'"
+  proposed: "Ingestion builds 3-level tree per session (about 30 leaves + 10 nodes + 1 root for a 2.5h session); planner reads 500 roots (150k tokens), selects sessions, descends to the segment nodes after the tutorial_complete offset, reads those 500 x 200 tokens"
+  mechanism: "Changes store and query path: a summaries table (session_id, level 0-2, start_offset_ms, end_offset_ms, text, child_ids); query reads at most 2 levels for 500 sessions, about 250k tokens, in 2 parallel batches"
+  example: "'What did players do after the tutorial' reads the root summaries, then the first post-tutorial segment node for the 312 completers, and answers '201 went to the shop, 78 started mission 1, 33 quit within 5 minutes' with 5 clip pointers"
+  cost: M
+  depends_on: stitch-2
+  part: store
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "Answers a question no one wrote in advance in under 30s, with evidence pointers to the exact 5-minute chunk"
+  shallow: false
+
+- id: stitch-9
+  title: "Session-end classifier on the last 60s of the final segment: {closed-game-from-menu, closed-game-mid-play, crash, recording-stopped-protocol, idle-timeout, segment-missing}"
+  level: L4
+  cell: {part: ingestion-extraction, modality: screen-state-classifier, granularity: session, question-type: who-are-the-churners-segment-discovery, subject-domain: onboarding-tutorial, uncertainty-policy: abstain-below-coverage}
+  object: "spec.md section 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "A session ends at 2h14m with tutorial_complete=false; the recording protocol was a 2-hour playtest slot"
+  consequence: "The player is counted as a tutorial churner although the recording was stopped by the protocol while they were still playing; churn rate is inflated by every protocol-stopped session"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it'"
+  proposed: "Store session_end_class on the session row; 'churn' questions default to counting only closed-game-* and crash classes, and report 'n sessions excluded: recording-stopped-protocol' in the answer"
+  mechanism: "Changes ingestion and session-stitching: one classifier call over the last 60s of frames plus transcript of the final segment per session; closed enum field on the session row used as a filter by the planner"
+  example: "'Tutorial churn rate' answers '41 of 500 sessions (8.2%) closed the game before completing the tutorial; 38 further sessions ended by recording-stopped-protocol while in the tutorial and are excluded'"
+  cost: S
+  depends_on: stitch-1
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table cannot distinguish quitting from the camera stopping, so churn is overcounted"
+  shallow: false
+
+- id: stitch-10
+  title: "Step funnel state machine per player with transitions table (session_id, step_from, step_to, session_offset_ms, video_id, transition_kind in {advance, back, skip, restart, quit})"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: tutorial-step, query-path: sql-over-closed-fields, question-type: compare-steps, latency-tier: under-2s}
+  object: "memo.md item 1: 'step on screen' as an observation; spec.md: 'churn in the tutorial'"
+  situation: "A player reaches step 4 in segment 2, restarts the tutorial in segment 3 (back to step 1), reaches step 6 in segment 5"
+  consequence: "Per-video answers record 'step 4', 'step 1', 'step 6' with no transition semantics; the restart, which is the strongest friction signal, is invisible"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "memo.md: 'step on screen, action, utterance, friction signal'"
+  proposed: "Derive transitions from the ordered observation log using session_offset_ms; funnel queries (drop-off per step, restarts per step, time per step) are plain SQL over the transitions table"
+  mechanism: "Changes store: a transitions table derived at ingestion from step observations across all segments of a session; 1 row per step change, typically 8-20 rows per session"
+  example: "'Which tutorial step loses the most players' = count of sessions whose last transition_kind=quit grouped by step_from: step 4 = 19, step 2 = 11, step 6 = 7; plus 'step 4 also has 31 restarts'"
+  cost: S
+  depends_on: stitch-2
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table stores step-per-video; the funnel needs step-per-transition across videos"
+  shallow: false
+
+- id: stitch-11
+  title: "REFUSED: keep per-video independent extraction with no session key and no cross-video context (the current spec), extended only by adding more questions"
+  level: L3
+  cell: {part: ingestion-extraction, representation: fixed-mcq-answers, granularity: video, extraction-trigger: at-ingestion, mechanism-type: precompute-more}
+  object: "spec.md section 3: 'The answers form a structured table per video'"
+  situation: "The owner adds 200 more questions to the per-video table to capture 'most of what is in the video'"
+  consequence: "Refused by this persona: every session-level question still has undefined semantics; a 2.5h session yields 10 rows per question with no reducer, so more questions multiply the ambiguity rather than resolve it; 27% of session time near cuts stays blind"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  proposed: "Do not build; the minimum alternative is stitch-1 plus stitch-7"
+  mechanism: "No change to the pipeline; question count grows from the current set to a larger set, still keyed by video_id"
+  example: "'How many players churned in the tutorial' continues to return a count of videos in which tutorial_complete=false, which for 500 players of 10 videos each can read 4,100"
+  cost: S
+  depends_on: nothing
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Nothing; it is the fixed table with more columns"
+  shallow: false
+
+- id: stitch-12
+  title: "REFUSED: concatenate all n segments into one transcript plus frames and run a single long-context extraction per session"
+  level: L3
+  cell: {part: ingestion-extraction, representation: per-session-summary, granularity: session, extraction-trigger: at-ingestion, evidence-form: clip, cost-governance: true}
+  object: "memo.md item 1: 'a session-level observation log' and A-frame assumption 'a modern long-context multimodal model is available at ingestion'"
+  situation: "A 4-hour session is 16 segments; at 1 frame per 2s plus transcript that is about 7,200 frames and 40k transcript tokens in one call"
+  consequence: "Refused: a single call loses video provenance for clip evidence unless the model is forced to emit segment ids; one truncation or refusal discards the whole session; cannot start extraction until the final segment uploads, which for live playtests means hours of idle time; retry cost is the whole session"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session'"
+  proposed: "Do not build as the only path; use per-segment extraction with carry-forward (stitch-4) and a session roll-up over observation rows (stitch-27)"
+  mechanism: "Ingestion would make one multimodal call per session of up to 16 x 15 minutes of content"
+  example: "'Show me the clip where the player quit the tutorial' returns a session-level timestamp 2:47:13 that must be mapped back to segment 12 at 02:13; if the model emitted 2:47 as 2:17 the clip is from the wrong segment"
+  cost: M
+  depends_on: nothing
+  part: ingestion-extraction
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "Sees the whole session at once, but at the price of clip provenance and all-or-nothing failure"
+  shallow: false
+
+- id: stitch-13
+  title: "Stitch-quality evaluation set: 50 hand-labelled sessions with 200 events that straddle a cut; metric = recall of straddling events under per-video, boundary-window and carry-forward extraction"
+  level: L4
+  cell: {part: evaluation, evidence-form: recall-estimate, granularity: variable-length-moment-or-episode, moment-in-journey: first-cohort-ingested, user-segment: jev-internal-ops, effort: S-weeks}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: "Accuracy is measured on events inside a video; no test exists for events split by the 15-minute cap"
+  consequence: "A pipeline can score 95% accuracy on the current benchmark while missing every quit that happens at a cut"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  proposed: "Label 4 straddling events per session for 50 sessions (quit, step change, utterance split, crash gap); report recall per event kind per extraction mode in the evaluation dashboard"
+  mechanism: "Changes evaluation: a labelled set keyed by (session_id, session_offset_ms, event_kind) and a scorer that matches extracted observations within 5s; run on every extractor or model change"
+  example: "Tutorial-churn quits at cuts: per-video recall 0.31, boundary-window 0.84, carry-forward 0.71; the owner picks boundary-window for quit detection on numbers, not opinion"
+  cost: S
+  depends_on: stitch-2
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no evaluation of cross-video events at all"
+  shallow: false
+
+- id: stitch-14
+  title: "Recorder-side session stamping: the capture client writes a sidecar JSON per segment with session_id, segment_index, monotonic_start_ms, build_version, and records 3s of overlap at each cut"
+  level: L4
+  cell: {part: collection-protocol, mechanism-type: change-data-at-source, modality: build-version-metadata, granularity: video, moment-in-journey: game-onboarding-day-0, build-or-buy: build-in-house}
+  object: "spec.md section 1: 'each video is capped at 15 minutes, so one session is many videos'"
+  situation: "The cap is applied by the recorder, which already knows the session and the segment number at the moment it rolls the file"
+  consequence: "Without the sidecar, stitching has to be inferred after the fact from filenames and content (stitch-6), at 1-5% error; with it, ordering is exact and the 3s overlap gives the boundary window a guaranteed anchor"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'how videos of one session are linked'"
+  proposed: "Change the capture client to emit {session_id, segment_index, monotonic_start_ms, build_version, player_id_hash} per file and to start each new file 3000ms before closing the previous one"
+  mechanism: "Changes collection-protocol: data arrives already stitched; ingestion reads the sidecar into session_videos and trims the 3s overlap after boundary extraction"
+  example: "'Which build had the worst tutorial churn' uses build_version from the sidecar rather than OCR; ordering_confidence is 1.0 for every session recorded with the new client"
+  cost: S
+  depends_on: nothing
+  part: collection-protocol
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Makes the session key a fact rather than an inference, which no post-hoc stitching achieves"
+  shallow: false
+
+- id: stitch-15
+  title: "Two durations per step and per session: wall_clock_ms (including gaps) and recorded_ms (excluding gaps over 2s); chatbot shows both whenever they differ by more than 10%"
+  level: L4
+  cell: {part: query-path, question-type: how-long, granularity: tutorial-step, evidence-form: count-with-denominator, uncertainty-policy: answer-with-ci-and-n, user-segment: ux-researcher}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "A player spent 6 minutes on step 3 but left for 25 minutes between segment 2 and 3 (afk gap)"
+  consequence: "Time-on-step reads 31 minutes if gaps are included, 6 minutes if excluded; the studio cannot tell which the chatbot used, and a 'players take 30 minutes on step 3' finding leads to a redesign of a step that is fine"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md item 2 (aggregate queries over closed fields)"
+  proposed: "Step and session rows carry both columns; the answer template is 'median 6m10s of recorded play (9m40s wall clock, n=471; 29 sessions with gaps over 10 minutes listed)'"
+  mechanism: "Changes query path and store: gap_before_ms from the manifest is subtracted when computing recorded_ms; the planner's duration template always names which clock it used"
+  example: "'How long does the tutorial take' answers 'median 24 minutes recorded play, 31 minutes wall clock; 62 of 500 sessions contain an afk gap over 5 minutes inside the tutorial'"
+  cost: S
+  depends_on: stitch-5
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has one duration per video with no gap concept, so every multi-segment duration is wrong one way or the other"
+  shallow: false
+
+- id: stitch-16
+  title: "Player timeline across sessions: player_sessions(player_id_hash, session_id, session_number, hours_since_previous_session) enabling 'returned after day 1' questions"
+  level: L4
+  cell: {part: store, granularity: player, question-type: find-players-who, scope: all-players, modality: player-profile-metadata, subject-domain: progression-difficulty}
+  object: "spec.md section 3: 'detecting churn in the tutorial and just after it'"
+  situation: "A player finishes the tutorial in session 1 on Monday and never records a session 2; another plays 3 sessions over a week"
+  consequence: "'Just after the tutorial' churn means not returning, which is a between-session fact; a session-only store can only see within-session quits"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'churn in the tutorial and just after it'"
+  proposed: "Ingestion links sessions by player_id_hash from the collection protocol; a session row gets session_number and next_session_hours (null if none within the study window)"
+  mechanism: "Changes store: a second stitching level above session; questions with question-type find-players-who can filter on next_session_hours is null"
+  example: "'Which players completed the tutorial but did not come back' = 94 of 312 completers have no session 2 within 7 days; their last 5 minutes of session 1 are offered as a clip reel"
+  cost: S
+  depends_on: stitch-1
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table is per video; it cannot express 'did not return'"
+  shallow: false
+
+- id: stitch-17
+  title: "Progressive per-segment ingestion for live playtests: each segment is extracted on arrival with carry-forward; session rows carry session_complete=false until an end marker, and counts exclude or flag incomplete sessions"
+  level: L4
+  cell: {part: session-stitching, extraction-trigger: continuous-during-live-session, latency-tier: progressive-streaming, moment-in-journey: first-cohort-ingested, uncertainty-policy: answer-with-ci-and-n, user-segment: ux-researcher}
+  object: "spec.md section 1: 'A session can be n hours'"
+  situation: "A studio runs a 4-hour playtest and asks at hour 2 'how many have finished the tutorial so far'"
+  consequence: "If ingestion waits for the whole session, the answer is 0 until hour 4; if it does not flag incompleteness, 'churned' counts players who are still playing"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'A session can be n hours; each video is capped at 15 minutes'"
+  proposed: "Ingestion is triggered per segment; session_complete flips on the end marker (stitch-14) or after 30 minutes without a new segment; churn queries filter session_complete=true and state 'n=140 in progress'"
+  mechanism: "Changes session-stitching and query path: the manifest is append-only during the session; carry-forward state (stitch-4) is the only cross-segment dependency, so latency from segment upload to queryable is one segment's extraction time (about 2-4 minutes)"
+  example: "At hour 2: 'Tutorial completed by 180 of 220 sessions that have passed the tutorial window; 140 sessions still in progress and excluded'"
+  cost: M
+  depends_on: stitch-4
+  part: session-stitching
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table is batch per video with no notion of a session still being recorded"
+  shallow: false
+
+- id: stitch-18
+  title: "Session-long silence time series: 10-second bins of speech presence, controller activity (if available) and screen change across all segments, used to detect stuck intervals that straddle cuts"
+  level: L4
+  cell: {part: ingestion-extraction, representation: time-series-signals-affect-pace-silence, modality: silence-or-absence-of-speech, granularity: session, question-type: why, mechanism-type: auto-discover-without-question}
+  object: "memo.md item 1: 'friction signal' as an observation"
+  situation: "A player stops talking at 14:10 of segment 2 and resumes at 03:30 of segment 3 on the same screen (4m20s silent, same screen)"
+  consequence: "Per-video silence stats show 50s silent in segment 2 and 210s in segment 3, neither over a 4-minute stuck threshold; the longest stuck moment in the session is never flagged"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'friction signal, sentiment'"
+  proposed: "Store a per-session array of 10s bins (about 900 bins for 2.5h) with speech=0/1, screen_change=0/1; stuck intervals = runs of speech=0 and screen_change=0 longer than 180s, written as observations with session_offset_ms"
+  mechanism: "Changes ingestion and store: a compact time-series column per session; stuck detection runs over the stitched series, not per segment"
+  example: "'Where do players get stuck in the tutorial' returns 'step 4: 47 stuck intervals over 3 minutes across 38 sessions; 12 of those intervals cross a video cut' with clip montage of 5"
+  cost: S
+  depends_on: stitch-2
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table asks 'was the player stuck' per video, which cannot see a stuck interval that spans two videos"
+  shallow: false
+
+- id: stitch-19
+  title: "Evidence URI scheme session_id/segment_index/start_ms-end_ms, with boundary-crossing clips materialised at ingestion by concatenating the tail of k and head of k+1 into a stored asset"
+  level: L4
+  cell: {part: export-integration, evidence-form: clip, granularity: variable-length-moment-or-episode, delivery-surface: clip-reel, user-segment: game-designer, build-or-buy: open-source-component}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "The chatbot cites a quit that starts 20s before a cut and ends 10s after; a clip player bound to one file plays 20s and stops"
+  consequence: "Evidence appears to end mid-sentence; the designer concludes the system is unreliable after one truncated clip"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "Every observation gets evidence_uri; when start and end fall in different segments the ingestion job cuts a 60s asset with ffmpeg spanning the two files and the URI points at it"
+  mechanism: "Changes export-integration and store: a URI column and an assets bucket; boundary clips are at most n-1 per session and only for observations that cross a cut"
+  example: "'Show me 5 players quitting the tutorial' returns 5 URIs; 1 of them is a 45s boundary clip playing the sentence 'this is so annoying' through the cut into the quit"
+  cost: S
+  depends_on: stitch-2
+  part: export-integration
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no evidence pointer at all"
+  shallow: false
+
+- id: stitch-20
+  title: "Stitching is versioned: session_videos carries stitch_version; re-stitching old sessions with a better ordering algorithm creates a new session version and marks answers computed under the old one as stale rather than deleting them"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: append-only-versioned-fields, evidence-form: extraction-provenance-model-and-schema-version, granularity: session, extraction-trigger: on-model-upgrade, user-segment: studio-data-engineer}
+  object: "memo.md item 2: a new field's 'result is cached as a new field'"
+  situation: "Month 3: the ordering algorithm (stitch-6) is improved and 4% of historic sessions change segment order; cached session-level answers were computed on the old order"
+  consequence: "Without versioning, the same question answered before and after the re-stitch returns different numbers with no explanation; the studio sees churn move from 8.2% to 7.6% overnight"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "memo.md: 'the question set grows from real use' (fields accumulate over time)"
+  proposed: "video_id is the immutable key; session_id plus stitch_version is the join key for every derived row; answers store stitch_version and the planner reports 'recomputed under stitch v3, 20 sessions changed' when versions differ"
+  mechanism: "Changes schema-evolution and store: one more column on manifest and derived tables; a re-stitch job writes new rows and a diff summary instead of updating in place"
+  example: "'Tutorial churn rate' answer footnote: 'stitch v3; 20 of 500 sessions re-ordered since v2; churn under v2 was 8.2%, under v3 7.6%'"
+  cost: S
+  depends_on: stitch-1
+  part: schema-evolution
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no provenance; a changed number cannot be explained"
+  shallow: false
+
+- id: stitch-21
+  title: "Lazy backfill jobs are queued per session, not per video, and costed by session hours: a new question over 500 sessions x 2.4h average is budgeted as 1,200 session-hours with a per-studio weekly cap"
+  level: L4
+  cell: {part: cost-governance, query-path: lazy-backfill-extraction, extraction-trigger: on-first-question, granularity: session, latency-tier: minutes, mechanism-type: defer-to-query-time}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "A studio asks a new question; the backfill fans out as 5,000 video-level jobs with no carry-forward context, and a second studio's question is starved"
+  consequence: "Backfilled fields have the same cross-video blindness as the fixed table, and ingestion cost, which the spec says is fine, becomes query cost, which must be fast"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'a one-time batch extraction over all sessions whose result is cached as a new field'"
+  proposed: "Backfill unit = session with carry-forward; scheduler estimates session-hours, shows the studio 'about 12 minutes, 1,200 session-hours' before running, and enforces a weekly cap per studio"
+  mechanism: "Changes cost-governance and query path: job queue keyed by session_id; cost estimate = sum of session durations x per-hour extraction cost; cap stored per tenant"
+  example: "'Did players read the tutorial tooltip text aloud' is new; the planner answers 'no field; backfill over 500 sessions (1,200 session-hours) will take about 12 minutes; run?' and the result becomes a session-scope field"
+  cost: M
+  depends_on: stitch-4
+  part: cost-governance
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "Fixed table cannot grow at all; the memo's backfill grows it but per video, which repeats the stitching problem for every new field"
+  shallow: false
+
+- id: stitch-22
+  title: "Session entity table: every named NPC, item, UI label or menu mentioned or shown gets first_seen_offset_ms, last_seen_offset_ms, mention_count across segments, resolved against the game's vocabulary map"
+  level: L4
+  cell: {part: store, representation: entity-relation-graph, granularity: session, modality: on-screen-text-ocr, question-type: what-said, reuse-scope-of-extraction: customer-defined-on-top-of-universal}
+  object: "memo.md item 3: 'an ontology (entities x dimensions x outcomes)'"
+  situation: "The player says 'where is the blacksmith' in segment 3 and finds the blacksmith in segment 7; the tutorial asks them to visit the blacksmith"
+  consequence: "Per-video extraction sees a complaint in segment 3 and an arrival in segment 7 as unrelated; 'how long do players take to find the blacksmith' is unanswerable"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'ontology (entities x dimensions x outcomes), pruned by the game target'"
+  proposed: "Entity rows per session with offsets; a question template 'time from first mention to first on-screen appearance of entity X' runs as SQL"
+  mechanism: "Changes store: an entities table keyed by (session_id, entity_id) with offsets and counts, populated from transcript mentions and OCR across all segments; entity_id comes from the per-game vocabulary map"
+  example: "'Why do players quit at the blacksmith step' answers '63 of 500 asked where the blacksmith is; median 7m40s from first ask to arrival; 19 quit before arriving' with quotes"
+  cost: M
+  depends_on: stitch-2
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed table cannot relate a mention in one video to an appearance in another"
+  shallow: false
+
+- id: stitch-23
+  title: "Two session definitions stored side by side: recording_session_id (one upload batch) and play_session_id (split at gaps over 30 minutes); the chatbot asks which one when a question says 'session'"
+  level: L4
+  cell: {part: chatbot-ui, uncertainty-policy: ask-clarifying-question, mechanism-type: narrow-or-clarify-the-question, granularity: session, question-type: how-long, user-segment: producer-exec}
+  object: "spec.md section 1: 'A player's gameplay session is captured as video. A session can be n hours'"
+  situation: "A 5-hour recording has a 90-minute afk gap in the middle; the studio asks 'average session length'"
+  consequence: "Answering 5h or two sessions of 2h and 1.5h are both defensible; whichever the chatbot picks silently, the producer compares it against telemetry that uses the other definition and distrusts both"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'A session can be n hours'"
+  proposed: "Manifest rows carry both ids; the planner's clarifier fires once per studio ('by recording or by continuous play with gaps under 30 min?') and stores the preference"
+  mechanism: "Changes session-stitching and chatbot-ui: a second grouping key derived from gap_before_ms; a stored per-studio default after the first clarification"
+  example: "'Do players who churn in the tutorial have shorter sessions' is answered under play_session (median 38 min for churners vs 71 min) with a note that under recording_session the numbers are 52 vs 94"
+  cost: S
+  depends_on: stitch-5
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no session, so 'session length' is not even a wrong answer today, it is no answer"
+  shallow: false
+
+- id: stitch-24
+  title: "Push alert to JEV ops when a cohort's stitch health drops: over 5% of sessions with missing segment indices, over 3% with ordering_confidence under 0.8, or any session over 8 hours"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, mechanism-type: push-instead-of-pull, delivery-surface: alert, latency-tier: push-no-query, user-segment: jev-internal-ops, moment-in-journey: first-cohort-ingested}
+  object: "spec.md: 'Answering a studio's question must be fast'"
+  situation: "A new recorder build drops every 7th segment; nobody notices until the studio asks why tutorial durations halved"
+  consequence: "Every answer served to the studio in the meantime is wrong; trust is lost on a data-collection bug, not a model bug"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern. Answering a studio's question must be fast.'"
+  proposed: "Ingestion computes stitch-health per cohort per day; thresholds raise an alert in the ops channel with the 3 worst session ids; affected cohorts are flagged in chatbot answers until cleared"
+  mechanism: "Changes feedback loop: three counters per cohort from the manifest (missing index gaps, low ordering_confidence, outlier durations) compared to thresholds nightly"
+  example: "Alert: 'cohort build 1.4.2: 71 of 500 sessions (14.2%) missing a segment index; tutorial-churn answers for this cohort are flagged'"
+  cost: XS
+  depends_on: stitch-6
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no health signal; a broken recorder is indistinguishable from a quiet player"
+  shallow: false
+
+- id: stitch-25
+  title: "Overlap and duplicate dedupe: when two segments overlap in wall clock (re-upload, 5s recorder overlap) observations within 2000ms session_offset and text similarity over 0.9 are merged and the duplicate segment is marked superseded"
+  level: L4
+  cell: {part: session-stitching, extraction-trigger: at-ingestion, granularity: utterance, evidence-form: count-with-denominator, question-type: how-many, effort: XS-days}
+  object: "spec.md section 3: 'The answers form a structured table per video'"
+  situation: "A tester re-uploads segment 4 after a failed upload; both copies are extracted"
+  consequence: "Every count over that session is inflated for the 15-minute window: 2 quits, 2 restarts, 2 complaints from one player; over 500 players a 3% re-upload rate shifts churn counts by about 1.5 points"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'how videos of one session are linked'"
+  proposed: "Manifest detects overlapping wall-clock ranges; the later upload is superseded unless its duration is longer; observation dedupe runs on (session_id, session_offset_ms +-2000ms, text similarity)"
+  mechanism: "Changes session-stitching: a superseded_by column in session_videos and a dedupe pass over observations after boundary extraction (stitch-3) which produces overlaps by design"
+  example: "'How many players complained during the tutorial' reports 212 of 500 after dedupe instead of 219, and lists 7 sessions with a superseded re-upload"
+  cost: S
+  depends_on: stitch-1
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table counts whatever videos exist; a duplicate video is a duplicate row"
+  shallow: false
+
+- id: stitch-26
+  title: "Build version per session: OCR the version string from the title or settings screen in segment 1 (and any later title screen after a gap), propagate to all segments, store as session.build_version with ocr_confidence"
+  level: L4
+  cell: {part: frame-pipeline, modality: build-version-metadata, question-type: compare-versions, scope: build-version-pair, granularity: session, moment-in-journey: new-build-version}
+  object: "C-axes question-type compare-versions; spec.md Unspecified: joined telemetry and build metadata are not described"
+  situation: "A studio ships a tutorial fix mid-study; 300 sessions are on 1.4.1 and 200 on 1.4.2, with no version in the file metadata"
+  consequence: "'Did the fix work' cannot be answered because no row knows which build it came from"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'what is on screen is largely lost'"
+  proposed: "Frame pipeline samples the first 60s of segment 1 and the first 10s after each gap for a version string regex; session.build_version is set when 2 OCR reads agree"
+  mechanism: "Changes frame-pipeline and store: a per-session field from about 30 OCR calls; compare-versions queries become a GROUP BY build_version"
+  example: "'Did the tutorial fix in 1.4.2 reduce churn' answers '1.4.1: 31 of 300 churned (10.3%); 1.4.2: 10 of 200 (5.0%); 14 sessions have no readable version and are excluded'"
+  cost: S
+  depends_on: stitch-1
+  part: frame-pipeline
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has no build dimension, so pre/post comparisons are impossible"
+  shallow: false
+
+- id: stitch-27
+  title: "Session roll-up pass: after per-segment extraction, one LLM call reads the session's concatenated observation rows (not raw transcript, about 2-4k tokens) and writes session-scope fields: quit_reason, churn_step, arc_summary, 3 representative evidence URIs"
+  level: L4
+  cell: {part: ingestion-extraction, representation: per-session-summary, granularity: session, extraction-trigger: at-ingestion, query-path: precomputed-aggregate, latency-tier: under-2s}
+  object: "memo.md item 1: 'Ingestion produces a session-level observation log, not answers'"
+  situation: "The observation log has 400 rows for a session; the studio's most common question, 'why did this player quit', needs a judgement over all of them"
+  consequence: "Answering at query time means reading 500 x 400 rows per question; answering per video gives 10 contradictory quit reasons"
+  p_typical: 0.18
+  grounded: quote
+  evidence: "memo.md: 'Ingestion produces a session-level observation log, not answers'"
+  proposed: "A session_summary table with closed fields (quit_reason enum, churn_step, tutorial_complete) and one open field (arc_summary, 300 tokens), computed once per session from the observation log, cheap because observations are already compact"
+  mechanism: "Changes ingestion and store: one extra call per session over 2-4k tokens; outputs are session-scope closed fields queryable by SQL and an open summary for retrieval"
+  example: "'Top 3 reasons players quit the tutorial' = GROUP BY quit_reason: 'could not find objective' 17, 'combat too hard' 12, 'crash' 8, each with 3 evidence URIs, in under 2s"
+  cost: S
+  depends_on: stitch-4
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Session-scope answers are computed from the whole session rather than from one video"
+  shallow: false
+
+- id: stitch-28
+  title: "Frame sampling on the session clock: sample 1 frame per 5s of session_offset plus scene-change frames, deduplicate frames within 1s across a cut so the last frame of k and first of k+1 are not both counted"
+  level: L4
+  cell: {part: frame-pipeline, modality: frame-embeddings, granularity: frame, extraction-trigger: at-ingestion, representation: clip-or-frame-embeddings, effort: XS-days}
+  object: "memo.md item 1: 'Video frames add screen state and on-screen text'"
+  situation: "Each 15-minute file is sampled independently from its own 0:00; with a 3s recorder overlap (stitch-14) the same screen is sampled twice at every cut"
+  consequence: "Screen-state counts (loading screens, menus) are inflated by up to 2 x (n-1) per session; 'how many times did players open the map' over-counts at every cut"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'Video frames add screen state and on-screen text, because speech alone cannot answer where did they click'"
+  proposed: "Frame sampler takes the manifest and samples on session_offset_ms; frames with embedding cosine over 0.98 within 1000ms are collapsed"
+  mechanism: "Changes frame-pipeline: sampling schedule is derived from session_offset_ms, so a 2.5h session yields about 1,800 frames regardless of segment count"
+  example: "'How many times did players reopen the tutorial objective panel' reports a median of 4 per session rather than 6, since 2 of the 6 were cut duplicates"
+  cost: S
+  depends_on: stitch-2
+  part: frame-pipeline
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table never used frames; the memo's frame plan would over-count at cuts without this"
+  shallow: false
+
+- id: stitch-29
+  title: "Timeline answer type: for question-type timeline the chatbot renders a per-session strip (steps as bands, segments as ticks, gaps as hatched, quits as markers) from the observation log instead of prose"
+  level: L4
+  cell: {part: chatbot-ui, question-type: timeline, evidence-form: chart, delivery-surface: chatbot, granularity: session, user-segment: game-designer}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "A designer asks 'walk me through what player 37 did in the tutorial'"
+  consequence: "Prose over a 2.5h session either omits the cut structure (so the designer cannot find the clip) or lists 10 video names and loses the story"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md item 2 (retrieval of observation rows)"
+  proposed: "A timeline component reads observations with session_offset_ms plus the manifest and draws one strip per session; clicking a marker opens the evidence URI"
+  mechanism: "Changes chatbot-ui: a deterministic renderer over the observation log, no model call; for cohort timelines, 20 strips stacked and aligned on tutorial start"
+  example: "'Show me the 10 players who quit at step 4' renders 10 strips aligned on step 4 entry; 7 show a 3+ minute silent band before the quit marker, 3 show a crash gap"
+  cost: S
+  depends_on: stitch-2
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table cannot be drawn as a timeline because it has no session clock"
+  shallow: false
+
+- id: stitch-30
+  title: "REFUSED: using segment_index as a proxy for elapsed time ('video 2 = minutes 15-30') in questions like 'did they churn in the first 30 minutes'"
+  level: L3
+  cell: {part: query-path, question-type: when, granularity: video, query-path: sql-over-closed-fields, uncertainty-policy: always-answer}
+  object: "spec.md section 1: 'each video is capped at 15 minutes'"
+  situation: "A planner shortcut maps 'first 30 minutes' to segment_index in (1, 2)"
+  consequence: "Refused: segments are capped at 15 minutes but are often shorter (a crash ends a file at 6 minutes) and gaps between them are unbounded; for 500 sessions in a pilot cohort, segment 2 ended anywhere from 21 to 55 minutes of wall clock; the shortcut is wrong for roughly a quarter of sessions"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'each video is capped at 15 minutes'"
+  proposed: "Do not build; time-window filters use session_offset_ms (stitch-2) and declare which clock (stitch-15)"
+  mechanism: "Would change the query path by mapping time windows to segment indices"
+  example: "'Churn in the first 30 minutes' would count a player who crashed at minute 6, resumed 40 minutes later, and quit at minute 58 wall clock as a first-30-minute churner"
+  cost: S
+  depends_on: nothing
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Nothing; it inherits the fixed table's assumption that a video is a time unit"
+  shallow: false
+
+- id: stitch-31
+  title: "Warehouse export of the stitched model: parquet partitioned by studio/game/session with session_videos, observations (both clocks), transitions and session_summary tables, plus a dbt-style model file documenting reducers"
+  level: L4
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, tenancy-and-deployment: federated-query-into-studio-warehouse, user-segment: studio-data-engineer, granularity: session, build-or-buy: managed-cloud-service}
+  object: "spec.md section 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "A studio data engineer wants to join JEV session rows to their own telemetry on player_id_hash and session wall clock"
+  consequence: "Without the session key and both clocks in the export, the join is per video and the telemetry join window is wrong at every cut"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  proposed: "Nightly export of the four tables with a schema doc listing scope and reducer per field; the studio joins on (player_id_hash, wall_clock_start)"
+  mechanism: "Changes export-integration: a scheduled job writes parquet to a per-studio share; the manifest is the first table so every downstream join has a session key"
+  example: "Studio joins session_summary to their telemetry and finds that 9 of the 41 tutorial churners had a server-side error event within 30s of the quit offset"
+  cost: S
+  depends_on: stitch-7
+  part: export-integration
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table exported per video cannot be joined to anything keyed by session or player time"
+  shallow: false
+
+- id: stitch-32
+  title: "Sampled map-reduce over raw content samples sessions, not videos, and weights by session so long sessions do not dominate; the answer carries n sessions and a 95% interval"
+  level: L4
+  cell: {part: query-path, query-path: sampled-map-reduce-with-ci, uncertainty-policy: answer-with-ci-and-n, granularity: session, scope: query-time-defined-cohort, latency-tier: under-30s}
+  object: "spec.md section 4: 'Reading 500 transcripts per question was too slow'"
+  situation: "A new open question is answered by reading a random 10% of content; sampling 10% of videos picks long sessions 3 x more often than 40-minute ones"
+  consequence: "The estimate of 'share of players who complained about the tutorial camera' is biased toward players who kept playing, which are the ones who did not churn"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data'"
+  proposed: "Sampler draws 50 sessions uniformly, reads each session's hierarchical summary or full observation log, and reports the proportion with a Wilson interval; refine by doubling the sample if the interval is wider than 10 points"
+  mechanism: "Changes query path: the sampling unit is session_id from the manifest; weight = 1 per session; the result template is 'x% (95% CI a-b, n=50 sessions)'"
+  example: "'Did players complain about the tutorial camera' answers '22% (95% CI 12-36, n=50 sessions) in 18s; refine to n=100?' instead of a video-weighted 31%"
+  cost: S
+  depends_on: stitch-8
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Answers an unplanned question in under 30s with a stated interval; the fixed table cannot answer it at all"
+  shallow: false

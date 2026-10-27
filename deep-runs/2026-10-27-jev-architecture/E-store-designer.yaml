@@ -1,0 +1,779 @@
+- id: store-1
+  title: "Session clock as primary key: observation rows keyed by (session_id, t_session_ms), with video_id and t_video_ms derived from a session_videos offset table"
+  level: L4
+  cell: {part: store, representation: timestamped-observation-log, granularity: session, query-path: sql-over-closed-fields, extraction-trigger: at-ingestion, schema-evolution: append-only-versioned-fields}
+  object: "spec.md: 'each video is capped at 15 minutes, so one session is many videos' and 'The answers form a structured table per video'"
+  situation: "A studio asks 'how long did players spend in tutorial step 3' and step 3 straddles video 2 and video 3 of a 6-video session"
+  consequence: "With the per-video table the duration is split into two rows that nobody sums; with session-time keys the duration is t_exit - t_enter on one clock"
+  p_typical: 0.30
+  grounded: quote
+  evidence: "spec.md 'Long multi-video sessions' listed as a known problem; 'how videos of one session are linked' listed as unspecified"
+  proposed: "observations(session_id, t_session_ms, t_end_session_ms, video_id, t_video_ms, kind, ...) with t_session_ms = sum(duration_ms of earlier videos in session_videos) + t_video_ms"
+  shallow: false
+  mechanism: "Ingestion writes every observation on a per-session millisecond clock; a session_videos table (session_id, seq, video_id, capture_start, duration_ms) is the only place video order lives; video-level columns are derived, never primary"
+  example: "Forge Quest, 500 players: step 3 'craft a pickaxe' entered at t=00:52:10 in video 4, abandoned at t=01:07:30 in video 5; one row pair gives 15m20s, the median over 500 players is one SQL query"
+  cost: S
+  depends_on: "a reliable video->session link (capture_start timestamps or a session manifest from the recorder)"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Answers that cross a 15-minute video boundary (durations, 'what happened after') stop being wrong"
+
+- id: store-2
+  title: "Wide-event row: 14 fixed columns plus an attrs VARIANT/JSON column, so a new extracted attribute needs no DDL"
+  level: L4
+  cell: {part: store, representation: wide-event-schema-on-read, granularity: utterance, query-path: sql-over-closed-fields, schema-evolution: schema-on-read, build-or-buy: open-source-component}
+  object: "memo.md item 1: 'closed enum fields and short open fields'"
+  situation: "The planner adds a new field 'mentions_controls_confusing' after a studio question; 40,000 existing observation rows need it"
+  consequence: "With a fixed-column answers table every new field is an ALTER TABLE plus a rewrite; with attrs it is a key written by the backfill job and read as attrs['mentions_controls_confusing']"
+  p_typical: 0.20
+  grounded: quote
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  proposed: "Fixed: session_id, player_id, game_id, build_id, t_session_ms, t_end_session_ms, kind, step_id, confidence, extractor_run_id, evidence_id, modality, text, created_at. Everything else in attrs (ClickHouse JSON / Snowflake VARIANT / DuckDB STRUCT-less JSON)"
+  shallow: false
+  mechanism: "Store changes from one-column-per-question to one-row-per-observation with a typed JSON attrs map; closed fields that are queried more than 50 times a month get promoted to a real column by a nightly job"
+  example: "Query 'players who hit an error message during step 3': SELECT player_id FROM observations WHERE step_id=3 AND kind='error_message' AND attrs.error_text ILIKE '%inventory%' runs in 300 ms over 500 players without any extraction"
+  cost: S
+  depends_on: nothing
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Unlimited attributes per row; adding the 41st question does not touch the table definition"
+
+- id: store-3
+  title: "Append-only field_values table with (session_id, field_id, field_version, extractor_run_id); no UPDATE ever; 'current' is a view"
+  level: L4
+  cell: {part: schema-evolution, representation: question-answer-bank-precomputed, granularity: session, schema-evolution: append-only-versioned-fields, evidence-form: extraction-provenance-model-and-schema-version, extraction-trigger: on-model-upgrade}
+  object: "spec.md item 3: 'The answers form a structured table per video'"
+  situation: "The extraction prompt for 'quit_reason' is rewritten in week 6; 1,200 sessions were answered with v1 and 300 with v2"
+  consequence: "An in-place table silently mixes two definitions in one COUNT; append-only lets the chatbot say '1,200 under v1, 300 under v2' or restrict to one version"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "memo.md item 2: 'result is cached as a new field, so the question set grows from real use' (implies fields change over time; no versioning stated)"
+  proposed: "field_values(session_id, field_id, field_version, extractor_run_id, value_json, evidence_ids[], extracted_at); view current_field_values = latest field_version per (session_id, field_id)"
+  shallow: false
+  mechanism: "Every extracted answer is an immutable row; re-extraction appends; queries default to the current view and can pin a version"
+  example: "Studio asks 'did the step-3 quit rate change after we fixed the prompt?' JEV ops answers from the same table: v1 says 18% of 500, v2 says 14% of 500; the chatbot shows both with version tags"
+  cost: S
+  depends_on: "store-18 extractor_runs table"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Re-extraction never destroys the old answer, so prompt regressions are visible and reversible"
+
+- id: store-4
+  title: "fields registry table: one row per question with answer_type, options, evidence_required, ontology_path, origin, prompt_hash, game_scope"
+  level: L4
+  cell: {part: question-generation, representation: question-answer-bank-precomputed, granularity: game, question-origin: ontology-generated, schema-evolution: append-only-versioned-fields, reuse-scope-of-extraction: customer-defined-on-top-of-universal}
+  object: "memo.md item 3: 'each with an answer type and an evidence requirement'"
+  situation: "The chatbot planner must decide whether 'how many quit at step 3' is answerable by SQL: it needs to know a field exists, its type, and its coverage"
+  consequence: "Without a registry the question list lives in prompt files; the planner cannot enumerate what it can answer, and the studio cannot see the list"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md item 3; spec.md 'current question count and answer types' unspecified"
+  proposed: "fields(field_id, name, question_text, answer_type enum{enum,bool,int,duration_ms,text_short,timestamp_list,player_list}, options_json, evidence_required bool, ontology_path, origin enum{ontology,studio-question,backfill,genre-template}, game_scope enum{universal,genre,game}, prompt_hash, created_at, deprecated_at)"
+  shallow: false
+  mechanism: "Question generation writes rows into fields; extraction reads prompts from fields; the planner reads fields to route; the UI lists fields as 'what you can ask'"
+  example: "fields row: name=step3_outcome, answer_type=enum, options=[completed,abandoned,skipped,session_ended], evidence_required=true, origin=ontology, game_scope=game. The planner sees it and routes 'how many abandoned step 3' to SQL"
+  cost: S
+  depends_on: nothing
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The question set becomes data: countable, versionable, listable to the studio, and extensible by insert"
+
+- id: store-5
+  title: "player_step_state materialised from the observation log: one row per (player_id, step_id) with entered_at, exited_at, outcome, attempts"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: tutorial-step, query-path: precomputed-aggregate, question-type: how-many, subject-domain: onboarding-tutorial}
+  object: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Studio asks 'at which tutorial step do most players drop' across 500 players"
+  consequence: "A per-video answer table cannot express 'reached step 4 but never step 5'; the state table answers it with one GROUP BY step_id, outcome"
+  p_typical: 0.30
+  grounded: quote
+  evidence: "memo.md item 1 'step on screen' observation; spec.md churn target"
+  proposed: "player_step_state(player_id, session_id, step_id, entered_at_ms, exited_at_ms, outcome enum{completed,abandoned,skipped,stuck_gt_threshold,session_ended,not_reached}, attempts int, derived_from_obs_ids[]) rebuilt per session on ingest"
+  shallow: false
+  mechanism: "A deterministic reducer over step_change observations emits one state row per step per player; threshold for stuck = 3x expected_duration_s from tutorial_steps"
+  example: "Forge Quest: step 3 outcome counts over 500 players: completed 391, abandoned 72, session_ended 24, stuck 13; the chatbot answers 'step 3 loses 72 of 500 (14.4%)' in under 200 ms"
+  cost: M
+  depends_on: "store-16 tutorial_steps table with expected durations"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Funnel questions (reached, dropped, retried) become joins on a state table instead of inferences across video rows"
+
+- id: store-6
+  title: "Nightly columnar rollup step_daily(game_id, build_id, step_id, date) with entered, completed, abandoned, p50/p90 duration, n"
+  level: L4
+  cell: {part: store, representation: olap-cube-materialized-views, granularity: cohort, query-path: precomputed-aggregate, latency-tier: sub-200ms-cached, mechanism-type: precompute-more}
+  object: "spec.md: 'a question over, say, 500 players is fast'"
+  situation: "The studio dashboard and chatbot both ask the same 6 step-level numbers every morning"
+  consequence: "Without rollups every ask scans 40,000 observation rows; with rollups it reads 7 rows"
+  p_typical: 0.30
+  grounded: quote
+  evidence: "spec.md: 'Answering a studio's question must be fast'"
+  proposed: "Materialised view refreshed after each ingest batch; columns: entered_n, completed_n, abandoned_n, stuck_n, dur_p50_ms, dur_p90_ms, quotes_sample_ids[5]"
+  shallow: false
+  mechanism: "Store adds a refresh job per ingest; the planner routes how-many/how-long questions whose filters match the cube dimensions to the rollup"
+  example: "'Median time in step 3 for build 1.2.0' = SELECT dur_p50_ms FROM step_daily WHERE build_id='1.2.0' AND step_id=3; returns 7m40s over n=500 in 40 ms"
+  cost: S
+  depends_on: "store-5 player_step_state"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Percentiles and per-build splits are precomputed; the fixed table had only per-video booleans to count"
+
+- id: store-7
+  title: "Closed observation kind enum (11 kinds) with a per-kind payload schema validated at write time"
+  level: L4
+  cell: {part: ingestion-extraction, representation: timestamped-observation-log, granularity: utterance, modality: screen-state-classifier, extraction-trigger: at-ingestion, reuse-scope-of-extraction: universal-primitives}
+  object: "memo.md item 1: 'step on screen, action, utterance, friction signal, sentiment, quote with timestamp'"
+  situation: "Two extraction prompts write 'friction' once as kind='friction' with text and once as kind='frustration' with score; the planner cannot count friction"
+  consequence: "Open kinds fragment the log into synonyms within 2 weeks; a closed enum keeps counts summable"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md item 1 lists observation kinds informally; no schema given"
+  proposed: "kind enum{step_change, ui_action, utterance, friction, affect, error_message, menu_open, idle, death_or_fail, hint_shown, external_distraction}; payload JSON schema per kind, rejected on validation failure and logged to ingest_rejects"
+  shallow: false
+  mechanism: "Ingestion writes only the 11 kinds; anything else goes into attrs of the nearest kind or into ingest_rejects for the schema owner to review weekly"
+  example: "Step-3 churn question: friction rows with step_id=3 across 500 players = 212; grouped by payload.friction_type: cannot_find_ui 94, unclear_goal 61, input_misfire 40, other 17"
+  cost: S
+  depends_on: nothing
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Observation kinds are a universal vocabulary shared by every game, so a friction count means the same thing in every title"
+
+- id: store-8
+  title: "evidence table as first-class: every field value and observation references >=1 evidence row (video_id, t_start_ms, t_end_ms, modality, text)"
+  level: L4
+  cell: {part: store, representation: timestamped-observation-log, granularity: variable-length-moment-or-episode, evidence-form: quote-with-timestamp, query-path: clip-lookup, uncertainty-policy: abstain-below-coverage}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "Studio asks 'show me 5 players who quit at step 3 and what they said'; the answer must become 5 clips"
+  consequence: "If evidence is a text column on the value row, clip generation needs a transcript re-search; a separate table makes a clip a lookup"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md item 1 and item 3 'evidence requirement'"
+  proposed: "evidence(evidence_id, session_id, video_id, t_start_ms, t_end_ms, modality enum{speech,ocr,screen_state,frame}, text, asr_confidence); value rows carry evidence_ids[]; a NOT NULL constraint for fields where evidence_required=true"
+  shallow: false
+  mechanism: "Ingestion writes evidence first, then values pointing to it; query path for clip questions is value -> evidence -> ffmpeg cut from cold storage"
+  example: "step3_outcome=abandoned for player 217 cites evidence 8891: video 5, 00:03:12-00:03:29, speech 'where is the anvil, I give up'; the clip reel is 5 such lookups"
+  cost: S
+  depends_on: "original videos retained (A-frame assumption)"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Every number can be opened into its clips; the fixed table had answers with no pointer back"
+
+- id: store-9
+  title: "session_videos manifest with gap_before_ms and missing flag; durations spanning a gap are marked uncertain"
+  level: L4
+  cell: {part: session-stitching, representation: timestamped-observation-log, granularity: video, question-type: how-long, uncertainty-policy: answer-with-ci-and-n, evidence-form: coverage-statement-n-of-m-players}
+  object: "spec.md: 'A session can be n hours; each video is capped at 15 minutes'"
+  situation: "Video 3 of 6 failed to upload; step 3 starts in video 2 and ends in video 4"
+  consequence: "Without a gap record the duration is computed 15 minutes short and silently wrong; with gap_before_ms the row carries duration_uncertain=true and the aggregate reports n=487 of 500"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md 'how videos of one session are linked' unspecified"
+  proposed: "session_videos(session_id, seq, video_id, capture_start, duration_ms, gap_before_ms, missing bool); player_step_state.duration_uncertain = any gap inside [entered_at, exited_at]"
+  shallow: false
+  mechanism: "Stitching stage compares recorder capture_start timestamps with cumulative durations; any gap over 2,000 ms is recorded; downstream aggregates exclude or flag uncertain rows"
+  example: "'Median step-3 time' answer: '7m40s over 487 of 500 players; 13 excluded because a video was missing inside the step'"
+  cost: S
+  depends_on: "store-1 session clock"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Missing videos become a visible denominator correction instead of a hidden error"
+
+- id: store-10
+  title: "per-step summary row: 2-4 sentences per (player_id, step_id) citing obs_ids, stored next to the state row"
+  level: L4
+  cell: {part: store, representation: per-step-summary, granularity: tutorial-step, query-path: retrieval-then-llm, question-type: why, latency-tier: under-30s}
+  object: "spec.md item 4: 'Reading 500 transcripts per question was too slow'"
+  situation: "Studio asks 'why do players abandon step 3' (open question, no closed field)"
+  consequence: "Reading 500 x 4-hour transcripts is ~30M tokens; reading 72 abandoned players' step-3 summaries is ~15k tokens and answers in under 30 s"
+  p_typical: 0.18
+  grounded: quote
+  evidence: "spec.md item 4"
+  proposed: "step_summaries(player_id, step_id, summary_text <=120 words, cited_obs_ids[], extractor_run_id)"
+  shallow: false
+  mechanism: "Ingestion writes one summary per step per player from that step's observations; the planner filters by state outcome then feeds only matching summaries to the model"
+  example: "Filter player_step_state.outcome='abandoned' AND step_id=3 -> 72 summaries -> model groups them: 'anvil not discoverable' 41, 'recipe menu confusing' 19, 'crashed' 7, other 5, each with 3 obs_ids"
+  cost: M
+  depends_on: "store-5 player_step_state"
+  part: store
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "Open 'why' questions get an answer from 72 short texts instead of no answer or 500 transcripts"
+
+- id: store-11
+  title: "Hierarchical summary tree: nodes at minute -> step -> video -> session, each with text, embedding and child_ids, queried by descent"
+  level: L4
+  cell: {part: store, representation: hierarchical-temporal-summary-tree, granularity: session, query-path: retrieval-then-llm, question-type: what-happened, subject-domain: core-loop}
+  object: "spec.md known problem: 'Long multi-video sessions'"
+  situation: "Studio asks 'what did players do in the 20 minutes after finishing the tutorial', a region no step or field covers"
+  consequence: "Flat observation rows for a 4-hour session are 2,000+ rows per player; the tree lets the model read 4 session nodes, pick 2 video nodes, then 8 minute nodes"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md item 1 'A session can be n hours'"
+  proposed: "summary_nodes(node_id, session_id, level enum{minute,step,video,session}, t_start_ms, t_end_ms, text, embedding vector(1024), parent_id, child_ids[])"
+  shallow: false
+  mechanism: "Ingestion builds the tree bottom-up (minute summaries from observations, then step, video, session); the query path descends from session nodes with a relevance threshold of 0.6 cosine"
+  example: "'What happens after the tutorial': descend 500 session nodes -> 500 video nodes after step 7 -> 2,100 minute nodes; the model reads 500 video-node texts (~40k tokens) and reports 'first mine visit 61%, open map 22%, idle >3 min 9%'"
+  cost: M
+  depends_on: "store-1 session clock"
+  part: store
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "Covers the hours outside the tutorial that the fixed question set never touched"
+
+- id: store-12
+  title: "Inverted full-text index over utterance text and OCR text with (session_id, t_session_ms) postings"
+  level: L4
+  cell: {part: store, representation: inverted-full-text-index, granularity: utterance, query-path: full-text-keyword-search, question-type: find-players-who, build-or-buy: open-source-component}
+  object: "memo.md item 1: 'utterance' observations and 'on-screen text'"
+  situation: "Studio asks 'which players said the word anvil during the tutorial'"
+  consequence: "A keyword question needs no model; the index returns player_ids and timestamps in 50 ms; retrieval-then-LLM would cost a model call and may miss players"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md item 1"
+  proposed: "Tantivy/OpenSearch/ClickHouse full-text index on observations.text with stored fields session_id, player_id, step_id, t_session_ms, modality"
+  shallow: false
+  mechanism: "Ingestion indexes text as it is written; planner routes what-said and find-players-who questions containing a quoted term to the index first and only sends hits to the model"
+  example: "'anvil' AND step_id<=3: 183 utterances from 97 players; 61 of the 72 step-3 abandoners said it; the chatbot shows the count and 5 timestamped quotes"
+  cost: S
+  depends_on: nothing
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Any word in 2,000 hours of speech is findable; the fixed table captured none of the text"
+
+- id: store-13
+  title: "answers cache table keyed by question_hash and cohort_filter, invalidated by field_version bump or new sessions in the cohort"
+  level: L4
+  cell: {part: query-path, representation: question-answer-bank-precomputed, granularity: cohort, query-path: semantic-cache-similar-question, latency-tier: sub-200ms-cached, mechanism-type: reuse-or-cache-prior-work}
+  object: "memo.md item 2: 'whose result is cached as a new field'"
+  situation: "The same studio asks 'why do players abandon step 3' on Monday and again on Thursday after 40 new sessions arrived"
+  consequence: "Without invalidation metadata the Thursday answer is Monday's with stale n; with it, the cache returns Monday's answer tagged 'computed on 500 sessions, 40 new since' and refreshes in background"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md item 2"
+  proposed: "answers(answer_id, studio_id, question_text, question_embedding, question_hash, cohort_filter_json, result_json, sessions_n, field_versions_used_json, computed_at, stale_since)"
+  shallow: false
+  mechanism: "Planner checks cosine >0.92 against answers for the same studio and compatible cohort_filter; the ingest job marks rows stale when any used field_version changes or the cohort gains sessions"
+  example: "Thursday ask returns in 120 ms: 'anvil not discoverable 41 of 72 (computed Monday on 500 sessions; 40 new sessions pending, refresh in ~2 min)'"
+  cost: S
+  depends_on: "store-3 field versions"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Open-question answers are reused across asks instead of recomputed, with explicit staleness"
+
+- id: store-14
+  title: "backfill_jobs queue table; partial coverage served immediately with n-of-m and completed overnight"
+  level: L4
+  cell: {part: query-path, representation: question-answer-bank-precomputed, granularity: session, query-path: lazy-backfill-extraction, latency-tier: progressive-streaming, uncertainty-policy: give-range-then-refine}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "A new field 'noticed_crafting_hint' is requested at 14:00 for 2,000 sessions; extraction takes 3 hours"
+  consequence: "Without a queue the studio waits 3 hours for anything; with it the chatbot answers from the first 150 sessions at 14:05 and updates the answer as coverage grows"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md item 2"
+  proposed: "backfill_jobs(job_id, field_id, session_id, priority, status enum{queued,running,done,failed}, attempts, tokens_used, finished_at); order by priority then by session recency"
+  shallow: false
+  mechanism: "Planner inserts jobs for all sessions in the asked cohort first, rest of history second; the answer endpoint reads field_coverage and streams updates"
+  example: "'Did step-3 abandoners see the crafting hint?' at 14:05: 'so far 23 of 31 abandoners processed saw it (150 of 500 players covered); full answer tonight'; at 17:10: '48 of 72 abandoners saw it'"
+  cost: M
+  depends_on: "store-31 field_coverage"
+  part: query-path
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "A question outside the fixed set gets a first answer in minutes, not a prompt-engineering ticket"
+
+- id: store-15
+  title: "Common data model with per-game vocab map: concepts table plus game_vocab_map(game_id, local_name, concept_id, step_ordinal)"
+  level: L4
+  cell: {part: schema-evolution, representation: common-data-model-with-per-game-vocab-map, granularity: game, scope: cross-game, reuse-scope-of-extraction: genre-shared, moment-in-journey: game-onboarding-day-0}
+  object: "A-frame assumption: 'studios are many and each game differs, so per-game hand-written questions do not scale'"
+  situation: "A new game calls its crafting tutorial 'Forge Basics' and its steps 'Smelt', 'Shape', 'Temper'; the extraction prompts and funnel logic were written for step_id integers"
+  consequence: "Without a vocab map every new game is a new schema; with it onboarding is 20 rows in game_vocab_map and all funnel queries work unchanged"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'written per game target'"
+  proposed: "concepts(concept_id, kind enum{tutorial_step,mechanic,ui_element,affect,resource}, canonical_name); game_vocab_map(game_id, local_name, concept_id, step_ordinal, screen_signature)"
+  shallow: false
+  mechanism: "Extraction emits local names; a mapping pass at write time resolves them to concept_ids; unmapped names land in an unmapped_terms table reviewed by the onboarding engineer"
+  example: "'Shape' maps to concept tutorial_step ordinal 3 mechanic=crafting; the step-3 churn query for Forge Quest and the 'Shape' churn query for the new game are the same SQL"
+  cost: M
+  depends_on: "store-16 tutorial_steps"
+  part: schema-evolution
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "One schema serves every game; onboarding becomes mapping, not question writing"
+
+- id: store-16
+  title: "tutorial_steps table as the source of truth per (game_id, build_id): ordinal, name, expected_duration_s, screen_signature, success_condition"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: build-version, question-origin: onboarding-interview-with-studio, moment-in-journey: game-onboarding-day-0, subject-domain: onboarding-tutorial}
+  object: "spec.md: 'detecting churn in the tutorial'"
+  situation: "Day 0 of onboarding a game; the extractor must know which screens are steps before it can emit step_change observations"
+  consequence: "If steps live only in a prompt string, the funnel table cannot validate 'step 8' against a known list and expected durations for 'stuck' do not exist"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md item 3"
+  proposed: "tutorial_steps(game_id, build_id, step_ordinal, step_name, expected_duration_s, screen_signature_text, success_condition_text, source enum{design-doc,interview,induced})"
+  shallow: false
+  mechanism: "Filled at onboarding from the studio's design doc or a 30-minute interview; read by extraction (as prompt context), by the funnel reducer (stuck threshold) and by the UI (step labels)"
+  example: "Row (Forge Quest, 1.2.0, 3, 'craft a pickaxe', 240 s, 'crafting panel open', 'pickaxe in inventory'); 'stuck' = >720 s in step 3; 13 of 500 players flagged"
+  cost: XS
+  depends_on: nothing
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Steps are rows with durations and conditions, not words inside a question"
+
+- id: store-17
+  title: "build_id on every row plus step_crosswalk(game_id, from_build, to_build, from_ordinal, to_ordinal) so pre/post questions join across renumbered steps"
+  level: L4
+  cell: {part: schema-evolution, representation: step-funnel-state-machine-per-player, granularity: build-version, question-type: did-the-fix-work-pre-post, scope: build-version-pair, schema-evolution: deprecate-and-migrate}
+  object: "spec.md item 3: answers table per video (no build column mentioned)"
+  situation: "Build 1.3.0 merges old steps 2 and 3 into one; the studio asks 'did the step-3 drop improve after the fix'"
+  consequence: "Without a crosswalk the comparison is step 3 old vs step 3 new, which are different screens; with it the query compares old {2,3} vs new {2}"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md 'Unspecified' lists no build version; A-frame assumes re-processing is possible"
+  proposed: "build_id NOT NULL on observations, field_values, player_step_state; step_crosswalk table maintained at each new build onboarding"
+  shallow: false
+  mechanism: "Store adds the dimension; the planner rewrites step filters through the crosswalk when a question names two builds"
+  example: "'Step-3 abandon rate 1.2.0 vs 1.3.0': old steps 2+3 abandoned 98 of 500 (19.6%); new step 2 abandoned 61 of 480 (12.7%); shown with the crosswalk note"
+  cost: S
+  depends_on: "store-16"
+  part: schema-evolution
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Version comparisons survive step renumbering"
+
+- id: store-18
+  title: "extractor_runs table (run_id, model_id, prompt_hash, schema_version, input_modalities, started_at, cost_usd) referenced by every observation and value row"
+  level: L4
+  cell: {part: evaluation, representation: timestamped-observation-log, granularity: session, evidence-form: extraction-provenance-model-and-schema-version, extraction-trigger: on-model-upgrade, schema-evolution: model-upgrade-reextract}
+  object: "memo.md item 1: 'Ingestion produces a session-level observation log'"
+  situation: "A studio disputes a number; JEV must say which model and prompt produced the 72 'abandoned' rows"
+  consequence: "Without run provenance the dispute cannot be investigated; with it the answer carries 'model gpt-x, prompt a91f, schema v3' and a re-run is reproducible"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md item 3: 'accuracy against hand-labelled sessions' needs to know what produced each value"
+  proposed: "extractor_runs(run_id, model_id, prompt_hash, schema_version, modalities[], frames_sampled_per_min, started_at, finished_at, cost_usd); FK from observations.extractor_run_id and field_values.extractor_run_id"
+  shallow: false
+  mechanism: "Every ingestion batch opens a run row; the chatbot appends provenance to each answer on request"
+  example: "'72 of 500 abandoned step 3 (extracted by run 1187: model M, prompt a91f, schema v3, 1 frame/5 s)'"
+  cost: XS
+  depends_on: nothing
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Every number is traceable to the model and prompt that made it"
+
+- id: store-19
+  title: "Model-upgrade policy as data: re-extract a 5% sample into shadow versions, store agreement per field, full re-extract only fields with <90% agreement that were queried in the last 30 days"
+  level: L4
+  cell: {part: cost-governance, representation: question-answer-bank-precomputed, granularity: game, extraction-trigger: on-model-upgrade, schema-evolution: model-upgrade-reextract, mechanism-type: approximate-then-refine}
+  object: "A-frame assumption: 'a modern long-context multimodal model is available at ingestion'"
+  situation: "A new model version ships; 2,000 sessions x 40 fields were extracted with the old one"
+  consequence: "Re-extracting everything costs the full ingestion bill again; re-extracting nothing leaves old sessions on a worse model; the sample policy spends ~5% plus targeted fields"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (cost still has to be chosen)"
+  proposed: "field_agreement(field_id, old_run_id, new_run_id, n_sample, agreement_pct, computed_at); re-extraction job filters agreement_pct<90 AND field in (SELECT field_id FROM queries WHERE asked_at>now()-30d)"
+  shallow: false
+  mechanism: "Store holds shadow versions via store-3; a job computes agreement; the backfill queue (store-14) is fed only the fields that fail"
+  example: "step3_outcome agreement 97% (no re-extract); quit_reason agreement 81% and queried 14 times last month -> re-extract 2,000 sessions overnight; the chatbot's Monday answer switches to v2 with a version note"
+  cost: M
+  depends_on: "store-3, store-14, store-34"
+  part: cost-governance
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Model upgrades improve old answers where it matters, without re-running every question on every video"
+
+- id: store-20
+  title: "Per-session signal arrays at 10-second bins (words_spoken, silence_s, affect_score, input_rate, screen_state_id) stored as list columns"
+  level: L4
+  cell: {part: store, representation: time-series-signals-affect-pace-silence, granularity: session, modality: silence-or-absence-of-speech, question-type: how-felt, query-path: sql-over-closed-fields}
+  object: "memo.md item 1: 'friction signal, sentiment'"
+  situation: "Studio asks 'did players go quiet before quitting step 3', a pattern no field captures"
+  consequence: "Observation rows record events, not absence; a binned series makes silence and pace queryable with array functions in SQL"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md item 1; B-perspectives playtest-ops: 'Silent players produce empty transcripts'"
+  proposed: "session_signals(session_id, bin_s=10, words[], silence_s[], affect[], input_rate[], screen_state[]) in Parquet/ClickHouse Array columns; step windows map to bin index ranges via player_step_state"
+  shallow: false
+  mechanism: "Ingestion fills bins from transcript word timestamps, input events and frame classifier; queries slice arrays by step window"
+  example: "For 72 step-3 abandoners, mean silence in the last 60 s before exit = 48 s vs 21 s for completers; 'players go quiet before quitting' answered in 400 ms without a model"
+  cost: M
+  depends_on: "store-1 session clock; frame classifier for screen_state"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Pace, silence and affect over time are queryable; the fixed table had no notion of time inside a video"
+
+- id: store-21
+  title: "Tiered retention: rollups forever, observations 24 months in Parquet, transcripts 24 months, raw video in cold object storage with a reprocess pointer"
+  level: L4
+  cell: {part: cost-governance, representation: timestamped-observation-log, granularity: session, extraction-trigger: on-new-field-added, build-or-buy: managed-cloud-service, tenancy-and-deployment: logically-isolated-per-studio}
+  object: "A-frame assumption: 'original videos remain available for re-processing, including frames'"
+  situation: "A new field needs frames from sessions ingested 8 months ago"
+  consequence: "If video was deleted the backfill cannot run; if everything stays hot the storage bill grows 15 GB per session-hour; tiers keep reprocessing possible at cold-storage prices"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "A-frame assumptions; spec.md 'Ingestion time and cost are not a concern'"
+  proposed: "retention(tier, object_type, days, storage_class); media table (session_id, video_id, uri, storage_class, bytes, last_accessed); backfill job restores cold objects in batches of 200 videos"
+  shallow: false
+  mechanism: "Store assigns storage class by age; the backfill queue checks media.storage_class and issues a restore before extraction"
+  example: "'Did old-build players see the crafting hint?' triggers restore of 1,400 cold videos (8 h) then extraction; the chatbot says 'answer available tomorrow 09:00'"
+  cost: S
+  depends_on: "store-14 backfill queue"
+  part: cost-governance
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Re-asking the video is always possible; the fixed table was the only thing kept"
+
+- id: store-22
+  title: "Physical layout: partition by game_id and ingest month, sort key (player_id, session_id, t_session_ms); one ClickHouse/DuckDB-on-Parquet engine for closed-field queries"
+  level: L4
+  cell: {part: store, representation: wide-event-schema-on-read, granularity: player, query-path: sql-over-closed-fields, latency-tier: under-2s, build-or-buy: open-source-component}
+  object: "spec.md: 'a question over, say, 500 players is fast'"
+  situation: "A cohort query filters 500 players x 2,000 observations each = 1M rows for one game"
+  consequence: "Unsorted JSON blobs make that a 10-second scan; sorted columnar partitions make it 200-800 ms"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md constraint on fast answers"
+  proposed: "PARTITION BY (game_id, toYYYYMM(ingested_at)) ORDER BY (player_id, session_id, t_session_ms); attrs as JSON column with materialised subcolumns for the 20 most-queried keys"
+  shallow: false
+  mechanism: "Store engine choice and sort order; a weekly job promotes hot attrs keys to subcolumns from the query log"
+  example: "'Players who opened the recipe menu 3+ times during step 3': WHERE game_id=.. AND step_id=3 AND kind='menu_open' GROUP BY player_id HAVING count()>=3 returns 118 players in 350 ms"
+  cost: S
+  depends_on: "store-2 wide rows"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Row-level questions over 1M observations stay under 1 s; the fixed table was fast only because it was tiny"
+
+- id: store-23
+  title: "players dimension table: churned_in_tutorial, last_step_reached, total_session_ms, sessions_n, recruit_source, profile attrs"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: player, question-type: who-are-the-churners-segment-discovery, modality: player-profile-metadata, scope: query-time-defined-cohort}
+  object: "spec.md: 'detecting churn in the tutorial and just after it'"
+  situation: "Studio asks 'who are the churners' and wants to slice by anything JEV knows about the player"
+  consequence: "Without a player table every cohort definition is a subquery over observations; with it 'churners' is WHERE churned_in_tutorial"
+  p_typical: 0.11
+  grounded: quote
+  evidence: "spec.md item 3"
+  proposed: "players(player_id, game_id, studio_player_id, churned_in_tutorial bool, last_step_reached, total_session_ms, sessions_n, recruit_source, profile_attrs JSON, first_session_at)"
+  shallow: false
+  mechanism: "Rebuilt from player_step_state after each session closes; cohort filters in the planner compile to WHERE clauses on this table"
+  example: "'Churners vs completers, time in step 2': churners (n=96) p50 9m10s, completers (n=404) p50 4m05s"
+  cost: S
+  depends_on: "store-5"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Cohorts are a filter on one table; the fixed table had no player-level row at all"
+
+- id: store-24
+  title: "Nightly contrast table: for every closed field value, rate among churners vs retainers with lift and n; top 10 pushed as a digest"
+  level: L4
+  cell: {part: store, representation: olap-cube-materialized-views, granularity: cohort, query-path: automatic-contrast-cohort-diff, question-type: what-surprised-unknown-unknowns, mechanism-type: auto-discover-without-question, delivery-surface: scheduled-digest}
+  object: "spec.md constraint: 'Their questions are not known in advance'"
+  situation: "Nobody at the studio asked about the recipe menu, but churners opened it 3x more often than retainers"
+  consequence: "A question-driven system never surfaces it; a precomputed contrast table makes it the first line of Monday's digest"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md constraints; B-perspectives observability 'BubbleUp'"
+  proposed: "contrast(game_id, build_id, field_id, value, churn_rate, retain_rate, lift, n_churn, n_retain, computed_at); digest = top 10 by lift with n_churn>=20"
+  shallow: false
+  mechanism: "Nightly job over field_values joined to players.churned_in_tutorial; the digest and the chatbot 'what stands out' answer read the same table"
+  example: "Monday digest: 'menu_open>=3 in step 3: churners 61% vs retainers 19% (lift 3.2, n=96/404); error_message during step 3: 31% vs 6%'"
+  cost: M
+  depends_on: "store-23, store-2"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Finds what differs about churners without anyone writing the question"
+
+- id: store-25
+  title: "REFUSED: entity-relation graph database as the primary session store"
+  level: L3
+  cell: {part: store, representation: entity-relation-graph, granularity: session, query-path: sql-over-closed-fields, build-or-buy: open-source-component}
+  object: "memo.md item 3: 'ontology (entities x dimensions x outcomes)'"
+  situation: "A proposal to store player, step, UI element and utterance as nodes with temporal edges in a graph database"
+  consequence: "Refused (willingness 1): 90% of studio questions are counts and percentiles over 500 players grouped by step, which columnar SQL does in 200 ms and a graph engine does in seconds; the relations (player->step->ui_element) are 3 foreign keys; the ontology stays as a concepts table, the data stays columnar"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast'"
+  proposed: "Keep graph-shaped questions (paths, 'what preceded X') as a recursive CTE or a sequence table over the observation log; revisit only if more than 10% of logged queries are path queries"
+  shallow: false
+  mechanism: "No change; this row records the rejected alternative and its trigger for reconsideration"
+  example: "'Players who opened the recipe menu then quit step 3 within 60 s' = self-join on observations ordered by t_session_ms, 300 ms; no graph needed"
+  cost: L
+  depends_on: nothing
+  part: store
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "Not better for aggregate questions; recorded so the owner can drop it"
+  willingness: 1
+
+- id: store-26
+  title: "REFUSED: raw transcripts as the only store with map-reduce at query time"
+  level: L3
+  cell: {part: store, representation: raw-transcript-only, granularity: session, query-path: map-reduce-over-raw, latency-tier: minutes, mechanism-type: defer-to-query-time}
+  object: "spec.md item 4: 'Reading 500 transcripts per question was too slow and too much data'"
+  situation: "A proposal to drop the store entirely and run a long-context model over 500 transcripts per question"
+  consequence: "Refused (willingness 1): 500 players x 4 h x ~9,000 words/h = 18M words (~25M tokens) per question; at a few seconds of query budget it is 100x over; map-reduce as a backfill path (store-14) is kept, as a query path it is not"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md item 4"
+  proposed: "Allow map-reduce only inside the backfill queue with results written to field_values"
+  shallow: false
+  mechanism: "No change; rejected alternative"
+  example: "'Why do players abandon step 3' over raw transcripts: 25M tokens, ~40 minutes and ~$60 per ask; over step summaries (store-10): 15k tokens, 20 s"
+  cost: S
+  depends_on: nothing
+  part: store
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "Not acceptable on latency; recorded as the rejected baseline"
+  willingness: 1
+
+- id: store-27
+  title: "REFUSED: keeping the per-video answers table with UPDATE-in-place as the long-term store"
+  level: L3
+  cell: {part: store, representation: fixed-mcq-answers, granularity: video, schema-evolution: frozen-schema, query-path: sql-over-closed-fields}
+  object: "spec.md item 3: 'The answers form a structured table per video'"
+  situation: "A proposal to keep the current table and add columns as questions grow"
+  consequence: "Refused (willingness 1): video is the wrong grain for a session question, column-per-question requires DDL per field, and in-place updates erase which prompt produced a value; it is kept only as a materialised view over field_values for the existing chatbot during migration"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md item 3 and known problems"
+  proposed: "v_answers_per_video_legacy view generated from field_values + session_videos for 2 release cycles, then dropped"
+  shallow: false
+  mechanism: "No new storage; a compatibility view"
+  example: "Legacy chatbot query for 'quit_in_tutorial' per video keeps working against the view while the planner moves to player_step_state"
+  cost: XS
+  depends_on: "store-3"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "It is the fixed table; recorded as rejected with a migration path"
+  willingness: 1
+
+- id: store-28
+  title: "Export contract: versioned views v_observations_v1 and v_step_funnel_v1, new fields only inside attrs, daily Parquet drop keyed by studio_player_id"
+  level: L4
+  cell: {part: export-integration, representation: wide-event-schema-on-read, granularity: player, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, schema-evolution: append-only-versioned-fields, tenancy-and-deployment: federated-query-into-studio-warehouse}
+  object: "B-perspectives studio-data-team-rejector: 'Will your schema break our dbt models when you add a field?'"
+  situation: "A studio's data engineer joins JEV observations to their telemetry in Snowflake; JEV adds 6 new fields next week"
+  consequence: "If new fields are new columns the studio's dbt tests fail; if they are attrs keys and the view name carries a version, nothing breaks"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md 'whether game telemetry is joined' unspecified"
+  proposed: "Views frozen by name; breaking changes create v2 alongside v1 for 90 days; export job writes s3://.../studio_id/date/observations.parquet and step_funnel.parquet with studio_player_id from a mapping table"
+  shallow: false
+  mechanism: "Store exposes two stable views and a daily job; the chatbot is optional for this segment"
+  example: "Studio joins v_step_funnel_v1 to their telemetry: step-3 abandoners who later purchased = 4 of 72; JEV never needed to answer it"
+  cost: S
+  depends_on: "store-2, store-5"
+  part: export-integration
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Studios with their own stack get the observations, not a chatbot, and the schema never breaks their models"
+
+- id: store-29
+  title: "One database schema per studio; only the concepts table and code are shared; answers cache and embeddings keyed by studio_id"
+  level: L4
+  cell: {part: tenancy-access-control, representation: timestamped-observation-log, granularity: studio-portfolio, tenancy-and-deployment: logically-isolated-per-studio, query-path: semantic-cache-similar-question, user-segment: jev-internal-ops}
+  object: "B-perspectives studio-security-reviewer: 'Cross-studio leakage through a shared ontology, shared question bank or shared cache'"
+  situation: "Two studios in the same genre ask near-identical step-3 questions; the semantic cache would match across them"
+  consequence: "A shared cache returns studio A's number to studio B; per-studio schema plus studio_id in the cache key makes that impossible by construction"
+  p_typical: 0.11
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios'"
+  proposed: "schema per studio (studio_<id>.observations ...); shared schema holds concepts, fields templates with game_scope=universal/genre; answers.studio_id in the cache key; vector index per studio"
+  shallow: false
+  mechanism: "Store layout and cache keys; cross-studio benchmarks (publisher segment) run only over an explicit opt-in aggregates table with n>=5 titles"
+  example: "Studio B's 'why abandon step 3' misses studio A's cached answer (different studio_id) and computes its own from its 72 abandoners"
+  cost: S
+  depends_on: nothing
+  part: tenancy-access-control
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Isolation is structural, not a WHERE clause"
+
+- id: store-30
+  title: "Embedding column on observation rows and step summaries (pgvector/LanceDB) with metadata filters on step_id, player_id, kind"
+  level: L4
+  cell: {part: store, representation: transcript-chunks-with-embeddings, granularity: utterance, query-path: retrieval-then-llm, question-type: prevalence-of-quoted-sentiment, build-or-buy: open-source-component}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players'"
+  situation: "Studio asks 'how many players found crafting confusing' without the word 'confusing' being used by most of them"
+  consequence: "Keyword index misses paraphrases; a vector index filtered to step_id=3 AND kind in (utterance, friction) returns candidates in 100 ms for the model to count"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "memo.md item 2"
+  proposed: "observations.embedding vector(1024) for kinds utterance, friction, affect; HNSW index per studio; filters pushed down before ANN"
+  shallow: false
+  mechanism: "Ingestion embeds text rows; the planner issues filtered ANN with top-k=300 then the model labels each hit yes/no and reports a count with denominator"
+  example: "'Crafting confusing' at step 3: 300 candidates -> 148 labelled yes from 103 distinct players of 500 (20.6%), 5 quotes with timestamps"
+  cost: M
+  depends_on: "store-7 kinds"
+  part: store
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "Sentiment prevalence questions nobody wrote in advance get a count with a denominator"
+
+- id: store-31
+  title: "field_coverage(field_id, game_id, build_id, sessions_extracted, sessions_total) read by the chatbot to emit 'n of m' or abstain below 80%"
+  level: L4
+  cell: {part: evaluation, representation: question-answer-bank-precomputed, granularity: game, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: abstain-below-coverage, query-path: lazy-backfill-extraction}
+  object: "memo.md item 2: 'cached as a new field'"
+  situation: "A field was added last week and backfilled for 300 of 2,000 sessions; the studio asks a question over all 2,000"
+  consequence: "Without coverage the chatbot reports a rate over 300 as if it were 2,000; with it the answer reads '300 of 2,000 sessions covered' or the planner queues the rest and abstains"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "B-perspectives ask-your-data-veteran: 'trust collapse after one wrong number'"
+  proposed: "Maintained by the backfill queue on each job completion; planner rule: coverage>=0.8 answer with n-of-m; 0.2-0.8 answer flagged partial; <0.2 abstain and enqueue"
+  shallow: false
+  mechanism: "One small table updated by ingest and backfill; one planner rule"
+  example: "'Did abandoners see the hint?': coverage 300/2000=15% -> 'Not enough sessions processed yet (300 of 2,000); extraction queued, estimated 3 h'"
+  cost: XS
+  depends_on: "store-14"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Every answer carries its denominator; partial backfills cannot masquerade as full ones"
+
+- id: store-32
+  title: "Three-valued answers: observed_yes / observed_no / not_observable stored as distinct values so denominators exclude sessions where the field could not apply"
+  level: L4
+  cell: {part: ingestion-extraction, representation: question-answer-bank-precomputed, granularity: session, evidence-form: count-with-denominator, uncertainty-policy: answer-with-ci-and-n, modality: silence-or-absence-of-speech}
+  object: "memo.md item 1: 'closed enum fields'"
+  situation: "Field 'said_crafting_was_confusing' over a silent player who never spoke, and over a player who never reached step 3"
+  consequence: "A boolean stores false for both, inflating the denominator; three values let the rate be computed over players who spoke during step 3"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md item 1; B-perspectives playtest-ops: 'Silent players produce empty transcripts'"
+  proposed: "Every enum/bool field gets implicit values not_reached, not_observable (no speech / no frames in window), and a reason code; aggregates default to excluding both and report the exclusion count"
+  shallow: false
+  mechanism: "Extraction prompt must return one of the three plus reason; the SQL template for rates uses value IN (yes,no) as denominator"
+  example: "'Found crafting confusing': yes 103, no 287, not_observable 61 (silent), not_reached 49 -> 103/390 = 26.4%, not 103/500 = 20.6%"
+  cost: S
+  depends_on: "store-4 fields registry"
+  part: ingestion-extraction
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Rates have the right denominator; the fixed table's false meant three different things"
+
+- id: store-33
+  title: "session_fields computed only on session_closed; open sessions carry status=partial and are excluded from session-level aggregates by default"
+  level: L4
+  cell: {part: session-stitching, representation: per-session-summary, granularity: session, extraction-trigger: continuous-during-live-session, uncertainty-policy: abstain-below-coverage, moment-in-journey: first-cohort-ingested}
+  object: "spec.md item 1: 'one session is many videos'"
+  situation: "Videos 1-3 of a session have arrived and been extracted; video 4 (where the player finishes step 3) arrives 20 minutes later"
+  consequence: "Session-level fields like last_step_reached computed at video 3 say 'abandoned step 3'; by video 4 the player completed it; an in-progress flag stops the wrong row from being counted"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md 'Long multi-video sessions'"
+  proposed: "sessions(session_id, status enum{open,closed,abandoned_upload}, closed_at, close_reason); session-level fields and player_step_state outcomes are written only after closed; video-level observations are written immediately"
+  shallow: false
+  mechanism: "Stitcher closes a session after the recorder's end marker or 60 minutes without a new video; the reducer runs on close"
+  example: "Step-3 funnel at 15:00 counts 480 closed sessions; 20 open ones appear in a footnote 'plus 20 sessions still uploading'"
+  cost: S
+  depends_on: "store-9 manifest"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Session outcomes are never computed from half a session"
+
+- id: store-34
+  title: "queries log table (question_text, plan_type, fields_used, abstained, latency_ms, rating) feeding a weekly 'fields to add' proposal"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, representation: question-answer-bank-precomputed, granularity: game, question-origin: failed-query-log, extraction-trigger: scheduled-batch, moment-in-journey: steady-state-weekly}
+  object: "memo.md item 2: 'so the question set grows from real use'"
+  situation: "Over a week the chatbot abstained 23 times; 9 of those asked, in different words, whether players noticed the crafting hint"
+  consequence: "Without a log those 9 asks vanish; with it the Monday job clusters them (cosine>0.85) and proposes one field with 9 example questions attached"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md item 2 and item 3 'coverage of real studio questions'"
+  proposed: "queries(query_id, studio_id, game_id, asked_at, question_text, embedding, plan_type enum{aggregate,sql,retrieval,backfill,cache,abstain}, fields_used[], latency_ms, abstained bool, user_rating, answer_id); weekly job writes proposed_fields rows"
+  shallow: false
+  mechanism: "Planner logs every ask; a scheduled job clusters abstained and low-rated asks and inserts proposals into the fields registry with origin=studio-question for review"
+  example: "Proposal: field noticed_crafting_hint (bool, evidence_required), from 9 abstained questions; approved Monday, backfilled by Tuesday"
+  cost: S
+  depends_on: "store-4"
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The question set grows from what studios actually asked and could not get"
+
+- id: store-35
+  title: "field_cost ledger (tokens_ingest, usd_ingest, queries_served_90d); fields unqueried for 90 days stop being extracted for new sessions"
+  level: L4
+  cell: {part: cost-governance, representation: question-answer-bank-precomputed, granularity: game, extraction-trigger: on-new-field-added, mechanism-type: reuse-or-cache-prior-work, user-segment: jev-internal-ops}
+  object: "memo.md item 2: 'one-time batch extraction over all sessions'"
+  situation: "After 6 months a game has 140 fields; 80 were asked once"
+  consequence: "Extracting 140 fields per new session costs 3.5x the original 40; the ledger retires the 80 from the per-session prompt while keeping their history and allowing lazy re-enable"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (true at 40 fields, not at 400)"
+  proposed: "field_cost(field_id, game_id, tokens_ingest_total, usd_ingest_total, queries_served_90d, last_queried_at, status enum{active,dormant}); ingestion prompt includes only active fields; a dormant field asked again moves to the backfill queue"
+  shallow: false
+  mechanism: "Store tracks cost per field from extractor_runs and usage from queries; a monthly job flips status"
+  example: "noticed_crafting_hint served 11 queries in 90 days (active); 'mentions_music' served 0 (dormant); new sessions skip it; if asked, backfill runs over the gap"
+  cost: S
+  depends_on: "store-18, store-34"
+  part: cost-governance
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The question set can grow without the ingestion bill growing linearly forever"
+
+- id: store-36
+  title: "Boundary dedup rule: a step_change or utterance within 2,000 ms of a video boundary that matches the first observation of the next video is merged, with dedup_of recorded"
+  level: L4
+  cell: {part: session-stitching, representation: timestamped-observation-log, granularity: video, extraction-trigger: at-ingestion, question-type: how-many, evaluation: null}
+  object: "spec.md item 1: 'each video is capped at 15 minutes'"
+  situation: "Video 4 ends mid-sentence at 14:59.8; video 5's extraction re-emits the same 'where is the anvil' utterance and a second step_change into step 3"
+  consequence: "Counts of attempts and quotes are inflated at every boundary (up to 16 boundaries per 4-hour session); the rule removes the duplicates and keeps a trace"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md 'Long multi-video sessions'"
+  proposed: "observations.dedup_of nullable obs_id; stitcher compares the last 2,000 ms of video k with the first 2,000 ms of video k+1 on (kind, step_id, normalised text) and marks the later row"
+  shallow: false
+  mechanism: "A post-extraction pass per session; queries exclude dedup_of IS NOT NULL by default"
+  example: "player_step_state.attempts for step 3 drops from 2 to 1 for 38 of 500 players after dedup; the 'retried step 3' count goes from 51 to 13"
+  cost: XS
+  depends_on: "store-1, store-9"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Per-video extraction artefacts stop showing up as player behaviour"
+
+- id: store-37
+  title: "asr_confidence and language on every utterance row; prevalence counts exclude rows under 0.6 and report the excluded count"
+  level: L4
+  cell: {part: store, representation: timestamped-observation-log, granularity: utterance, modality: speech-transcript, evidence-form: confidence-score, uncertainty-policy: answer-with-ci-and-n}
+  object: "spec.md item 2: 'Each video is converted to a transcript'"
+  situation: "A player mumbles over game audio; ASR emits 'I give up' at confidence 0.41 and the quit_reason extractor cites it"
+  consequence: "Low-confidence words drive counts and quotes; a stored confidence lets rate queries filter and the UI mark the quote as uncertain"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md 'languages' unspecified; item 2"
+  proposed: "observations.asr_confidence float, observations.lang char(2); evidence.asr_confidence; SQL rate templates add AND asr_confidence>=0.6 and return excluded_n"
+  shallow: false
+  mechanism: "Transcript stage passes word-level confidence through; ingestion averages per utterance; planner templates filter"
+  example: "'Players who said they gave up at step 3': 29 at confidence>=0.6, 6 more below (listed separately for the designer to listen to)"
+  cost: XS
+  depends_on: "ASR that returns word confidences"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Quotes and counts carry their transcription confidence instead of being taken as fact"

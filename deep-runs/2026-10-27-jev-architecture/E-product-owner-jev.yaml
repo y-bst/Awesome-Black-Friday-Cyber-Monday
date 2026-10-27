@@ -1,0 +1,713 @@
+- id: owner-1
+  title: "Day-0 game profile form of exactly 6 fields (genre tag, ordered tutorial step names as shown on screen, build id format, churn definition, platform, language) seeds the whole question set; onboarding target is 1 business day instead of the per-game question-writing cycle"
+  level: L4
+  cell: {part: question-generation, question-origin: onboarding-interview-with-studio, moment-in-journey: game-onboarding-day-0, reuse-scope-of-extraction: customer-defined-on-top-of-universal, user-segment: jev-internal-ops, effort: S-weeks, mechanism-type: transfer-across-games}
+  object: "spec.md step 3: 'a fixed set of questions with options, written per game target'"
+  situation: "A new studio signs; today someone at JEV writes the per-game question list by hand before the first video can be scored"
+  consequence: "Onboarding time is bounded by a 6-field form; every generated question references a step name the studio typed, so the first answers use the studio's own vocabulary"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "spec.md: 'written per game target'; A-frame assumptions: 'per-game hand-written questions do not scale'"
+  proposed: "Store the form as game_profile.yaml (6 keys); question generator reads steps[] and churn_definition to instantiate the generic bank"
+  shallow: false
+  part: question-generation
+  mechanism: "A 6-key per-game profile (genre, steps[], build_id_regex, churn_definition, platform, language) is the only per-game input; the generic question bank is instantiated by substituting steps[] and churn_definition into templates"
+  example: "Studio types steps 'Move, Jump, Craft a torch, Light the cave'; the bank instantiates 'How many players quit during Craft a torch?' and 'Median seconds on Light the cave' with no further writing"
+  cost: S
+  depends_on: "a generic question bank with step placeholders"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table's question list is produced in under 1 hour from 6 fields rather than written per game"
+
+- id: owner-2
+  title: "Universal primitive layer: 24 fields extracted for every game with zero per-game configuration (silence run >20s, restart count, menu time, quit event, help-seeking phrase, profanity, 'how do I' question, step-stall >90s, negative-affect utterance, tutorial-exit timestamp, and 14 more), computed at ingestion before any studio question exists"
+  level: L4
+  cell: {part: ingestion-extraction, reuse-scope-of-extraction: universal-primitives, representation: customer-defined-trackers-over-universal-primitives, extraction-trigger: at-ingestion, modality: speech-transcript, granularity: session, mechanism-type: precompute-more}
+  object: "spec.md known problem: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  situation: "First cohort of a new game is ingested before the studio has asked anything"
+  consequence: "The first 24 columns of the answers table exist for every game on day 0, so the chatbot answers 'who quit and when' for a game JEV has never seen"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "spec.md: 'most of what is in the video and transcript is never captured'; memo.md item 1: 'closed enum fields and short open fields'"
+  proposed: "primitives.yaml with 24 field definitions, each with a type, an extraction prompt and a 20-session eval set; the list is identical for every game"
+  shallow: false
+  part: ingestion
+  mechanism: "At ingestion every video gets the same 24 primitive columns (12 counts, 6 timestamps, 6 booleans) written to the per-video table; game-specific fields are added on top later"
+  example: "Studio asks 'How many of the 500 players went silent for over a minute during the tutorial?'; the answer is COUNT(silence_run_max_s > 60 AND tutorial_exit_ts IS NULL) with no per-game extraction"
+  cost: M
+  depends_on: nothing
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "24 columns exist before any per-game question is written, so the answers table is never empty on day 0"
+
+- id: owner-3
+  title: "Genre template library: a tutorial question bank per genre (for example 42 questions for match-3, 57 for extraction shooter, 38 for city-builder) selected by the genre tag at onboarding, so a new game starts with 40-60 questions it did not write"
+  level: L3
+  cell: {part: question-generation, question-origin: genre-template-library, reuse-scope-of-extraction: genre-shared, moment-in-journey: game-onboarding-day-0, subject-domain: onboarding-tutorial, effort: M-one-quarter}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "A second match-3 studio onboards; the first match-3 studio's question set already exists"
+  consequence: "The second studio's question list is 90% reused; onboarding effort for the per-game part drops to editing 4-6 game-specific questions"
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "B-perspectives conversation-analytics-vendor: 'tracker libraries shared across tenants in the same vertical, which here means the same game genre'"
+  proposed: "genres/<tag>/bank.yaml per genre; each question has id, template text with {step} placeholder, answer type, evidence requirement"
+  shallow: false
+  part: question-generation
+  mechanism: "A per-genre bank of 40-60 question templates is copied into the game's question set at onboarding; questions are text with {step} placeholders and a closed answer type"
+  example: "Match-3 bank includes 'Did the player use the booster during the first 3 levels? (yes/no)'; a new match-3 game gets that question at day 0 and the chatbot answers 'yes for 212 of 500'"
+  cost: M
+  depends_on: "owner-1 genre tag; at least 2 games per genre to have a bank worth sharing"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table's questions transfer across games of the same genre instead of being rewritten per game"
+
+- id: owner-4
+  title: "Tutorial step list induced from OCR of on-screen prompts in the first 20 sessions, presented to the studio as a 10-minute confirm-or-edit list, instead of the studio writing the step list"
+  level: L4
+  cell: {part: question-generation, question-origin: induced-from-data, modality: on-screen-text-ocr, moment-in-journey: first-cohort-ingested, granularity: tutorial-step, mechanism-type: auto-discover-without-question, effort: S-weeks}
+  object: "spec.md: 'Transcript loses visual information'; owner-1 steps[] field"
+  situation: "Studio has no written step list or its internal names differ from what players see on screen"
+  consequence: "Step names match the on-screen strings, so quote evidence and OCR fields join on the same key; studio onboarding time for steps drops from a written document to one confirmation screen"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'what is on screen is largely lost'"
+  proposed: "Cluster OCR strings that appear in >60% of the first 20 sessions in the same order; emit an ordered list of up to 15 candidate steps with first-seen timestamps and 1 frame each"
+  shallow: false
+  part: question-generation
+  mechanism: "OCR strings per frame (1 fps) are deduplicated, ordered by median first-appearance time across 20 sessions, filtered to those appearing in >60% of sessions, and shown as the step list draft"
+  example: "The draft shows 'Press A to jump' at median 0:42, 'Open crafting' at 3:10, 'Light the torch' at 5:55; the studio deletes one, renames none; 'Where do players stall?' is answerable per step the same day"
+  cost: S
+  depends_on: "frame OCR at 1 fps (frame-pipeline)"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Step-level questions exist for games whose designers never wrote down a step list"
+
+- id: owner-5
+  title: "First-look standard report auto-generated 24 hours after the first cohort finishes ingestion: step funnel (entered/completed per step), top 5 stall steps, 5 clips per stall step, cohort size n, before the studio types a single chatbot question"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: dashboard-standard-report, moment-in-journey: first-cohort-ingested, mechanism-type: push-instead-of-pull, evidence-form: clip-montage-n-examples, question-type: compare-steps, user-segment: producer-exec}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "A studio's first cohort of 500 players finishes ingestion; the studio has not opened the chatbot yet"
+  consequence: "The studio's first contact with JEV is a page with numbers and clips rather than an empty text box; the first questions they type are follow-ups to a step they saw stall"
+  p_typical: 0.3
+  grounded: quote
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  proposed: "report_v1 with 4 sections: funnel chart, stall table (step, median seconds, % stalled >90s), 5 clips per top-5 step, coverage line 'n=487 of 500 sessions scored'"
+  shallow: false
+  part: ui
+  mechanism: "A fixed 4-section report is rendered from the per-step table and clip index when ingestion of the first cohort completes; delivered as a link by email and pinned as the chatbot's first screen"
+  example: "Report shows step 'Craft a torch' with 31% of 487 players stalled >90s and 5 clips; the producer's first chatbot question is 'What did those 31% say while stalled?'"
+  cost: S
+  depends_on: "per-step table (owner-31) and clip index"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is never seen by the studio; this report is what they see first, with clips"
+
+- id: owner-6
+  title: "Questions derived from the store page, design doc and patch notes: a parser extracts the mechanics list (for example 'crafting', 'stealth', 'co-op') and instantiates 3 questions per mechanic (first use time, failure count, utterances about it) before any session is ingested"
+  level: L3
+  cell: {part: question-generation, question-origin: design-doc-patch-notes-store-page-derived, moment-in-journey: game-onboarding-day-0, granularity: game-system, subject-domain: core-loop, effort: S-weeks}
+  object: "memo.md item 3: 'pruned by the game target'"
+  situation: "Studio uploads a 3-page design doc or pastes the store page URL during onboarding"
+  consequence: "Mechanic-level questions exist on day 0 without an ontology walk; per-game onboarding is one upload"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md unspecified: 'who at the studio asks and what they ask'"
+  proposed: "mechanics[] extracted by one model call over the doc; each mechanic gets questions first_use_ts, failure_count, mentions_count"
+  shallow: false
+  part: question-generation
+  mechanism: "One model call over the design doc returns mechanics[] (max 20); each mechanic instantiates 3 closed-field questions appended to the game's bank"
+  example: "Store page lists 'base building'; the bank gains 'When did the player first place a structure?'; chatbot answers 'median 14:20 across 500, 63 players never did before quitting'"
+  cost: S
+  depends_on: "owner-1 game profile accepting a doc upload"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Questions cover mechanics outside the tutorial churn target without hand-writing"
+
+- id: owner-7
+  title: "REFUSED: keep per-game hand-written question sets as the primary path; owner's willingness is low because onboarding stays at roughly 2 weeks per game and scales linearly with games"
+  level: L3
+  cell: {part: question-generation, question-origin: hand-written-per-game, reuse-scope-of-extraction: game-specific, moment-in-journey: game-onboarding-day-0, effort: L-multi-quarter, user-segment: jev-internal-ops}
+  object: "spec.md step 3: 'written per game target'"
+  situation: "A proposal to keep writing the full question list per game, with more questions per game to widen coverage"
+  consequence: "Refused: each new game costs the same analyst time; 50 games means 50 question lists to maintain on every model change; the owner accepts a hand-written override layer of at most 10 questions (owner-23) instead"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "A-frame assumptions: 'studios are many and each game differs, so per-game hand-written questions do not scale'"
+  proposed: "Drop as primary path; cap hand-written questions at 10 per game"
+  shallow: false
+  part: question-generation
+  mechanism: "No change to the current pipeline; more hand-written questions per game"
+  example: "A new game's analyst writes 80 questions in 2 weeks; 'Why did players quit at the torch step?' is still only answerable if one of the 80 asked it"
+  cost: L
+  depends_on: nothing
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Nothing; it is the fixed table with more rows"
+
+- id: owner-8
+  title: "REFUSED: entity-relation graph per session as the primary representation; owner's willingness is low because every new game needs its entity and relation types authored before day 0"
+  level: L3
+  cell: {part: store, representation: entity-relation-graph, moment-in-journey: game-onboarding-day-0, reuse-scope-of-extraction: game-specific, effort: L-multi-quarter, build-or-buy: build-in-house}
+  object: "memo.md item 1: 'timestamped atomic observations'"
+  situation: "A proposal to model player, step, mechanic, UI element and their relations as a graph store"
+  consequence: "Refused for v-next: the graph schema is per-game authoring work on the critical onboarding path; revisit only if a generic schema from owner-9 covers 90% of entity types with no per-game edits"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "B-perspectives knowledge-graph-person p_typical 0.25; memo.md has no graph"
+  proposed: "Drop; keep observation log with a flat step and mechanic column"
+  shallow: false
+  part: store
+  mechanism: "Nodes (player, step, mechanic, ui_element) and typed temporal edges (did, saw, failed_at) per session"
+  example: "'Which players failed the torch step after opening the map?' becomes a 2-hop path query; it needs 'map' typed as a ui_element node for this game first"
+  cost: L
+  depends_on: "per-game entity type list"
+  ingest_cost: L
+  query_cost: M
+  better_than_fixed_table: "Multi-hop questions; but at the cost of per-game schema authoring the owner will not pay"
+
+- id: owner-9
+  title: "Common data model with a 1-page per-game vocabulary map: 5 standard concept types (step, mechanic, ui_element, affect, outcome) with fixed ids, and a game.vocab.yaml mapping the game's local names (for example 'Forge' -> mechanic.crafting) so every generic question compiles against any game"
+  level: L4
+  cell: {part: schema-evolution, representation: common-data-model-with-per-game-vocab-map, reuse-scope-of-extraction: customer-defined-on-top-of-universal, scope: cross-game, question-origin: ontology-generated, effort: M-one-quarter, tenancy-and-deployment: logically-isolated-per-studio}
+  object: "memo.md item 3: 'ontology (entities x dimensions x outcomes)'"
+  situation: "Two games call the same thing 'Forge' and 'Workbench'; a generic question about crafting must run on both"
+  consequence: "Per-game onboarding becomes filling one vocab file (typically 10-30 lines); the question bank and extraction prompts are written once against standard ids"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "B-perspectives clinical-data-abstraction-lead: 'common data model with vocabulary mapping per site, which here means per game'"
+  proposed: "concepts.yaml (standard, versioned) + per-game vocab.yaml; extraction prompts reference standard ids and receive the local names as synonyms"
+  shallow: false
+  part: question-generation
+  mechanism: "Extraction and question templates reference standard concept ids; a per-game vocab map supplies local names as synonyms into the extraction prompt and back-maps answers to local names in the chatbot"
+  example: "'How many players stalled on crafting in the tutorial?' compiles to step.crafting for both 'Forge' and 'Workbench' games; the chatbot answers 'Forge: 41 of 500 stalled >90s' using the local name"
+  cost: M
+  depends_on: "owner-2 universal primitives; owner-1 profile"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "One question bank serves every game; adding a game is a vocab file, not a question list"
+
+- id: owner-10
+  title: "Onboarding metric 'time-to-first-correct-answer' per game tracked by JEV ops: hours from first video upload to the first chatbot answer a studio marks correct; target under 48 hours, reported per game on an internal board"
+  level: L4
+  cell: {part: evaluation, user-segment: jev-internal-ops, moment-in-journey: first-studio-question, evidence-form: count-with-denominator, latency-tier: overnight, mechanism-type: human-in-the-loop}
+  object: "A-frame audience: 'the JEV owner choosing the architecture'; spec.md constraint 'Answering a studio's question must be fast'"
+  situation: "The owner must decide which options reduce onboarding time but has no measurement of onboarding time today"
+  consequence: "Every option in this run is judged against one number; a game stuck above 48 hours flags which stage (profile, ingestion, first report) is the bottleneck"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md unspecified: 'latency and cost limits per query'"
+  proposed: "Log upload_ts, first_answer_ts, first_correct_answer_ts per game; chatbot has a thumbs-up control that writes first_correct_answer_ts"
+  shallow: false
+  part: evaluation
+  mechanism: "Three timestamps per game written by the pipeline and the chatbot's thumbs-up; a board shows hours between them per game"
+  example: "Game X: upload 2026-11-02 09:00, first answer 2026-11-03 10:00 ('How many quit in tutorial? 112 of 500'), marked correct at 10:05: 25 hours"
+  cost: S
+  depends_on: nothing
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Makes onboarding speed a measured number rather than a feeling"
+
+- id: owner-11
+  title: "Studio-defined tracker at runtime: the analyst types a name and 3 example quotes ('players complaining about the crafting menu'), the tracker runs overnight over every stored session and becomes a closed boolean column the next morning"
+  level: L4
+  cell: {part: ingestion-extraction, extraction-trigger: on-studio-tracker-defined, question-origin: few-shot-tracker-from-examples, latency-tier: overnight, representation: customer-defined-trackers-over-universal-primitives, schema-evolution: append-only-versioned-fields, user-segment: studio-analyst}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Studio asks something no field covers and wants it as a recurring count, not a one-off"
+  consequence: "The studio extends the schema themselves; JEV does no per-game work; the column is versioned so later cohorts get it at ingestion"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'the question set grows from real use'"
+  proposed: "trackers table (studio_id, name, examples[3], created_ts, version); nightly job scores every session; column tracker_<id> appended"
+  shallow: false
+  part: ingestion
+  mechanism: "A tracker record (name + 3 example quotes + optional keywords) is applied by the model to each session's transcript overnight; the result is a boolean plus evidence timestamp column"
+  example: "Analyst defines 'confused by the torch recipe' with 3 quotes; next day the chatbot answers '87 of 500 players, quotes at 4:12, 6:50, ...' and the field persists for the next build's cohort"
+  cost: M
+  depends_on: "observation log or transcripts retained per session; nightly batch runner"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Studios add columns without JEV writing questions"
+
+- id: owner-12
+  title: "Failed-query log promotes questions into the genre bank: every question the planner could not answer from closed fields is logged with the game's genre; weekly, the top 10 by count across games in the same genre become bank templates with {step} placeholders"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, question-origin: failed-query-log, reuse-scope-of-extraction: genre-shared, extraction-trigger: scheduled-batch, moment-in-journey: steady-state-weekly, tenancy-and-deployment: shared-multi-tenant, mechanism-type: transfer-across-games}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction'"
+  situation: "Three match-3 studios each asked a version of 'how many players replayed level 1?' and each triggered its own backfill"
+  consequence: "The fourth match-3 studio has that field at ingestion; backfill cost drops for the whole genre; questions, not data, cross tenant boundaries"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md: 'the question set grows from real use'"
+  proposed: "failed_queries table (question_text, genre, game_id, ts); weekly clustering by embedding; top-10 clusters reviewed by one JEV analyst in 30 minutes and merged into genres/<tag>/bank.yaml"
+  shallow: false
+  part: question-generation
+  mechanism: "Unanswerable questions are logged; weekly clustering across games of one genre; top clusters become bank templates after a 30-minute human review"
+  example: "'Did players notice the hint arrow?' asked by 3 studios; after promotion a new game's ingestion extracts hint_arrow_noticed and the chatbot answers 'noticed by 312 of 500' on day 1"
+  cost: S
+  depends_on: "owner-3 genre bank; a planner that reports 'no field' outcomes"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table's columns grow from what studios actually ask, across the genre"
+
+- id: owner-13
+  title: "Cross-studio question sharing opt-in: a studio can tick 'share my question texts (not answers, not data) with other studios in my genre'; shared questions appear as starter chips in the other studios' chatbots with a 'asked by 3 other studios' badge"
+  level: L3
+  cell: {part: tenancy-access-control, tenancy-and-deployment: shared-multi-tenant, question-origin: learned-from-studio-usage, delivery-surface: chatbot, scope: cross-studio-benchmark, user-segment: studio-analyst}
+  object: "B-perspectives studio-security-reviewer: 'Cross-studio leakage through a shared ontology, shared question bank or shared cache'"
+  situation: "A new studio does not know what to ask; peers in the genre have asked 200 questions"
+  consequence: "Question text crosses tenants only with consent; answers and clips never do; the new studio's first session is 12 suggested questions rather than a blank box"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'Their questions are not known in advance'"
+  proposed: "share_questions boolean per studio; chips show question text and count of sharing studios only"
+  shallow: false
+  part: ui
+  mechanism: "A per-studio consent flag; the chatbot's starter chips include question texts from consenting studios of the same genre, with no answers attached"
+  example: "Chip 'How many players quit within 2 minutes of the first death? (asked by 3 studios)'; clicking runs it over this studio's 500 players only"
+  cost: S
+  depends_on: "owner-1 genre tag; query log per studio"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Question discovery across studios without any data sharing"
+
+- id: owner-14
+  title: "Pilot-then-freeze: the first 10 sessions of a new game run an open extraction ('list every notable event with timestamp'), the owner and studio pick 30 fields from the resulting list in a 1-hour call, and those 30 are frozen for the 500-player cohort"
+  level: L4
+  cell: {part: question-generation, question-origin: pilot-sessions-then-freeze, moment-in-journey: first-cohort-ingested, extraction-trigger: on-new-game-onboarding, mechanism-type: human-in-the-loop, effort: XS-days, schema-evolution: frozen-schema}
+  object: "memo.md item 1: 'closed enum fields and short open fields'"
+  situation: "A genre with no bank yet; nothing generic fits and the owner does not want to guess fields"
+  consequence: "Per-game fields come from what actually happened in 10 sessions; the 1-hour call replaces 2 weeks of question writing; the 500-player cohort is scored with a stable schema"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'most of what is in the video and transcript is never captured'"
+  proposed: "open_extraction over 10 sessions returns up to 200 event types with counts; a picker UI lets two people select 30; selection written as fields for this game"
+  shallow: false
+  part: question-generation
+  mechanism: "Open-ended extraction on 10 pilot sessions produces a ranked event-type list; humans select 30; those become the closed fields for the cohort"
+  example: "The pilot list shows 'player re-reads torch recipe' in 7 of 10 sessions; it becomes a field; the cohort answer is '214 of 500 re-read it, median 2 times'"
+  cost: S
+  depends_on: "10 pilot sessions recorded before the cohort"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fields are chosen from observed events rather than guessed before any video exists"
+
+- id: owner-15
+  title: "Weekly 'what surprised us' digest: 3 observations per game whose frequency this week deviates most from the genre baseline, each with 1 clip and a count, pushed to the studio's email or Slack without a question"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, mechanism-type: push-instead-of-pull, delivery-surface: scheduled-digest, question-type: what-surprised-unknown-unknowns, latency-tier: push-no-query, evidence-form: contrast-vs-baseline, moment-in-journey: steady-state-weekly}
+  object: "spec.md constraint: 'Their questions are not known in advance'"
+  situation: "A studio has not asked anything for 2 weeks; something unusual is happening in the data"
+  consequence: "The studio learns of an issue nobody asked about; the digest's items are the questions they type next"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "B-perspectives observability-log-analytics-builder: 'so the user does not have to guess the question'"
+  proposed: "Weekly job computes z-score of each universal primitive vs genre baseline; top 3 with |z|>2 are rendered with one clip each"
+  shallow: false
+  part: ui
+  mechanism: "For each universal primitive, this week's rate vs genre baseline; the 3 largest deviations are rendered as one line + one clip + count and pushed"
+  example: "'Profanity during the torch step: 18% of 120 players this week vs 4% genre baseline (clip 5:02)'; the studio replies with 'show me 10 more'"
+  cost: S
+  depends_on: "owner-2 universal primitives; a genre baseline from at least 2 games"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Answers a question that was never asked"
+
+- id: owner-16
+  title: "Automatic churn-vs-retain contrast on the first cohort: churner defined from the game profile (for example 'quit within 10 minutes after tutorial end'), then every universal primitive and per-step column is ranked by difference between churners and retainers, output as a 10-row table"
+  level: L4
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, question-type: who-are-the-churners-segment-discovery, mechanism-type: auto-discover-without-question, evidence-form: contrast-vs-baseline, moment-in-journey: first-cohort-ingested, scope: cohort}
+  object: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "The studio's real question is 'why do they churn' but they do not know which attribute to ask about"
+  consequence: "The first report names the 10 attributes that most separate churners from retainers, with counts; the studio's next questions are specific"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it'"
+  proposed: "churn_definition from owner-1; for each column compute rate in churners vs retainers and sort by absolute difference; show top 10 with n per group"
+  shallow: false
+  part: query
+  mechanism: "A fixed job over the per-video and per-step tables: split by churn flag, compute per-column rates, rank by difference, show top 10 with denominators"
+  example: "Output row 1: 'stalled >90s on Craft a torch: churners 58% (n=112) vs retainers 19% (n=388)'; row 2: 'silence run >60s: 44% vs 12%'"
+  cost: S
+  depends_on: "owner-2 and owner-31 tables; churn definition in profile"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Finds the discriminating column instead of waiting for someone to ask about it"
+
+- id: owner-17
+  title: "Per-game ingestion budget in model-minutes: universal primitives (owner-2) always run; frame OCR at 1 fps and open extraction run only up to a per-game cap of 40 model-minutes per session-hour, with the remainder deferred to on-first-question backfill"
+  level: L4
+  cell: {part: cost-governance, extraction-trigger: at-ingestion, mechanism-type: defer-to-query-time, effort: S-weeks, user-segment: jev-internal-ops, schema-evolution: lazy-backfill-on-demand}
+  object: "spec.md constraint: 'Ingestion time and cost are not a concern'"
+  situation: "A platform or indie tier (owner-26) ingests 2,000 sessions a week and the 'ingestion cost is fine' assumption stops holding"
+  consequence: "Every game has a known ingestion cost per session-hour; deeper extraction is bought only after a question needs it"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (true for the first studios, not for a platform tier)"
+  proposed: "ingest_budget_model_minutes_per_hour per game tier (40 default, 200 enterprise); extraction stages ordered by priority and cut at the budget"
+  shallow: false
+  part: ingestion
+  mechanism: "Extraction stages are ordered (primitives, per-step, OCR, open extraction) and executed until the per-session-hour model-minute budget is spent; skipped stages are marked pending"
+  example: "Indie game at 40 model-minutes: primitives and per-step run; OCR is pending; the first 'what did the torch recipe screen say?' question triggers OCR for that step only across 500 players, in 4 minutes"
+  cost: S
+  depends_on: "owner-2; a backfill runner"
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Ingestion cost is a tunable number per game rather than whatever the question list costs"
+
+- id: owner-18
+  title: "Chatbot's first screen is a 'what I can answer now' panel: the list of closed fields for this game with coverage 'scored for n of m players', plus the 3 question types that would need a backfill, so the studio does not type questions the store cannot answer"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: chatbot, evidence-form: coverage-statement-n-of-m-players, moment-in-journey: first-studio-question, uncertainty-policy: abstain-below-coverage, user-segment: studio-analyst}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "A new user opens the chatbot for the first time and does not know what the table contains"
+  consequence: "First questions hit existing fields; the user knows which questions will take overnight before asking them"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "B-perspectives ask-your-data-veteran: 'trust collapse after one wrong number'"
+  proposed: "Panel groups fields by step and by primitive, shows n/m per field, and lists 'needs overnight' question types"
+  shallow: false
+  part: ui
+  mechanism: "The chatbot renders the game's field list with per-field coverage counts and a 'needs backfill' label for open question types, before the input box"
+  example: "Panel shows 'Quit during tutorial: 500 of 500' and 'Stalled on Craft a torch: 487 of 500'; the user asks 'How many quit after stalling on the torch?' and gets '71 of 487' in under 2 seconds"
+  cost: S
+  depends_on: "per-field coverage counts in the store"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The studio can see the table's columns and coverage instead of guessing"
+
+- id: owner-19
+  title: "12 starter question chips generated from the game's step list, each backed by a precomputed aggregate so the click returns in under 200 ms: 'Where do players stall most?', 'Who quit during {step}?', 'Median time on {step}' for the 4 steps with highest stall rate"
+  level: L4
+  cell: {part: chatbot-ui, query-path: precomputed-aggregate, latency-tier: sub-200ms-cached, delivery-surface: chatbot, question-origin: ontology-generated, granularity: tutorial-step, mechanism-type: reuse-or-cache-prior-work}
+  object: "spec.md step 4: 'so that a question over, say, 500 players is fast'"
+  situation: "A user's first interaction with the chatbot for a new game"
+  consequence: "The first 12 answers are instant and correct by construction; typed questions start from a known-answerable baseline"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow'"
+  proposed: "chips.yaml: 3 templates x 4 top-stall steps; aggregates refreshed after each ingestion batch"
+  shallow: false
+  part: ui
+  mechanism: "12 question templates instantiated with the 4 highest-stall steps; each maps to a materialised aggregate row refreshed per ingestion batch"
+  example: "Chip 'Who quit during Craft a torch?' returns '71 players (14% of 500)' with a per-player list link, in 120 ms"
+  cost: S
+  depends_on: "owner-31 per-step table; owner-1 steps[]"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The same table, but the studio sees the questions it can answer as buttons"
+
+- id: owner-20
+  title: "REFUSED as default: map-reduce over raw transcripts at query time for every question; owner's willingness is low because a 500-player question becomes 2,000 fifteen-minute videos read per question, which contradicts 'answering must be fast'; allowed only as the backfill job behind owner-11"
+  level: L3
+  cell: {part: query-path, query-path: map-reduce-over-raw, representation: raw-transcript-only, latency-tier: minutes, mechanism-type: defer-to-query-time, effort: S-weeks}
+  object: "spec.md step 4: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists'"
+  situation: "A proposal to drop the table and have a long-context model read all transcripts per question"
+  consequence: "Refused as the default query path: per-question latency in minutes and cost proportional to cohort size; kept as the overnight extraction engine that writes new columns"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data'"
+  proposed: "Use map-reduce only inside the tracker/backfill job, never on the interactive path"
+  shallow: false
+  part: query
+  mechanism: "Each question is sent with each session's transcript to the model, then answers are reduced"
+  example: "'How many quit at the torch step?' reads 500 sessions x 8 videos; result in 6 minutes; the next question starts from zero"
+  cost: S
+  depends_on: nothing
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "Any question is answerable, but not fast; so it is the backfill engine, not the query path"
+
+- id: owner-21
+  title: "Model-upgrade re-extraction policy: on an extraction model change, re-extract a random 5% of sessions (minimum 25), compute per-field agreement with the stored values, and re-extract all history only for fields with agreement under 90%"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: model-upgrade-reextract, extraction-trigger: on-model-upgrade, evidence-form: extraction-provenance-model-and-schema-version, scope: all-players, effort: S-weeks, user-segment: jev-internal-ops}
+  object: "memo.md item 2: 'result is cached as a new field'"
+  situation: "The extraction model is upgraded after 40 games and 20,000 sessions are stored"
+  consequence: "Re-extraction cost is bounded by the fields that actually changed; stored answers carry model_version so the chatbot can state which version produced a number"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' (not true for re-processing all history on every model change)"
+  proposed: "Every stored field value carries model_version and schema_version; upgrade job samples 5%, compares, and queues full re-extraction per field below 90% agreement"
+  shallow: false
+  part: evaluation
+  mechanism: "Per-field agreement between old and new model on a 5% sample decides per-field re-extraction; provenance columns on every value"
+  example: "After upgrade, 'quit_during_tutorial' agrees 98% (kept); 'stall_reason' agrees 81% (re-extracted for all 20,000 sessions overnight); the chatbot's torch-step answer notes 'stall_reason: model v3'"
+  cost: S
+  depends_on: "model_version column on stored values"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table today has no version; a model change silently changes numbers"
+
+- id: owner-22
+  title: "New-field ledger: a field goes live only with an owner, an extraction prompt, a 20-session labelled set, measured accuracy at or above 85%, and a backfill estimate in model-minutes; the ledger row is shown in the chatbot when the field is used"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: append-only-versioned-fields, extraction-trigger: on-new-field-added, evidence-form: extraction-provenance-model-and-schema-version, uncertainty-policy: abstain-below-coverage, effort: S-weeks}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "Fields arrive weekly from trackers (owner-11), failed-query promotion (owner-12) and pilot picks (owner-14)"
+  consequence: "No field reaches a studio without a measured accuracy; the chatbot can refuse to use a field below 85% and say so"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'accuracy against hand-labelled sessions'"
+  proposed: "fields table: id, owner, prompt_version, eval_set_id (20 sessions), accuracy, backfill_estimate_min, status (draft/live/deprecated)"
+  shallow: false
+  part: evaluation
+  mechanism: "A fields table with a mandatory 20-session eval and accuracy threshold gating the live status; the chatbot reads status before using a field"
+  example: "'torch_recipe_reread' measured 88% on 20 labelled sessions, goes live; chatbot answer '214 of 500 (field accuracy 88% on 20 labelled sessions)'"
+  cost: S
+  depends_on: "a labelling UI or spreadsheet for 20 sessions per field"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Today's questions have no per-question accuracy; every new column gets one"
+
+- id: owner-23
+  title: "Per-game hand-written override layer capped at 10 questions, written during the onboarding interview, stored as a separate 'studio_questions' block so the generic bank and the override are reported separately in coverage"
+  level: L4
+  cell: {part: question-generation, question-origin: hand-written-per-game, reuse-scope-of-extraction: customer-defined-on-top-of-universal, moment-in-journey: game-onboarding-day-0, effort: XS-days, user-segment: game-designer}
+  object: "spec.md step 3: 'written per game target'"
+  situation: "A studio has 3-10 questions that are specific to its mechanic and no generic template covers them"
+  consequence: "The per-game part of onboarding is bounded at 10 questions and 1 hour; everything else is generic; the owner can see how much coverage the override adds"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'written per game target'"
+  proposed: "game_profile.yaml gets studio_questions[] with max 10 entries, each with answer type and evidence requirement"
+  shallow: false
+  part: question-generation
+  mechanism: "A capped list of 10 hand-written questions per game appended to the generated bank with a source tag"
+  example: "Studio adds 'Did the player notice the torch can be thrown? (yes/no/unclear)'; chatbot answers 'yes 93, no 361, unclear 46 of 500' and tags the answer 'studio question'"
+  cost: S
+  depends_on: "owner-1 profile"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Keeps the one thing per-game questions do well, bounded to 10"
+
+- id: owner-24
+  title: "Build id is a required key at upload: each video carries build_id parsed by the profile's regex; the chatbot's compare-versions and pre/post questions become GROUP BY build_id over the same per-step table"
+  level: L4
+  cell: {part: store, granularity: build-version, question-type: did-the-fix-work-pre-post, modality: build-version-metadata, scope: build-version-pair, query-path: sql-over-closed-fields, moment-in-journey: new-build-version}
+  object: "spec.md unspecified: 'how videos of one session are linked'"
+  situation: "The studio ships a fix to the torch step and records 200 new players on build 1.3"
+  consequence: "'Did the fix work?' is one query with two denominators; without the key the two cohorts are indistinguishable in the table"
+  p_typical: 0.18
+  grounded: quote
+  evidence: "spec.md: 'how videos of one session are linked' (unspecified)"
+  proposed: "Upload API rejects a video without build_id; sessions table gets build_id column"
+  shallow: false
+  part: store
+  mechanism: "A mandatory build_id column on sessions, populated at upload; every aggregate accepts a build filter"
+  example: "'Did the torch fix work?' returns 'stalled >90s: build 1.2 31% of 487, build 1.3 12% of 200'"
+  cost: S
+  depends_on: "owner-1 build_id_regex"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table gains a version dimension it lacks today"
+
+- id: owner-25
+  title: "Public reviews mined at day 0: the game's store reviews (or, if unreleased, the 3 closest genre peers' reviews) are clustered into 15 complaint topics, and each topic becomes a question with a prevalence answer type"
+  level: L3
+  cell: {part: question-generation, question-origin: public-reviews-and-community-mining, moment-in-journey: game-onboarding-day-0, question-type: prevalence-of-quoted-sentiment, reuse-scope-of-extraction: genre-shared, effort: S-weeks}
+  object: "spec.md constraint: 'Their questions are not known in advance'"
+  situation: "A pre-release game with no sessions yet; the studio wants questions that match what players will say"
+  consequence: "The question set includes complaints the genre's players actually voice; day-0 onboarding needs only a store URL or 3 peer titles"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md unspecified: 'who at the studio asks and what they ask'"
+  proposed: "Pull up to 2,000 reviews, cluster into 15 topics, each topic yields 'What share of players mentioned <topic> in the tutorial?'"
+  shallow: false
+  part: question-generation
+  mechanism: "Review text clustered into 15 topics; each topic becomes a prevalence question instantiated as a tracker (owner-11) at ingestion"
+  example: "Peer reviews cluster 'tutorial too long'; the tracker finds '136 of 500 players said a variant of too long during the tutorial, median at 11:40'"
+  cost: S
+  depends_on: "owner-11 trackers"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Questions reflect the genre's voiced complaints before any session is recorded"
+
+- id: owner-26
+  title: "Zero-config onboarding path for platform and indie tiers: upload only; genre inferred from frames of the first 3 videos, step list induced (owner-4), churn definition defaulted to 'no video after tutorial-exit + 10 min'; no interview, first report in 48 hours"
+  level: L4
+  cell: {part: question-generation, user-segment: platform-devrel, moment-in-journey: game-onboarding-day-0, question-origin: genre-template-library, mechanism-type: transfer-across-games, delivery-surface: dashboard-standard-report, effort: M-one-quarter}
+  object: "A-frame assumptions: 'studios are many and each game differs'"
+  situation: "A platform wants 2,000 small developers onboarded with no JEV staff time per game"
+  consequence: "Per-game human time is zero; accuracy of the inferred genre is reported with the first report so the developer can correct it in one click"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "B-perspectives platform-owner: 'onboarding time per game must be close to zero'"
+  proposed: "genre classifier over 30 frames; default profile; first report shows 'genre: match-3 (confidence 0.82), change?'"
+  shallow: false
+  part: question-generation
+  mechanism: "Profile fields are inferred (genre from frames, steps from OCR, churn from a default rule) rather than typed; the report shows each inferred value with a change control"
+  example: "An indie uploads 40 sessions; 48 hours later the report shows 'step 2 Place a block: 44% of 40 stalled, 5 clips' with 'genre: sandbox (0.78)'"
+  cost: M
+  depends_on: "owner-3 genre bank; owner-4 step induction; owner-5 report"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "A game can be onboarded with no human writing anything"
+
+- id: owner-27
+  title: "Renewal-review page per studio: questions asked (count), share answered from closed fields vs overnight backfill, median answer latency, fields added by the studio, and the 5 fixes the studio shipped with a pre/post number each"
+  level: L4
+  cell: {part: evaluation, moment-in-journey: renewal-review, user-segment: producer-exec, delivery-surface: dashboard-standard-report, evidence-form: count-with-denominator, question-type: did-the-fix-work-pre-post}
+  object: "A-frame audience: 'per option they decide build / prototype / drop'"
+  situation: "A studio's annual contract comes up and the buyer asks what JEV answered that telemetry could not"
+  consequence: "The owner has a per-studio value page; the 5 pre/post numbers are the renewal argument"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "B-perspectives studio-data-team-rejector: 'why pay JEV if you hand us transcripts? What is the moat?'"
+  proposed: "renewal_report from query log + fields table + build pairs; generated on demand"
+  shallow: false
+  part: evaluation
+  mechanism: "A report over the query log (count, closed-vs-backfill share, latency), the fields table (studio-added fields) and build-pair deltas"
+  example: "'312 questions asked, 87% answered under 2 s; torch stall rate 31% -> 12% after build 1.3; 4 fields added by your analysts'"
+  cost: S
+  depends_on: "query log; owner-24 build ids"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Shows what the store did for the studio, which the table cannot report about itself"
+
+- id: owner-28
+  title: "Observation log export as Parquet keyed by the studio's player id, offered as a paid add-on with a versioned schema contract, while the chatbot and reports remain the primary product; owner's willingness for export-as-primary is low (moat)"
+  level: L3
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, tenancy-and-deployment: export-only-no-hosting, schema-evolution: append-only-versioned-fields, effort: S-weeks}
+  object: "memo.md item 1: 'a session-level observation log'"
+  situation: "A studio's data team asks for the raw observations to join with telemetry in their warehouse"
+  consequence: "Export exists and new fields are append-only so dbt models do not break; the chatbot stays the thing the studio sees first; the owner refuses to sell export alone"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "B-perspectives studio-data-team-rejector: 'Will your schema break our dbt models when you add a field?'"
+  proposed: "Daily Parquet drop of observations and per-step tables with schema_version; fields are only added, never renamed"
+  shallow: false
+  part: store
+  mechanism: "Daily Parquet export of the observation log and per-step table, keyed by studio player id, with append-only schema versioning"
+  example: "Studio joins stalled_on_torch with their telemetry retention and finds 'stalled players: day-7 retention 22% vs 41%'"
+  cost: S
+  depends_on: "memo observation log; player id mapping at upload"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The studio's own tools see the observations, not just a chatbot"
+
+- id: owner-29
+  title: "Silent-player fallback: a session with speech in under 20% of its minutes is flagged silent; speech-dependent fields are marked not-applicable rather than false, and the onboarding form asks the studio whether sessions are think-aloud"
+  level: L4
+  cell: {part: collection-protocol, modality: silence-or-absence-of-speech, uncertainty-policy: abstain-below-coverage, evidence-form: coverage-statement-n-of-m-players, moment-in-journey: game-onboarding-day-0, granularity: session}
+  object: "spec.md step 2: 'Each video is converted to a transcript'"
+  situation: "A studio records 500 players without a think-aloud instruction; 300 sessions are near-silent"
+  consequence: "Counts like 'players who said they were confused' are reported as 'n of 200 speaking players' instead of a false low rate over 500"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "B-perspectives playtest-ops-protocol-designer: 'Silent players produce empty transcripts and break speech-centric representations'"
+  proposed: "silent flag at session level; chatbot denominators exclude silent sessions for speech fields and say so"
+  shallow: false
+  part: ingestion
+  mechanism: "Speech-minute ratio per session; below 0.2 sets silent=true; speech-derived fields get NA; denominators and the onboarding form reflect it"
+  example: "'How many said the torch recipe was confusing?' returns '87 of 200 speaking players (300 silent sessions excluded)'"
+  cost: S
+  depends_on: nothing
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Stops the table from recording 'no' for players who never spoke"
+
+- id: owner-30
+  title: "Generic attempt-episode segmentation: start, fail, retry episodes detected from the screen-state classifier (fail screen, respawn, menu reopen) with no per-game configuration, giving every game a retry count and time-to-first-success per step"
+  level: L4
+  cell: {part: frame-pipeline, granularity: variable-length-moment-or-episode, modality: screen-state-classifier, reuse-scope-of-extraction: universal-primitives, question-type: how-many, extraction-trigger: at-ingestion, subject-domain: progression-difficulty}
+  object: "spec.md known problem: 'Transcript loses visual information'"
+  situation: "A step's difficulty question ('how many tries') cannot be answered from speech"
+  consequence: "Retry count and time-to-first-success exist for every game on day 0 from frames alone"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'what is on screen is largely lost'"
+  proposed: "Classifier over 4 generic screen states (gameplay, fail, menu, loading) at 1 fps; episode = gameplay run between fail/menu boundaries"
+  shallow: false
+  part: ingestion
+  mechanism: "A 4-class screen-state classifier at 1 fps; episodes are gameplay runs between fail or menu boundaries; per step: attempts, time to first success"
+  example: "'How many attempts did players need on Light the cave?' returns 'median 3, 61 of 500 needed 6 or more'"
+  cost: M
+  depends_on: "frame extraction at 1 fps; a generic screen-state model"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Difficulty counts come from frames for every game without a per-game question"
+
+- id: owner-31
+  title: "Per-step table seeded automatically from steps[]: one row per player x step with 8 columns (entered_ts, completed_ts, duration_s, attempts, utterance_count, help_seeking_count, negative_affect_count, quit_here), built at ingestion"
+  level: L4
+  cell: {part: store, representation: per-step-summary, granularity: tutorial-step, extraction-trigger: at-ingestion, query-path: sql-over-closed-fields, latency-tier: under-2s, subject-domain: onboarding-tutorial}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "The studio asks any step-level count or duration for 500 players"
+  consequence: "Most tutorial-churn questions are a GROUP BY over 8 columns; the table is the same shape for every game"
+  p_typical: 0.3
+  grounded: quote
+  evidence: "memo.md: 'aggregate queries over all players (instant)'"
+  proposed: "player_step table; populated from OCR step boundaries and transcript; one shape for all games"
+  shallow: false
+  part: store
+  mechanism: "A fixed 8-column table at player x step granularity, same schema for every game, populated at ingestion"
+  example: "'Where do players quit?' returns quit_here counts per step: 'Craft a torch 71, Light the cave 24, Move 3'"
+  cost: S
+  depends_on: "owner-1 steps[] or owner-4 induced steps"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "One generic table replaces per-game questions for all step-level counts"
+
+- id: owner-32
+  title: "JEV analyst review capped at 2 hours per new game: watch 5 sessions, confirm the induced step list, pick the churn definition, and approve the 10 override questions; the 2-hour cap is logged against the onboarding metric"
+  level: L4
+  cell: {part: question-generation, mechanism-type: human-in-the-loop, moment-in-journey: first-cohort-ingested, user-segment: jev-internal-ops, effort: XS-days, uncertainty-policy: escalate-to-human-analyst}
+  object: "spec.md step 3: 'written per game target'"
+  situation: "Automated induction (owner-4, owner-26) produces a step list that may be wrong for an unusual game"
+  consequence: "Human time per game is bounded and measured; the analyst fixes induction errors before 500 players are scored"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md: 'written per game target'"
+  proposed: "Onboarding checklist with 4 tasks and a timer; time logged into the owner-10 board"
+  shallow: false
+  part: question-generation
+  mechanism: "A 4-task human checklist with a 2-hour cap, logged per game"
+  example: "Analyst sees induced step 'Press A to jump' is two steps in this game, splits it; the torch stall rate is then computed per correct step"
+  cost: S
+  depends_on: "owner-4 induction; owner-10 metric"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Per-game human effort is 2 hours instead of a question-writing cycle"
+
+- id: owner-33
+  title: "REFUSED for v-next: studio-VPC or on-prem deployment; owner's willingness is low because it blocks the genre bank (owner-3), failed-query promotion (owner-12) and the weekly baseline (owner-15), all of which need JEV-hosted cross-game question flow"
+  level: L3
+  cell: {part: tenancy-access-control, tenancy-and-deployment: studio-vpc-or-on-prem, reuse-scope-of-extraction: game-specific, effort: L-multi-quarter, user-segment: studio-data-engineer}
+  object: "B-perspectives studio-security-reviewer: 'Is there single-tenant or in-VPC deployment?'"
+  situation: "A large studio asks for in-VPC deployment as a purchase condition"
+  consequence: "Refused in v-next; offered logically-isolated-per-studio data with question-text-only sharing (owner-13); revisit when 3 studios condition purchase on it"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "B-perspectives studio-security-reviewer notices"
+  proposed: "Drop for v-next; per-studio logical isolation with a documented list of what crosses tenants (question text only)"
+  shallow: false
+  part: question-generation
+  mechanism: "The whole pipeline deployed inside each studio's cloud account"
+  example: "A VPC-deployed studio never receives the match-3 genre bank update that would have answered 'did players notice the hint arrow' on day 1"
+  cost: L
+  depends_on: nothing
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "Nothing for onboarding speed; it removes the cross-game levers"
+
+- id: owner-34
+  title: "Question-set version per game shown on every answer: the chatbot appends 'question set v7, 61 fields, 500 of 500 sessions scored' so the studio knows which bank version a number came from after the bank changes"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: extraction-provenance-model-and-schema-version, schema-evolution: append-only-versioned-fields, delivery-surface: chatbot, uncertainty-policy: answer-with-ci-and-n, moment-in-journey: steady-state-weekly}
+  object: "memo.md item 2: 'cached as a new field, so the question set grows from real use'"
+  situation: "The bank grows weekly; a number quoted in a producer's deck last month differs from today's"
+  consequence: "Every number is traceable to a bank version and a session count; disputes are resolved by diffing two versions"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'the question set grows from real use'"
+  proposed: "question_set_version column on the game; answer footer template"
+  shallow: false
+  part: ui
+  mechanism: "Each game carries a question-set version incremented on any field change; the chatbot footers every answer with version, field count and sessions scored"
+  example: "'71 of 500 quit at Craft a torch (question set v7, 61 fields, 500 of 500 scored)'; last month's deck shows v5 with 58 fields"
+  cost: S
+  depends_on: "owner-22 fields table"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table today has no version; this makes every answer reproducible"

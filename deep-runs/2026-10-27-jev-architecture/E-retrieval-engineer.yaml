@@ -1,0 +1,692 @@
+- id: retr-1
+  title: "Chunk on the stitched session timeline (90s windows, 30s overlap) instead of per 15-minute video file, with session_id, video_index, t_session_start, t_session_end on every chunk"
+  level: L3
+  cell: {part: session-stitching, representation: transcript-chunks-with-embeddings, granularity: variable-length-moment-or-episode, query-path: retrieval-then-llm, scope: all-players, effort: S-weeks}
+  object: "spec.md: 'each video is capped at 15 minutes, so one session is many videos' and 'how videos of one session are linked' is unspecified"
+  situation: "A player quits the tutorial 40 seconds into video 3; the preceding 2 minutes of frustration sit at the end of video 2 and are a different retrieval unit"
+  consequence: "Per-video chunks lose the cross-cut context for roughly 1 in 10 moments (a 15-minute file cut against a 90s window means 6.7% of windows straddle a cut, more with overlap); the chatbot answers 'nothing notable before exit'"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "spec.md: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos.'"
+  proposed: "Stitcher orders videos by capture timestamp, concatenates transcripts into one session timeline, then windows: chunk = {session_id, player_id, chunk_idx, video_index_start, video_index_end, t_session_start_s, t_session_end_s, text, step_id_mode}; a chunk may span a file cut"
+  mechanism: "Changes session-stitching and the index record shape: the retrieval unit is a window over the session clock, not the file; file boundaries become a metadata field, never a chunk boundary"
+  example: "Studio asks 'what were players saying in the 2 minutes before they abandoned the tutorial'; filter t_session_end_s within 120s of session end, player has no later chunk; 38 of 500 players match, windows crossing the video-2/video-3 cut are returned whole"
+  cost: S
+  depends_on: "a session-level ordering of videos (capture timestamp or sequence number in the filename)"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table is per video (spec.md: 'a structured table per video'), so 'before exit' is cut at file edges; session-clock chunks are not"
+  shallow: false
+
+- id: retr-2
+  title: "Step-aligned chunking: a chunk boundary is forced at every tutorial-step transition emitted by the screen-state classifier, and step_id is a filterable field on the chunk"
+  level: L3
+  cell: {part: ingestion-extraction, representation: transcript-chunks-with-embeddings, granularity: tutorial-step, modality: screen-state-classifier, query-path: retrieval-then-llm, subject-domain: onboarding-tutorial}
+  object: "memo.md observation 'step on screen' and spec.md 'targets are mostly detecting churn in the tutorial'"
+  situation: "A 90s window covers the end of step 2 and the start of step 3; a question filtered to step 3 either misses or mis-attributes the utterance"
+  consequence: "Step-filtered retrieval precision drops because 20 to 30% of fixed windows straddle a step change in a tutorial with 8 steps of 2 to 4 minutes each"
+  p_typical: 0.3
+  grounded: inferred
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session (step on screen, action, utterance, friction signal ...)'"
+  proposed: "Chunker takes the step timeline (step_id, t_enter, t_exit) from the frame pipeline; windows are cut at t_enter of each step; a step longer than 180s is split into 90s sub-windows all carrying the same step_id and a sub_index"
+  mechanism: "Changes ingestion chunking: boundaries come from screen state, not from token count; each chunk gets step_id, step_dwell_s, step_attempt_number"
+  example: "'Why do players stall on step 3 (the crafting tutorial)?' becomes filter step_id=3 AND step_dwell_s>120 then semantic query 'confusion about crafting'; 61 chunks from 44 players come back, none containing step-2 speech"
+  cost: M
+  depends_on: "a screen-state classifier that emits step transitions with timestamps (memo.md item 1)"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table has one answer per video per question; step-aligned chunks let any new question be scoped to a step without re-running extraction"
+  shallow: false
+
+- id: retr-3
+  title: "Hybrid retrieval over observation rows: BM25 over text fields plus dense embedding, fused with reciprocal rank fusion (k=60), 200 candidates each side"
+  level: L3
+  cell: {part: query-path, representation: hybrid, query-path: retrieval-then-llm, question-type: what-said, build-or-buy: open-source-component, effort: S-weeks}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "A studio asks about 'the Ember Forge' (a proper noun in their game) and the embedding model places it near generic 'forge' and 'fire' chunks"
+  consequence: "Dense-only retrieval returns 12 of the 57 rows that mention the Ember Forge; BM25-only misses paraphrases such as 'that smelting thing'"
+  p_typical: 0.4
+  grounded: quote
+  evidence: "memo.md: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  proposed: "Two indexes over the same row ids (an inverted index on utterance_text, ocr_text, open_note; a vector index on a single embedding of the concatenation); query runs both, RRF with k=60, top 200 to the reranker"
+  mechanism: "Changes the query path: a retrieval request is {text_query, filters} and returns a fused ranked list of observation row ids with per-source scores"
+  example: "'What do players say when they fail the Ember Forge step?' returns 57 rows from 41 players; 31 came from BM25 only, 14 from dense only, 12 from both"
+  cost: S
+  depends_on: "observation log rows with text fields (memo.md item 1)"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A question about a noun nobody wrote a fixed question for is answerable the day the noun is first typed"
+  shallow: false
+
+- id: retr-4
+  title: "Push player_id, step_id, build_version and time-range filters into the ANN index as pre-filters (filtered HNSW), never post-filter the top-k"
+  level: L4
+  cell: {part: store, representation: transcript-chunks-with-embeddings, granularity: player, query-path: retrieval-then-llm, scope: query-time-defined-cohort, latency-tier: under-2s}
+  object: "spec.md: 'a question over, say, 500 players is fast'"
+  situation: "The question is scoped to 20 players on build 1.3.2 at step 4; a post-filtered top-100 from 60,000 chunks returns 3 rows after filtering"
+  consequence: "Selective questions come back nearly empty; the chatbot says 'few players mentioned this' when 20 players have 240 matching chunks"
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast.'"
+  proposed: "Index with filterable payload fields {studio_id, game_id, player_id, session_id, step_id, build_version, t_session_start_s}; the test: a query with a 4% selective filter returns at least 100 candidates when 100 exist, in under 150ms"
+  mechanism: "Changes the store: metadata lives inside the vector index as filter payload rather than in a separate table joined afterwards"
+  example: "'Among the 20 players on build 1.3.2 who quit at step 4, what did they say?' filter yields 240 chunks, dense ranking orders them, top 40 go to the model"
+  cost: S
+  depends_on: "a vector store with payload filtering (Qdrant, pgvector with partial indexes, Vespa)"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Cohort-scoped open questions work; the table only supports cohorts via the fixed answer columns"
+  shallow: false
+
+- id: retr-5
+  title: "Cross-encoder reranker over the 200 fused candidates to 30, with a 300ms latency budget, before the model reads anything"
+  level: L4
+  cell: {part: query-path, query-path: retrieval-then-llm, latency-tier: under-2s, build-or-buy: open-source-component, effort: S-weeks, mechanism-type: approximate-then-refine}
+  object: "memo.md item 2: 'the model reads only those'"
+  situation: "Fused top-200 contains 90 near-duplicate rows about loading screens because 'stuck' matched the query 'players stuck on step 2'"
+  consequence: "The reading model's context is 60% noise; answers cite loading-screen complaints when the studio asked about tutorial logic"
+  p_typical: 0.3
+  grounded: inferred
+  evidence: "memo.md: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  proposed: "Reranker input = (question, row text + step_id + screen_state label); keep 30; test: on the retrieval golden set (retr-23) nDCG@30 rises by at least 0.1 over fusion alone"
+  mechanism: "Adds a stage to the query path between fusion and reading; score = cross-encoder(question, row rendered as text)"
+  example: "'Why are players stuck at step 2?' rerank demotes 83 loading-screen rows; top 30 contain 24 rows about the unexplained drag-to-equip gesture"
+  cost: S
+  depends_on: "retr-3 fusion output"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Nothing in the table ranks evidence by relevance to a new question"
+  shallow: false
+
+- id: retr-6
+  title: "Per-player cap and MMR diversification in the final 30: at most 2 rows per player, lambda 0.7, so 500-player questions are not answered from 3 talkative players"
+  level: L4
+  cell: {part: query-path, scope: all-players, question-type: prevalence-of-quoted-sentiment, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: answer-with-ci-and-n, mechanism-type: narrow-or-clarify-the-question}
+  object: "spec.md: 'a question over, say, 500 players'"
+  situation: "Three think-aloud players produce 40% of all utterance rows; a 'what do players say about the map' query returns 22 of 30 rows from those three"
+  consequence: "The chatbot's 'players say the map is confusing' is three people's opinion presented as a cohort finding"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md: 'A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast.'"
+  proposed: "After rerank, greedily select with MMR and a hard cap of 2 rows per player_id; the answer footer reads 'from 19 players of 500'; test: no player contributes more than 2 of 30 rows"
+  mechanism: "Changes selection in the query path; adds distinct_players and rows_per_player to the retrieval response"
+  example: "'Is the tutorial map confusing?' returns 30 rows from 19 distinct players rather than 30 rows from 3; the answer states 19/500 players mentioned the map, 14 negatively"
+  cost: S
+  depends_on: "retr-5 reranked list"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table counts every player once per question by construction; this restores that property on the retrieval path"
+  shallow: false
+
+- id: retr-7
+  title: "Every retrieval answer carries a coverage line: players_with_hits / players_in_filter and chunks_read / chunks_matching, computed from the index counts, not from the model"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: answer-with-ci-and-n, question-type: how-many, user-segment: studio-analyst, delivery-surface: chatbot}
+  object: "memo.md item 2 retrieval tier; spec.md 'Answering a studio's question must be fast'"
+  situation: "A retrieval-then-LLM answer reads 30 rows out of 1,900 matching rows across 500 players and the chatbot says 'most players struggled'"
+  consequence: "The studio quotes 'most players' in a planning meeting; the number is based on 1.6% of matching rows"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md: 'the model reads only those'"
+  proposed: "Retrieval response includes {n_players_filter, n_players_hit, n_rows_match, n_rows_read}; the chatbot template appends 'Read 30 of 1,900 matching observations from 19 of 500 players'; test: the line is present on 100% of retrieval-path answers"
+  mechanism: "Changes the retrieval response shape and the chatbot answer template; counts come from the filter query, which is exact"
+  example: "'Did players understand the dodge tutorial?' answer ends with 'Read 30 of 412 matching observations from 22 of 500 players; for an exact count ask for a field extraction'"
+  cost: S
+  depends_on: "retr-4 filterable index (exact match counts)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table gives counts with no provenance; this gives the reader the denominator and how much was actually read"
+  shallow: false
+
+- id: retr-8
+  title: "Two indexes with different units: observation rows (short, enum + open note) and raw transcript windows (speech only); the planner routes what-said and why questions to the transcript index and what-happened to the row index"
+  level: L3
+  cell: {part: store, representation: hybrid, granularity: utterance, question-type: what-said, query-path: retrieval-then-llm, modality: speech-transcript}
+  object: "memo.md item 1 'closed enum fields and short open fields' and spec.md 'Each video is converted to a transcript'"
+  situation: "A studio asks for the exact wording players used when the inventory tutorial failed; observation rows store a 12-word paraphrase, not the speech"
+  consequence: "Quotes in the answer are the extractor's paraphrases, which a studio will catch when they open the clip"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "index_obs: one record per observation row; index_speech: one record per 45s speech window with speaker-independent text; both share session_id and t_session_start_s so a row hit can expand to its speech window; routing rule: question contains say/said/words/quote/why -> index_speech first"
+  mechanism: "Changes the store (two collections) and the query path (routing by question type); join key is (session_id, time)"
+  example: "'What exactly did players say when the inventory tutorial failed?' routes to index_speech with filter step_id=inventory AND friction=true; returns verbatim 'where is the bag, there is no bag' with timestamp 00:14:32"
+  cost: M
+  depends_on: "retr-1 session-clock chunks and the observation log"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table has no verbatim speech at all; what-said questions are unanswerable from it"
+  shallow: false
+
+- id: retr-9
+  title: "Three embeddings per chunk (speech text, OCR text, screen-state label text) stored as a multi-vector record; a query scores max-over-vectors so 'stuck on the inventory screen' matches an OCR 'INVENTORY' chunk with no speech"
+  level: L3
+  cell: {part: store, representation: hybrid, modality: on-screen-text-ocr, granularity: variable-length-moment-or-episode, query-path: retrieval-then-llm, subject-domain: ui-navigation}
+  object: "spec.md: 'what is on screen is largely lost' and the owner's 'where did they click' in memo.md"
+  situation: "Half the players are silent during the inventory step; the only signal is the screen showing INVENTORY for 140s with the cursor hovering"
+  consequence: "A single concatenated embedding dilutes the OCR signal under speech from the same window; silent-stall chunks rank below chatty irrelevant ones"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'The owner's view: the transcript alone is not enough; what is on screen is largely lost.'"
+  proposed: "Record = {id, v_speech, v_ocr, v_state, payload}; query vector compared with each, score = max(cos); test: recall@50 on the 'silent stall' golden questions is at least 0.8 versus under 0.4 for single-vector"
+  mechanism: "Changes the index record shape to multi-vector; the frame pipeline must emit OCR text and a state label per window"
+  example: "'Which players got stuck on the inventory screen during the tutorial?' matches 73 chunks from 58 players through v_ocr or v_state; 31 of those players said nothing in the window"
+  cost: M
+  depends_on: "frame pipeline emitting OCR and screen-state per window (memo.md item 1)"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table is transcript-derived; silent visual stalls are not in it"
+  shallow: false
+
+- id: retr-10
+  title: "Query decomposition into 3 to 5 typed sub-retrievals for why questions: friction signals at the step, utterances at the step, and the last step before exit, each retrieved separately and merged with provenance tags"
+  level: L3
+  cell: {part: query-path, question-type: why, query-path: agentic-multi-tool-plan, granularity: tutorial-step, mechanism-type: narrow-or-clarify-the-question, latency-tier: under-30s}
+  object: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Studio types 'why do players churn at the crafting step'; one embedding of that sentence retrieves rows about 'churn' (a word no player says)"
+  consequence: "Retrieval returns near-random rows; the model fabricates a plausible cause from them"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  proposed: "Planner emits sub-queries: (a) filter step_id=crafting AND friction_signal!=none; (b) filter step_id=crafting, dense query 'confused, does not know what to do'; (c) filter is_last_step_in_session=true AND step_id=crafting; merge with source tag; each sub-retrieval capped at 20 rows"
+  mechanism: "Changes the query path: a why question becomes a small plan of filtered retrievals rather than one semantic search"
+  example: "'Why do players churn at the crafting step?' gives 20 friction rows, 20 utterance rows, 20 exit-context rows from 47 players; the answer separates 'what they did', 'what they said', 'what they saw last'"
+  cost: M
+  depends_on: "step_id and friction fields on rows (retr-2) and an is_last_step_in_session derived field"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The table answers only the why questions someone wrote in advance; this composes an answer for a why question nobody wrote"
+  shallow: false
+
+- id: retr-11
+  title: "Hypothetical-observation retrieval: generate 5 synthetic observation rows that would answer the question, embed those, and search with them instead of the question text"
+  level: L3
+  cell: {part: query-path, query-path: retrieval-then-llm, representation: timestamped-observation-log, mechanism-type: approximate-then-refine, latency-tier: under-2s, effort: XS-days}
+  object: "memo.md item 1 observation rows with 'closed enum fields and short open fields'"
+  situation: "The question is written at the studio's level of abstraction ('onboarding friction'); rows are written at the player's level ('clicked the anvil 6 times, nothing happened')"
+  consequence: "Vocabulary mismatch between question and row text drops dense recall; abstract questions retrieve other abstract text (the game's own tutorial hints OCR) rather than player behaviour"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md: 'with closed enum fields and short open fields'"
+  proposed: "One small-model call (under 400ms) produces 5 rows in the observation schema; their embeddings are averaged with the question embedding (weights 0.6/0.4); test: recall@50 on abstract golden questions improves by at least 15 points"
+  mechanism: "Changes query encoding: the query is translated into the index's own record shape before embedding"
+  example: "'Where is the onboarding friction?' generates rows like {step: 2, action: repeated_click, note: 'clicks anvil, no response'}; retrieval returns 44 rows of repeated-click behaviour at step 2 that the raw question missed"
+  cost: S
+  depends_on: "observation log schema fixed enough to generate rows in it"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Abstract studio questions get grounded in concrete behaviour rows instead of failing to match a fixed question"
+  shallow: false
+
+- id: retr-12
+  title: "A written routing rule for table-vs-retrieval: use SQL when the question maps to a closed field; use retrieval only when the filter selects under 5% of rows or under 2,000 rows; otherwise trigger backfill extraction"
+  level: L4
+  cell: {part: query-path, query-path: sql-over-closed-fields, question-type: how-many, mechanism-type: defer-to-query-time, latency-tier: under-2s, uncertainty-policy: abstain-below-coverage}
+  object: "memo.md item 2: three tiers (aggregate, retrieval, batch extraction)"
+  situation: "Studio asks 'how many players skipped the tutorial'; the planner has no rule and picks retrieval because 'skipped' is not a column name"
+  consequence: "A count comes from top-k retrieval, which cannot count; the number is wrong by an unknown amount"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'closed-field questions become aggregate queries over all players (instant); open-field questions retrieve matching observation rows'"
+  proposed: "Rule table: (a) field match by name or synonym -> SQL; (b) no field match AND estimated matching rows (from the filter count) under 2,000 -> retrieval with coverage line; (c) no field match AND matching rows over 2,000 AND question is how-many/find-players-who -> backfill extraction, answer 'ready in N minutes'; test: 0 counts produced from the retrieval path"
+  mechanism: "Changes the planner: a deterministic decision table keyed on field match and filter cardinality, logged with each answer"
+  example: "'How many players skipped the tutorial?' -> no field; filter (all players) = 500 sessions, 48,000 rows -> backfill 'tutorial_skipped: bool' over 500 sessions; the count 37/500 arrives in 6 minutes"
+  cost: S
+  depends_on: "exact filter counts from the store (retr-4) and the backfill path from memo.md item 2"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table answers counts only for pre-written questions; this routes every count question to a path that can actually count"
+  shallow: false
+
+- id: retr-13
+  title: "REFUSAL: do not answer how-many or find-players-who questions from the retrieval-then-LLM path at all; top-k retrieval has no recall guarantee and the count is a guess"
+  level: L4
+  cell: {part: query-path, query-path: retrieval-then-llm, question-type: find-players-who, evidence-form: recall-estimate, uncertainty-policy: abstain-below-coverage, mechanism-type: narrow-or-clarify-the-question}
+  object: "memo.md item 2 'open-field questions retrieve matching observation rows across players'"
+  situation: "Studio asks 'list every player who rage-quit in the tutorial'; retrieval returns 40 rows, the model lists 28 players, 61 actually did"
+  consequence: "Low willingness: a list with 46% recall presented as complete is the one wrong number that ends trust in the chatbot; the retrieval engineer refuses to ship this path for list and count questions"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists.'"
+  proposed: "Planner hard-blocks retrieval for question types how-many and find-players-who; those go to SQL (field exists) or backfill (field does not); the chatbot says 'this needs a full pass over 500 sessions, about 6 minutes' rather than answering from a sample"
+  mechanism: "Changes the planner's allowed (question-type, query-path) pairs; two pairs are forbidden"
+  example: "'Which players rage-quit the tutorial?' -> backfill field rage_quit_tutorial over all 500 sessions, answer with 61 player ids and clip timestamps after 6 minutes"
+  cost: S
+  depends_on: "backfill path (memo.md item 2)"
+  part: query-path
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "Same guarantee as the table (every player examined) for questions the table never had"
+  shallow: false
+
+- id: retr-14
+  title: "REFUSAL: do not embed whole 15-minute transcripts (roughly 2,500 to 4,000 tokens) as retrieval units; the embedding averages 15 minutes of play into one point and step-level questions cannot discriminate"
+  level: L3
+  cell: {part: store, representation: raw-transcript-only, granularity: video, query-path: retrieval-then-llm, effort: XS-days, mechanism-type: defer-to-query-time}
+  object: "spec.md item 2 'Each video is converted to a transcript' and item 3 'a structured table per video'"
+  situation: "The quickest path to 'retrieval' is one vector per existing transcript file; a question about step 3 matches videos that contain steps 1 through 5"
+  consequence: "Low willingness: every retrieval result is a 15-minute blob; the reading model gets 30 blobs (90,000 tokens) and the answer takes 40s; precision at the step level is near chance"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "spec.md: 'each video is capped at 15 minutes'"
+  proposed: "Minimum chunk discipline: no retrieval unit longer than 120s of session time or 400 tokens; the video-level transcript is kept only as the clip-expansion source"
+  mechanism: "A constraint on the store, not a component: unit size bounded"
+  example: "'What confused players at step 3?' over video-level vectors returns 30 videos containing 2.1 hours of play; over 90s windows it returns 30 windows containing 45 minutes, 28 of which are at step 3"
+  cost: S
+  depends_on: "nothing"
+  part: store
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "It is not better; it is the option that looks like retrieval and performs worse than the table on step questions"
+  shallow: false
+
+- id: retr-15
+  title: "Exhaustive filtered read mode: when the metadata filter selects under 6,000 rows, skip ANN entirely, read all matching rows in one long-context call, and label the answer 'complete'"
+  level: L4
+  cell: {part: query-path, query-path: map-reduce-over-raw, scope: query-time-defined-cohort, evidence-form: coverage-statement-n-of-m-players, latency-tier: under-30s, mechanism-type: defer-to-query-time}
+  object: "A-frame assumption 'a modern long-context multimodal model is available at ingestion; query-time budget is a few seconds'"
+  situation: "Question is scoped to step 3 and to players who exited within the tutorial: 61 players, about 12 rows each, 730 rows, 25,000 tokens"
+  consequence: "Top-k retrieval on 730 rows throws away 95% of a set that fits in one context window; the answer is sampled when it could be complete"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data'"
+  proposed: "Planner checks count(filter); under 6,000 rows (about 200,000 tokens) -> read everything in 1 to 4 calls; the coverage line reads 'all 730 matching observations from 61 players'; test: p95 under 25s for 6,000 rows"
+  mechanism: "Adds a query-path branch where retrieval degenerates to filter plus full read; ANN is used only above the threshold"
+  example: "'For the 61 players who quit during the tutorial, what happened at step 3?' reads all 730 step-3 rows for those players; the answer is complete, not sampled"
+  cost: S
+  depends_on: "exact filter counts (retr-4) and a 200k-token reading model"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Complete coverage of a cohort for a question nobody pre-wrote, at a latency the table never needed to beat"
+  shallow: false
+
+- id: retr-16
+  title: "Neighbour expansion on every hit: return chunk c-1 and c+1 on the session clock (including across the 15-minute file cut) so the reading model sees cause and effect"
+  level: L4
+  cell: {part: session-stitching, query-path: retrieval-then-llm, granularity: variable-length-moment-or-episode, question-type: timeline, effort: XS-days, mechanism-type: approximate-then-refine}
+  object: "spec.md 'Long multi-video sessions' listed as a known problem"
+  situation: "The hit chunk contains 'ugh, forget it' at 00:29:58; the cause (the tooltip never appeared) is in the chunk ending at 00:29:50 in the previous file"
+  consequence: "The model reads the effect without the cause and answers 'players express frustration' with no mechanism"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'Known problems named by the owner ... Long multi-video sessions.'"
+  proposed: "Retrieval response includes prev_chunk_id and next_chunk_id resolved on the session timeline; the reader receives triples; test: for 100 sampled hits within 10s of a file cut, 100% have the cross-file neighbour attached"
+  mechanism: "Changes the retrieval response: hits are expanded into 3-chunk windows using session-clock adjacency from retr-1"
+  example: "'What happens right before players give up at step 5?' hit at 00:29:58 arrives with the 00:28:30 to 00:29:50 chunk showing 'tooltip_visible=false, 4 clicks on locked slot'"
+  cost: S
+  depends_on: "retr-1 session-clock chunk adjacency"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table has no temporal adjacency; a per-video answer cannot say what preceded a quit at a file boundary"
+  shallow: false
+
+- id: retr-17
+  title: "Index t_to_session_end_s on every chunk so 'before they quit' questions are a numeric filter (t_to_session_end_s under 300) rather than a semantic guess"
+  level: L4
+  cell: {part: store, granularity: session, question-type: why, query-path: retrieval-then-llm, representation: timestamped-observation-log, subject-domain: onboarding-tutorial}
+  object: "spec.md: 'detecting churn in the tutorial and just after it'"
+  situation: "Studio asks what players were doing in the last 5 minutes before abandoning; the session end is only known after the last video is stitched"
+  consequence: "Without the derived field, 'before quitting' retrieves chunks containing the word 'quit' (the game's own Quit button OCR) from any point in the session"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  proposed: "At stitch time compute session_end_s = end of last video; each chunk gets t_to_session_end_s and is_final_step; planner maps 'before quitting / abandoning / leaving' to the filter t_to_session_end_s under 300 AND session_completed_tutorial=false"
+  mechanism: "Changes the store (one derived numeric field per chunk) and a planner synonym map"
+  example: "'What were tutorial churners doing in their last 5 minutes?' filter returns 410 chunks from 61 players; the reader reports 38 of 61 were on the crafting step, 19 on inventory"
+  cost: S
+  depends_on: "retr-1 session stitching with a known session end"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table knows per video whether churn signals appeared; it does not know what was on screen in the last 5 minutes of the session"
+  shallow: false
+
+- id: retr-18
+  title: "Contrast retrieval: run the same filtered query for churned and retained cohorts, hand the reader both sets labelled, and report which observed behaviours appear in one set and not the other"
+  level: L3
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, question-type: who-are-the-churners-segment-discovery, evidence-form: contrast-vs-baseline, scope: cohort, mechanism-type: auto-discover-without-question}
+  object: "spec.md: 'detecting churn in the tutorial'; A-frame 'studio's unknown questions'"
+  situation: "Studio asks 'what is different about players who churn at step 3'; a single retrieval over churners returns behaviours (repeated clicking) that retained players also show"
+  consequence: "The answer names a behaviour common to everyone as the cause of churn"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  proposed: "Two retrievals with identical text query and step filter, cohort A = tutorial_completed=false (61 players), cohort B = true (439 players), 30 rows each after per-player cap; reader instructed to list behaviours with counts per cohort; test: output lists at least 3 behaviours with A-rate and B-rate"
+  mechanism: "Changes the query path: a contrast question becomes two parallel retrievals plus a comparative reading prompt"
+  example: "'What is different about step-3 churners?' -> churners: 'opened crafting menu, closed within 5s' in 18/30 rows; retained: 2/30; the answer surfaces the menu-close pattern with both rates"
+  cost: M
+  depends_on: "a cohort label field (tutorial_completed) and retr-6 per-player cap"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The table can compare answer rates between cohorts only on pre-written questions; this contrasts free-text behaviour"
+  shallow: false
+
+- id: retr-19
+  title: "Clip-embedding index: one video-text embedding per 4-second clip, filterable by session and step, so a studio can search 'player hovering over a greyed-out button' or paste an example clip"
+  level: L3
+  cell: {part: frame-pipeline, representation: clip-or-frame-embeddings, modality: frame-embeddings, query-path: query-by-example-clip, build-or-buy: third-party-video-understanding-api, granularity: frame}
+  object: "spec.md: 'what is on screen is largely lost'"
+  situation: "A designer has one clip of a player stuck behind a locked door in the tutorial and wants the other 500 players' equivalents"
+  consequence: "Neither transcript rows nor OCR describe 'stands still facing a door'; the moment is unfindable by text"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'The owner's view: the transcript alone is not enough; what is on screen is largely lost.'"
+  proposed: "Ingestion: sample 1 clip per 4s (900 per hour of play), embed with a video-text model, store {session_id, player_id, t_session_start_s, step_id, v_clip}; query by text or by an uploaded clip's embedding; top 50 with per-player cap 1"
+  mechanism: "Adds a third index over the same session clock; query path gains query-by-example-clip"
+  example: "Designer drops a 6s clip of the locked-door stall; the index returns 50 clips from 50 players at step 4, 44 confirmed stalls on review"
+  cost: L
+  depends_on: "frames available for re-processing (A-frame assumption) and a video-text embedding API"
+  part: frame-pipeline
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "Finds visual moments that were never described in words by anyone"
+  shallow: false
+
+- id: retr-20
+  title: "Semantic cache keyed on (question embedding cosine over 0.92, identical filter set, index version); hit returns the stored retrieved row ids and answer in under 200ms, invalidated when the index version changes"
+  level: L4
+  cell: {part: query-path, query-path: semantic-cache-similar-question, latency-tier: sub-200ms-cached, mechanism-type: reuse-or-cache-prior-work, tenancy-and-deployment: logically-isolated-per-studio, moment-in-journey: steady-state-weekly}
+  object: "memo.md item 2 'cached as a new field'; spec.md 'Answering a studio's question must be fast'"
+  situation: "Three analysts at the same studio ask 'why do players quit at the crafting step' in slightly different words within one week"
+  consequence: "Three full retrieve-rerank-read runs (about 8s and 3 model calls each) for one answer; worse, three slightly different answers"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "memo.md: 'the result is cached as a new field, so the question set grows from real use'"
+  proposed: "Cache entry = {studio_id, q_embedding, filters, index_version, row_ids, answer, created_at}; lookup is a filtered vector search over the studio's own cache; the answer shows 'same as asked on Tuesday' with a link; no cross-studio lookup"
+  mechanism: "Adds a cache in front of the query path, scoped per studio"
+  example: "'Why do players quit at the crafting step?' asked Tuesday; Thursday's 'crafting step churn reasons?' scores 0.94 and returns the cached answer and the same 30 rows in 120ms"
+  cost: S
+  depends_on: "an index_version counter bumped on every ingestion batch"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table is a cache of pre-written questions; this caches the questions the studio actually asked"
+  shallow: false
+
+- id: retr-21
+  title: "Recall estimate on find-players-who answers: sample 200 rows from the non-retrieved set, label with the reading model, report recall as found / (found + estimated missed) with a 95% interval"
+  level: L4
+  cell: {part: evaluation, evidence-form: recall-estimate, question-type: find-players-who, uncertainty-policy: answer-with-ci-and-n, query-path: sampled-map-reduce-with-ci, latency-tier: under-30s}
+  object: "memo.md item 2 retrieval tier; B-perspectives ediscovery note 'retrieval-then-LLM without a recall estimate is indefensible'"
+  situation: "A player list produced by retrieval (allowed only in a pilot or when the studio opts in) has unknown completeness"
+  consequence: "The studio cannot tell whether 28 players is the whole set or a third of it"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "memo.md: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  proposed: "After retrieval, draw 200 uniform rows from filter minus retrieved; the model labels each relevant or not; estimated missed = positives/200 * size of the null set; answer shows 'found 28 players; estimated recall 55% (95% CI 41 to 69)'; test: the line appears on every find-players-who answer from the retrieval path"
+  mechanism: "Adds an evaluation step in the query path with a bounded extra cost of 200 row labels"
+  example: "'Which players mentioned motion sickness in the tutorial?' retrieval finds 28; null-set sample finds 6 positives in 200 of 47,000 rows -> about 1,400 missed rows, recall estimate 55%; the chatbot offers a full backfill"
+  cost: M
+  depends_on: "retr-4 exact filter counts and a cheap labelling model"
+  part: evaluation
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The table has 100% coverage but no notion of extraction recall; this gives a defendable number on the path that needs it"
+  shallow: false
+
+- id: retr-22
+  title: "Promote a retrieval query to a closed field when the same (filter, query) pair is run 3 or more times in 30 days by a studio: schedule a batch extraction over all sessions and route future asks to SQL"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, question-origin: learned-from-studio-usage, extraction-trigger: scheduled-batch, query-path: lazy-backfill-extraction, mechanism-type: precompute-more, schema-evolution: append-only-versioned-fields}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction ... cached as a new field, so the question set grows from real use'"
+  situation: "The memo promotes only questions that fail; questions that succeed via retrieval keep paying 8s and sampled coverage every time"
+  consequence: "The most-asked open questions never become exact counts"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'the result is cached as a new field, so the question set grows from real use'"
+  proposed: "Query log row = {studio_id, filter_hash, q_embedding, ts}; nightly job clusters queries at cosine over 0.9; any cluster with 3 or more runs in 30 days gets a generated field spec (name, type, prompt) and a backfill; the chatbot then answers from SQL with 'now an exact count'"
+  mechanism: "Changes the feedback loop: promotion is triggered by repetition, not by failure"
+  example: "'crafting step confusion' retrieved 4 times in 2 weeks -> field crafting_step_confusion: enum{none, minor, blocking} backfilled over 500 sessions overnight; next ask returns 112/500 blocking in 300ms"
+  cost: M
+  depends_on: "a query log and the backfill extraction path"
+  part: feedback-loop-from-query-log
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table's question list is written once; this one grows from what the studio keeps asking"
+  shallow: false
+
+- id: retr-23
+  title: "Retrieval golden set: 50 studio-style questions per game with hand-labelled relevant observation rows; recall@50 and nDCG@30 per question type gate every embedding-model or chunker change"
+  level: L4
+  cell: {part: evaluation, question-origin: hand-written-per-game, evidence-form: recall-estimate, extraction-trigger: on-model-upgrade, scope: all-players, effort: S-weeks}
+  object: "memo.md item 3 'accuracy against hand-labelled sessions' (which tests extraction, not retrieval)"
+  situation: "The embedding model is swapped for a cheaper one; nothing measures whether step-scoped questions still find their rows"
+  consequence: "Retrieval recall silently drops from 0.82 to 0.55 on what-said questions and the chatbot's answers get vaguer with no alarm"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  proposed: "Golden set = 50 questions x (filter, up to 40 relevant row ids) labelled from 20 sessions; CI job runs the retrieval path and blocks deploy if recall@50 drops more than 5 points on any question type"
+  mechanism: "Adds an evaluation artifact and a gate; separate from extraction accuracy"
+  example: "Question 'players confused by the crafting tutorial' has 37 labelled rows; after the chunker change (retr-2) recall@50 goes from 0.62 to 0.89; after a cheaper embedding model it goes to 0.51 and the deploy is blocked"
+  cost: M
+  depends_on: "20 hand-labelled sessions (memo.md item 3)"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table had no retrieval to test; this makes the new path's quality measurable before studios see it"
+  shallow: false
+
+- id: retr-24
+  title: "One index collection per studio, embedding model and version pinned per collection, no cross-studio ANN or shared cache; cross-studio benchmarks only through the closed-field aggregate path"
+  level: L3
+  cell: {part: tenancy-access-control, tenancy-and-deployment: logically-isolated-per-studio, query-path: retrieval-then-llm, scope: cross-studio-benchmark, mechanism-type: transfer-across-games, user-segment: jev-internal-ops}
+  object: "spec.md: 'Buyers are gaming studios'; B-perspectives studio-security-reviewer 'cross-studio leakage through ... shared cache'"
+  situation: "A single multi-tenant vector index with a studio_id filter; a filter bug or a semantic-cache hit returns studio A's pre-release tutorial quotes to studio B"
+  consequence: "One leaked quote about an unannounced game is a contract-ending event"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  proposed: "Collection name = studio_id; the retrieval client takes the collection from the authenticated session, not from a request parameter; the semantic cache (retr-20) is inside the collection; test: a fuzzed request with a foreign studio_id returns 0 rows in 100% of 10,000 tries"
+  mechanism: "Changes tenancy of the store and the cache: physical collection per studio rather than a filter"
+  example: "Studio B asks 'why do players quit the crafting step'; the cache lookup runs only inside collection studio_B and cannot see studio A's cached crafting answer"
+  cost: S
+  depends_on: "studio identity on every request"
+  part: tenancy-access-control
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table was per game and inherently isolated; this keeps that property when retrieval and caching are added"
+  shallow: false
+
+- id: retr-25
+  title: "embedding_model_version on every chunk; after a model upgrade, re-embed lazily (the first query that touches a session triggers its re-embed) and eagerly for the 50 most-queried sessions"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: model-upgrade-reextract, extraction-trigger: on-model-upgrade, representation: transcript-chunks-with-embeddings, mechanism-type: reuse-or-cache-prior-work, moment-in-journey: steady-state-weekly}
+  object: "memo.md item 2 'cached as a new field'; A-frame assumption 'original videos remain available for re-processing'"
+  situation: "A new embedding model is adopted; 500 sessions x 48,000 chunks per game x 40 games must be re-embedded or the index mixes two incompatible vector spaces"
+  consequence: "Either a full re-embed of every game before any query runs, or mixed-space queries where old chunks never rank"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md: 'a one-time batch extraction over all sessions whose result is cached as a new field'"
+  proposed: "Chunk payload gets embedding_model_version; queries filter to the current version; a session with any stale chunk is re-embedded on first touch (about 3s for 100 chunks) and its answer is delayed with 'refreshing index'; a nightly job re-embeds the 50 sessions with the most query hits; test: no query mixes versions"
+  mechanism: "Changes schema evolution of the store: version-tagged vectors with lazy plus prioritised eager migration"
+  example: "Day after the upgrade, 'what confused players at the crafting step?' touches 61 churner sessions; 18 are stale and re-embedded inline (12s), the rest were done overnight"
+  cost: M
+  depends_on: "a chunk store that keeps text so re-embedding needs no re-transcription"
+  part: schema-evolution
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table had no vectors to migrate; this stops the retrieval path from silently degrading at each model change"
+  shallow: false
+
+- id: retr-26
+  title: "Index silence as chunks: any 30s or longer span with no speech becomes a retrievable record carrying only screen state, OCR and input-event counts, so silent stalls are findable"
+  level: L3
+  cell: {part: ingestion-extraction, modality: silence-or-absence-of-speech, representation: time-series-signals-affect-pace-silence, granularity: variable-length-moment-or-episode, query-path: retrieval-then-llm, subject-domain: onboarding-tutorial}
+  object: "spec.md 'Each video is converted to a transcript' (speech-first) and B-perspectives playtest-ops 'Silent players produce empty transcripts'"
+  situation: "A transcript-derived chunker produces no chunk for a player who says nothing for 4 minutes while failing step 3"
+  consequence: "The quietest failures are absent from the index, and quiet players are over-represented among churners who leave without comment"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'The transcript loses visual information.'"
+  proposed: "Chunker emits a silence record {session_id, t_start, t_end, duration_s, step_id, screen_state_mode, ocr_text, click_count, idle_s} for each silent span of 30s or more; text for embedding is a rendered sentence 'silent 240s on step 3, inventory screen, 11 clicks, 180s idle'; test: a query 'silent stall at step 3' returns at least 90% of hand-labelled silent stalls"
+  mechanism: "Changes ingestion: absence of speech produces a record rather than nothing"
+  example: "'Which tutorial churners stalled silently?' returns 23 silence records from 23 of the 61 churners, mean 212s silent on step 3 with the inventory screen open"
+  cost: M
+  depends_on: "frame pipeline screen state per window (memo.md item 1)"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table is built from transcripts; a silent video answers every fixed question with 'not observed'"
+  shallow: false
+
+- id: retr-27
+  title: "Learned sparse retrieval (SPLADE-style term expansion) instead of plain BM25 for the lexical side, so 'workbench', 'crafting bench' and 'that table thing' expand to shared terms per game"
+  level: L3
+  cell: {part: query-path, representation: inverted-full-text-index, query-path: full-text-keyword-search, build-or-buy: open-source-component, reuse-scope-of-extraction: game-specific, effort: S-weeks}
+  object: "memo.md 'short open fields'; spec.md 'what is on screen is largely lost' (UI labels in OCR carry the game's own vocabulary)"
+  situation: "Players call the crafting station five different things; the studio's question uses the design-doc name 'Artificer's Bench', which no player says"
+  consequence: "BM25 matches 9 of 57 relevant rows; dense matches 31; the fusion still misses 20 rows where only slang was used"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "memo.md: 'with closed enum fields and short open fields'"
+  proposed: "Replace the BM25 index with a learned sparse encoder fine-tuned 1 epoch on the game's OCR labels plus 200 player paraphrases mined from transcripts; test: lexical-side recall@200 on the golden set rises by at least 10 points over BM25"
+  mechanism: "Changes the lexical index: expanded term weights per document and per query"
+  example: "'What do players say at the Artificer's Bench step?' now matches rows with 'workbench', 'table thing', 'crafting place'; 49 of 57 relevant rows retrieved"
+  cost: M
+  depends_on: "retr-3 hybrid pipeline and OCR labels per game"
+  part: query-path
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table's question author had to know the player vocabulary in advance; this learns it from the sessions"
+  shallow: false
+
+- id: retr-28
+  title: "Progressive answer: stream a first answer from the reranked top-30 within 2s, then keep reading the full filtered set in the background and replace the answer with a 'complete' version within 30s"
+  level: L4
+  cell: {part: chatbot-ui, query-path: progressive-answer-then-refine, latency-tier: progressive-streaming, uncertainty-policy: give-range-then-refine, mechanism-type: approximate-then-refine, delivery-surface: chatbot}
+  object: "spec.md: 'Answering a studio's question must be fast' against memo.md 'the model reads only those'"
+  situation: "A cohort question matches 2,400 rows; reading all takes 20s, which the studio experiences as a hang"
+  consequence: "Either the answer is fast and sampled, or complete and slow; the owner's constraint forces sampled"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern. Answering a studio's question must be fast.'"
+  proposed: "Response has two phases: phase 1 at under 2s from 30 rows, labelled 'preliminary, 30 of 2,400 read'; phase 2 replaces it when the full read finishes, labelled 'complete, 2,400 of 2,400 read'; numbers in phase 1 are shown as ranges; test: phase 2 arrives in under 30s for 2,400 rows"
+  mechanism: "Changes the chatbot contract: an answer is a stream with a coverage counter, not a single message"
+  example: "'How do players react to the crafting tutorial?' phase 1 at 1.8s: 'roughly 1 in 3 of the first 30 observations is negative'; phase 2 at 22s: '31% negative across 2,400 observations from 412 players'"
+  cost: M
+  depends_on: "retr-15 exhaustive read and a streaming chat UI"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Keeps the table's speed for the first answer and reaches the table's completeness for the final one"
+  shallow: false
+
+- id: retr-29
+  title: "Unknown-unknowns retrieval: cluster the embeddings of friction-tagged chunks per tutorial step and return the 5 largest clusters with sizes and a representative row each, with no question typed"
+  level: L3
+  cell: {part: query-path, question-type: what-surprised-unknown-unknowns, query-path: automatic-contrast-cohort-diff, question-origin: emergent-topic-clustering-of-player-speech, mechanism-type: auto-discover-without-question, delivery-surface: dashboard-standard-report}
+  object: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured'"
+  situation: "The studio does not know what to ask about step 3; retrieval needs a query"
+  consequence: "Everything that nobody asked about stays unseen, which is the owner's stated problem"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured.'"
+  proposed: "Nightly: for each step_id, take chunks with friction_signal != none, HDBSCAN on embeddings (min cluster 8), emit {step_id, cluster_id, n_rows, n_players, medoid_row_id, label from a 1-call summariser}; surface as 'top 5 things players struggled with at step 3' on the dashboard with clip links"
+  mechanism: "Reuses the retrieval index for unsupervised grouping; output is a precomputed report, not an answer to a typed question"
+  example: "Step 3 clusters: 'cannot find the anvil' (71 players), 'drag gesture not understood' (44), 'skips the tutorial text' (29), 'camera stuck' (12), 'controller disconnect' (9)"
+  cost: M
+  depends_on: "friction_signal field on rows and the embedding index"
+  part: query-path
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Shows the studio the questions they should ask; the table only answers the ones written"
+  shallow: false
+
+- id: retr-30
+  title: "Every retrieved row in a chatbot answer links to a clip (session_id, t_session_start_s minus 10s, plus 20s) resolved to the right 15-minute file and offset at click time"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: clip, query-path: clip-lookup, delivery-surface: clip-reel, user-segment: game-designer, latency-tier: under-2s}
+  object: "memo.md item 1 'quote with timestamp as evidence'; spec.md multi-video sessions"
+  situation: "The answer cites 'player 212 at 00:31:40' but the designer must work out which of 8 files and which offset that is"
+  consequence: "Evidence that takes 2 minutes to open is evidence nobody opens"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "Clip resolver maps session clock to (video_index, offset_s) using the stitch table; the chatbot renders a 30s clip per cited row; test: 100% of cited rows resolve to a playable clip in under 1s"
+  mechanism: "Changes the UI and adds a resolver over the session-stitch table"
+  example: "'Show me players confused at the crafting step' returns 10 rows each with a 30s clip starting 10s before the cited utterance"
+  cost: S
+  depends_on: "retr-1 stitch table with per-video offsets"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table's answers are options with no pointer into the video"
+  shallow: false
+
+- id: retr-31
+  title: "Query-time alias expansion from the per-game vocabulary map: the studio's design-doc term is expanded into the game's player-side aliases before the lexical search"
+  level: L3
+  cell: {part: query-path, representation: common-data-model-with-per-game-vocab-map, question-origin: onboarding-interview-with-studio, query-path: full-text-keyword-search, reuse-scope-of-extraction: game-specific, moment-in-journey: game-onboarding-day-0}
+  object: "spec.md 'written per game target'; B-perspectives clinical-data-abstraction-lead 'each game's local names mapped onto them'"
+  situation: "At onboarding the studio provides the tutorial step names and UI labels; players use different words"
+  consequence: "Design-doc vocabulary in questions produces low lexical recall until retr-27 has data to learn from"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'a fixed set of questions with options, written per game target'"
+  proposed: "Per-game alias table {canonical_term, aliases[], source: studio | mined}; mined aliases added weekly from co-occurrence with the OCR label in the same chunk; the query rewriter ORs the aliases into the lexical query; test: alias table has at least 3 aliases per tutorial step after 100 sessions"
+  mechanism: "Changes the query path: a rewrite step driven by a small per-game table that starts from the onboarding interview"
+  example: "'Artificer's Bench' expands to ('artificer', 'workbench', 'crafting table', 'anvil thing'); lexical recall on that question goes from 9 to 41 of 57 rows"
+  cost: S
+  depends_on: "a per-game canonical step and UI label list from onboarding"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Lets day-0 questions in studio vocabulary hit player vocabulary without rewriting the question set"
+  shallow: false
+
+- id: retr-32
+  title: "REFUSAL: no LLM listwise reranking of more than 40 candidates at query time; a 200-candidate listwise pass costs 25,000 tokens and 6 to 10s per question"
+  level: L4
+  cell: {part: cost-governance, query-path: retrieval-then-llm, latency-tier: under-2s, mechanism-type: defer-to-query-time, build-or-buy: build-in-house, effort: XS-days}
+  object: "spec.md: 'Answering a studio's question must be fast'"
+  situation: "A prototype replaces the cross-encoder (retr-5) with 'ask the big model to pick the best 30 of 200' because it scores higher offline"
+  consequence: "Low willingness: p95 goes from 1.4s to 9s and the per-question cost rises 12x; the studio stops asking follow-ups"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern. Answering a studio's question must be fast.'"
+  proposed: "Policy: cross-encoder to 30 (under 300ms); LLM reranking only over at most 40 candidates and only when a question is tagged as a deep-dive by the user; the budget is enforced as a hard cap in the planner"
+  mechanism: "A constraint on the query path, enforced by the planner's candidate count limit"
+  example: "'Why do players quit the crafting step?' stays at 1.4s with the cross-encoder; a user-tagged deep-dive on the same question allows an LLM pass over 40 and returns in 5s"
+  cost: S
+  depends_on: "retr-5"
+  part: cost-governance
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Keeps the retrieval path within the table's latency class"
+  shallow: false
+
+- id: retr-33
+  title: "Export the chunk index (text, payload fields, embeddings, model version) as partitioned Parquet keyed by the studio's own player id, so a studio data team can run retrieval in their warehouse"
+  level: L3
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, tenancy-and-deployment: export-only-no-hosting, representation: transcript-chunks-with-embeddings, schema-evolution: append-only-versioned-fields}
+  object: "spec.md chatbot as the only studio interface; B-perspectives studio-data-team-rejector 'raw observations exported into their warehouse'"
+  situation: "A studio with a data team wants to join the observation chunks to their telemetry and use their own vector search"
+  consequence: "Without export they re-transcribe the sessions themselves and JEV is a transcription vendor"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  proposed: "Nightly Parquet drop partitioned by game_id/ingest_date with columns {studio_player_id, session_id, chunk_idx, t_session_start_s, t_session_end_s, step_id, text, ocr_text, screen_state, embedding float32[1024], embedding_model_version, schema_version}; new columns are appended, never renamed; test: a Snowflake VECTOR_COSINE_SIMILARITY query over the drop reproduces the chatbot's top 30 for 50 golden questions with overlap at least 0.8"
+  mechanism: "Adds an export surface over the store; the index becomes a dataset the studio can query without JEV's chatbot"
+  example: "Studio joins chunks at step 3 with their own 'tutorial_abandon' telemetry event and runs 'what did abandoners say in the last 5 minutes' in their warehouse"
+  cost: M
+  depends_on: "a stable studio_player_id mapping and retr-25 version fields"
+  part: export-integration
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table is JEV's closed interface; the export makes the richer representation usable by the studio's own tools"
+  shallow: false

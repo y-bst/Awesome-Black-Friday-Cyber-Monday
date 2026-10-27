@@ -1,0 +1,713 @@
+- id: analyst-1
+  title: "Onboarding interview captures the analyst's 30 real questions as a seed bank, each tagged with answer type (number / list / clip / quote) and the denominator it expects, before any ontology runs"
+  level: L3
+  cell: {part: question-generation, question-origin: onboarding-interview-with-studio, moment-in-journey: game-onboarding-day-0, user-segment: studio-analyst, evidence-form: count-with-denominator, mechanism-type: narrow-or-clarify-the-question, effort: XS-days}
+  object: "spec.md Constraints: 'Buyers are gaming studios. Their questions are not known in advance.'; memo.md item 3 'coverage of real studio questions'"
+  situation: "Day 0 for a new game; the analyst already has a list of questions from the last playtest report (step completion, stall points, first purchase, crash count) that nobody at JEV has asked for"
+  consequence: "Ontology-generated questions are judged against 30 real ones from day 0 instead of after the first cohort; the analyst's first chatbot session returns answers to questions they wrote themselves"
+  p_typical: 0.30
+  grounded: quote
+  evidence: "memo.md: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  proposed: "A 45-minute onboarding form: question text, answer_type enum {count, pct, list, clip, quote, duration}, denominator (players / sessions / players-who-reached-step), priority 1-3"
+  shallow: false
+  mechanism: "Question-generation stage takes the 30 seed rows as required coverage; each seed must map to at least one generated field or is flagged 'uncovered' on the onboarding report"
+  example: "Seed Q7 'what % of players quit before the first combat' maps to field tutorial.step_reached (closed enum) with denominator = all players; Q19 'show me players confused by the crafting UI' maps to an open field friction.crafting_quote needing a clip"
+  cost: S
+  depends_on: "nothing"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table was written by JEV per game target; this starts from the buyer's own question list and measures coverage against it"
+
+- id: analyst-2
+  title: "Per-player step-funnel table (player_id, step_id, reached_at, completed_at, quit_here bool, attempts int) built at ingestion so 'what % reached step N' is a GROUP BY under 2 s"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: tutorial-step, query-path: sql-over-closed-fields, question-type: how-many, latency-tier: under-2s, scope: all-players, evidence-form: count-with-denominator}
+  object: "spec.md item 3: 'The targets are mostly detecting churn in the tutorial and just after it. The answers form a structured table per video.'"
+  situation: "Analyst asks 'how many of the 500 players reached the boss fight at step 8 and how many quit at step 3?' and the per-video table has no per-step row, only per-video MCQ answers"
+  consequence: "Funnel questions return a table of 8 rows with reached / completed / quit counts and the denominator 500 in one query; today the chatbot has to reconcile multiple per-video answers per player"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "spec.md: 'a question over, say, 500 players is fast. Reading 500 transcripts per question was too slow'"
+  proposed: "Table step_state(player_id, session_id, step_id, reached_at_ms, completed_at_ms, quit_here, attempts, evidence_video_id, evidence_offset_ms)"
+  shallow: false
+  mechanism: "Ingestion runs a step detector over frames plus transcript across all videos of the session, emitting one state-transition row per (player, step); the step list comes from the game's tutorial step vocabulary (analyst-16)"
+  example: "500 players: step 3 reached 471, completed 362, quit_here 94 (20.0% of reached); analyst pastes the 8-row funnel into the Monday deck"
+  cost: M
+  depends_on: "tutorial step vocabulary per game; session stitching so a step that spans video 2 and 3 is one row"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "One row per player per step instead of one MCQ answer per video, so funnel maths has a correct denominator"
+
+- id: analyst-3
+  title: "Every count answer carries the coverage line 'n of m players had this field populated' and the denominator used, rendered as a fixed footer, not prose"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: coverage-statement-n-of-m-players, uncertainty-policy: answer-with-ci-and-n, question-type: how-many, user-segment: studio-analyst, delivery-surface: chatbot, mechanism-type: narrow-or-clarify-the-question}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Analyst asks 'what % of players used the dodge button in the tutorial' and the dodge field was only extracted for the 212 players ingested after the field was added"
+  consequence: "Answer reads '41% (87 of 212 players with field; 288 of 500 not yet extracted)' instead of '41%'; the analyst does not put a number from 212 players into a 500-player claim"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "memo.md: 'result is cached as a new field, so the question set grows from real use' (implies fields with partial coverage of history)"
+  proposed: "Answer footer template: 'count / denominator (pct) | field coverage n/m | extracted by schema vX on date'"
+  shallow: false
+  mechanism: "Query planner computes coverage = rows with non-null field over rows in the cohort for every aggregate and injects it into the response template; the chatbot cannot emit a percentage without it"
+  example: "'Stalled >60 s at step 3: 94 of 471 who reached step 3 (20.0%); step field coverage 500/500'"
+  cost: S
+  depends_on: "per-field extraction coverage tracked in the store (schema version and extracted_at per row)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no coverage concept because every video gets every question; growing fields need one"
+
+- id: analyst-4
+  title: "'Find players who X' returns a per-player list with the studio's own player_id, session date, and one evidence timestamp each, downloadable as CSV for a join to retention data"
+  level: L4
+  cell: {part: export-integration, question-type: find-players-who, evidence-form: per-player-list, delivery-surface: warehouse-share-or-export, scope: all-players, modality: player-profile-metadata, user-segment: studio-analyst}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "Analyst asks 'which players never opened the inventory during the tutorial' and wants to check their D7 retention in the studio's warehouse"
+  consequence: "The list of 63 player_ids lands in the analyst's spreadsheet in one click; without it they retype IDs from chat text or give up on the join"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'whether game telemetry is joined, who at the studio asks and what they ask'"
+  proposed: "Every list answer has a 'Download CSV' control: columns studio_player_id, session_id, session_date, matched_field, evidence_video_id, evidence_offset_ms"
+  shallow: false
+  mechanism: "Ingestion stores the studio player_id passed with the upload as a first-class key; the planner's list queries project it; the UI renders a CSV export from the same result set"
+  example: "63 players never opened inventory; analyst joins to retention table and finds D7 retention 18% vs 34% for the rest"
+  cost: S
+  depends_on: "studio player_id captured at upload (spec.md leaves session-to-player linking unspecified)"
+  part: export-integration
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table answers per video; this returns the players, keyed so the studio can join"
+
+- id: analyst-5
+  title: "Clip montage of 5 examples for any friction claim: each observation row stores video_id and start/end offsets so 'show me players stuck at the crafting step' plays 5 clips of 20 s each"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: clip-montage-n-examples, query-path: clip-lookup, question-type: what-happened, granularity: variable-length-moment-or-episode, latency-tier: under-2s, user-segment: studio-analyst}
+  object: "memo.md item 1: 'quote with timestamp as evidence'; spec.md item 1 'each video is capped at 15 minutes'"
+  situation: "Analyst has the number '94 players stalled at step 3' and the designer in the meeting asks 'stuck how?'"
+  consequence: "Five clips play inside the answer in under 2 s; the analyst does not scrub through 94 fifteen-minute videos to find the moments"
+  p_typical: 0.30
+  grounded: quote
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session ... quote with timestamp as evidence'"
+  proposed: "Observation row fields video_id, t_start_ms, t_end_ms; clip server cuts [t_start - 5 s, t_end + 5 s]; montage picks 5 rows by random sample, not top-confidence"
+  shallow: false
+  mechanism: "Every observation row carries video and offset; the clip endpoint returns a signed URL per row; the chatbot renders 5 thumbnails under any count whose rows have offsets"
+  example: "'Stuck at crafting step: 94 players' → 5 clips: 3 show players tapping the locked recipe slot, 2 show players leaving the menu and returning"
+  cost: M
+  depends_on: "original videos retained and addressable by video_id (A-frame assumption 1)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table stores an option letter per video with no offset, so no clip can be cut from it"
+
+- id: analyst-6
+  title: "Time-in-step distribution per step (p50 / p90 / max seconds, players over 120 s) computed at ingestion from step_state rows, answering 'how long do players spend on step 3'"
+  level: L4
+  cell: {part: store, question-type: how-long, representation: olap-cube-materialized-views, granularity: tutorial-step, query-path: precomputed-aggregate, evidence-form: chart, latency-tier: under-2s}
+  object: "spec.md item 3: 'fixed set of questions with options' (an MCQ cannot store a duration)"
+  situation: "Analyst asks 'how long does step 3 take?' and the fixed table has 'did the player struggle at step 3: yes/no'"
+  consequence: "Answer is a histogram with p50 48 s, p90 190 s, 61 players over 120 s; the analyst sets the design target at p90 under 90 s"
+  p_typical: 0.20
+  grounded: quote
+  evidence: "spec.md: 'The transcript is run through a fixed set of questions with options'"
+  proposed: "Materialised view step_duration_stats(game, build, step_id, n, p50_s, p90_s, max_s, over_120s_count) refreshed on each ingestion"
+  shallow: false
+  mechanism: "Derived from step_state completed_at - reached_at per player; view refreshed per batch; chatbot maps 'how long' questions on a known step to the view"
+  example: "Step 3 (open the map): p50 48 s, p90 190 s, 61 of 471 over 120 s; chart attached"
+  cost: S
+  depends_on: "analyst-2 step_state table"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Durations are numeric and distributional; the MCQ table only has a yes/no 'struggled'"
+
+- id: analyst-7
+  title: "Pre/post comparison keyed on build version: 'did stall at step 3 drop after build 1.3.2' answers with both cohorts' counts, denominators and a difference with 95% CI"
+  level: L4
+  cell: {part: query-path, question-type: did-the-fix-work-pre-post, scope: build-version-pair, modality: build-version-metadata, moment-in-journey: new-build-version, evidence-form: contrast-vs-baseline, uncertainty-policy: answer-with-ci-and-n}
+  object: "spec.md Unspecified: 'how videos of one session are linked' (no build version field is named anywhere)"
+  situation: "Studio ships a tutorial fix; 120 new players are recorded on 1.3.2; analyst asks whether the step-3 stall rate moved"
+  consequence: "Answer: '20.0% (94/471) on 1.3.1 vs 11.7% (14/120) on 1.3.2, difference -8.3 points, 95% CI -15.1 to -1.5'; without a build field the two cohorts are mixed into one number"
+  p_typical: 0.20
+  grounded: inferred
+  evidence: "spec.md Constraints: 'Their questions are not known in advance' and no version metadata in the pipeline description"
+  proposed: "Required upload metadata build_version; planner recognises compare-versions phrasing and emits two-cohort aggregate with Wilson CI on the difference"
+  shallow: false
+  mechanism: "Session row stores build_version from the upload manifest; planner template for 'before/after/since build X' splits the cohort and computes two proportions"
+  example: "Stall at step 3: 1.3.1 20.0% (n=471) vs 1.3.2 11.7% (n=120); CI excludes zero; analyst reports the fix worked"
+  cost: S
+  depends_on: "build_version captured per session at upload"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Per-video table has no build key, so version comparison requires manual date filtering"
+
+- id: analyst-8
+  title: "Monday digest: the analyst pins up to 10 questions; each Monday 07:00 the cached answers re-run over the week's new sessions and arrive as one email with deltas vs last week"
+  level: L3
+  cell: {part: feedback-loop-from-query-log, delivery-surface: scheduled-digest, query-path: cached-prior-answer, moment-in-journey: steady-state-weekly, mechanism-type: push-instead-of-pull, latency-tier: push-no-query, user-segment: studio-analyst}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "Analyst asks the same 8 questions every Monday for the weekly playtest report; the chatbot has no memory of them"
+  consequence: "The report numbers arrive before the analyst opens the chatbot; a question typed 40 times is typed once"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast.' (fastest is a question never typed)"
+  proposed: "Pin control on any answer; digest table: question, this week, last week, delta, n this week; link to the clip montage"
+  shallow: false
+  mechanism: "Pinned questions are stored as planner plans (not text); scheduler re-executes plans against sessions ingested in the last 7 days and the full history, emails the table"
+  example: "Digest row: 'Stall at step 3: 14.1% (n=78) vs 20.0% last week, delta -5.9'"
+  cost: S
+  depends_on: "planner plans are serialisable and re-runnable (memo.md item 2 query planner)"
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table requires a human to query it each week; this ships the weekly numbers"
+
+- id: analyst-9
+  title: "'How many players said something like \"I don't know what to do\"' answered by keyword plus embedding match over utterance rows with a count, denominator of players who spoke, and 5 verbatim quotes"
+  level: L4
+  cell: {part: query-path, question-type: prevalence-of-quoted-sentiment, query-path: full-text-keyword-search, representation: inverted-full-text-index, modality: speech-transcript, evidence-form: quote-with-timestamp, granularity: utterance}
+  object: "spec.md item 2: 'Each video is converted to a transcript'; memo.md item 1 'utterance' observation"
+  situation: "Analyst heard two players say 'where do I go' in a watched session and wants the prevalence across 500"
+  consequence: "Answer: '137 of 412 speaking players (33%) said a confusion phrase in the tutorial; 5 quotes with timestamps'; today this phrase is not a fixed question so it is unanswerable"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md Known problems: 'The question set is small, so most of what is in the video and transcript is never captured.'"
+  proposed: "Utterance table with full-text index plus embedding column; planner runs keyword OR semantic match (cosine > 0.82) then groups by player"
+  shallow: false
+  mechanism: "Ingestion writes every utterance as a row (player, video, offset, text, embedding); planner recognises quoted-phrase questions and runs hybrid match with per-player dedupe"
+  example: "'I don't know what to do' family: 137/412 speaking players; top steps step 3 (71), step 5 (40)"
+  cost: M
+  depends_on: "utterance-level rows with offsets (memo.md item 1)"
+  part: query-path
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Any phrase is countable; the fixed table only counts phrases JEV anticipated"
+
+- id: analyst-10
+  title: "Abstain-below-coverage: when the matching field exists for under 80% of the cohort, the chatbot refuses the number and offers 'backfill 288 sessions, estimated 35 minutes' with a notify-when-done button"
+  level: L4
+  cell: {part: query-path, uncertainty-policy: abstain-below-coverage, query-path: lazy-backfill-extraction, schema-evolution: lazy-backfill-on-demand, latency-tier: minutes, delivery-surface: slack-jira-integration, user-segment: studio-analyst}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "A field added last week covers 212 of 500 players; analyst asks a question that needs it for all 500"
+  consequence: "Analyst sees 'coverage 42%, backfill?' instead of a number computed on a biased recent subset; the backfill result arrives in Slack 35 minutes later"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'one-time batch extraction over all sessions whose result is cached as a new field'"
+  proposed: "Coverage threshold 80% configurable per studio; backfill job with ETA = sessions x median extraction seconds; Slack message with the answer link"
+  shallow: false
+  mechanism: "Planner checks field coverage over the cohort before aggregating; below threshold it returns an abstain card with a backfill action instead of the aggregate"
+  example: "'Used dodge in tutorial?' coverage 212/500 → abstain → backfill queued → 35 min later: '38% (190/500)'"
+  cost: S
+  depends_on: "per-field coverage tracking (analyst-3); backfill job runner (memo.md item 2)"
+  part: query-path
+  ingest_cost: L
+  query_cost: M
+  better_than_fixed_table: "The fixed table silently has 100% coverage of few fields; this makes growing fields safe to query"
+
+- id: analyst-11
+  title: "REFUSED: map-reduce over raw transcripts per question at 3-20 minutes each; the analyst asks 20-30 questions in a sitting and will not wait an hour of queue time"
+  level: L3
+  cell: {part: query-path, query-path: map-reduce-over-raw, representation: raw-transcript-only, latency-tier: minutes, user-segment: studio-analyst, mechanism-type: defer-to-query-time, question-type: how-many}
+  object: "spec.md item 4: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists.'"
+  situation: "Architecture proposal: skip the store, run a long-context model over all 500 transcripts for each question"
+  consequence: "Analyst refuses: a 30-question session becomes 1.5-10 hours; they return to reading 10 transcripts by hand. Low willingness: 1/5"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data'"
+  proposed: "Keep map-reduce only as the backfill mechanism behind analyst-10, never as the interactive path"
+  shallow: false
+  mechanism: "Query-time fan-out of the question over 500 session transcripts, reduce step merges counts"
+  example: "'How many quit at step 3' over 500 sessions x 4 videos = 2,000 model calls, 6 minutes at 5 calls/s; the follow-up 'and how many of those were on mobile' costs another 6 minutes"
+  cost: L
+  depends_on: "nothing"
+  part: query-path
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "Worse for the analyst: the fixed table answers in seconds; this is the slow path the table was built to replace"
+
+- id: analyst-12
+  title: "REFUSED unless thresholded: push alerts about 'anomalies nobody asked about' are ignored by the analyst unless they are bound to a metric the analyst pinned and a threshold they typed"
+  level: L3
+  cell: {part: feedback-loop-from-query-log, query-path: push-alert-no-query, delivery-surface: alert, mechanism-type: push-instead-of-pull, question-type: what-surprised-unknown-unknowns, user-segment: studio-analyst, uncertainty-policy: always-answer}
+  object: "spec.md Constraints: 'Their questions are not known in advance.'"
+  situation: "System emails 'sentiment at step 5 dropped 4 points this week' twelve times a week on cohorts of 20-40 players"
+  consequence: "Analyst mutes the channel in week 2. Willingness 2/5 for open-ended alerts, 4/5 for 'alert me when stall at step 3 exceeds 25% on n >= 50'"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast' (the owner frames value as answering, not alerting)"
+  proposed: "Alert creation only from a pinned question: metric, comparator, threshold, minimum n; no system-generated alerts without a pin"
+  shallow: false
+  mechanism: "Alerts are a property of pinned planner plans (analyst-8), evaluated after each ingestion batch; the unsupervised anomaly detector is not wired to a channel"
+  example: "Pinned 'stall at step 3' with threshold 25% and min n 50 fires once in build 1.3.3 when 31% (19/61) stall"
+  cost: S
+  depends_on: "analyst-8 pinned plans"
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table never alerts; a pinned-threshold alert does, without the noise of open-ended anomaly mail"
+
+- id: analyst-13
+  title: "REFUSED: always-answer policy; after one percentage the analyst cannot reproduce in the raw table they stop citing the chatbot in reports"
+  level: L3
+  cell: {part: chatbot-ui, uncertainty-policy: always-answer, evidence-form: none, user-segment: studio-analyst, question-type: how-many, moment-in-journey: renewal-review, delivery-surface: chatbot}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "Chatbot answers 'about 30% of players struggled with the map' from an open-field retrieval of 40 rows, with no n and no rows shown"
+  consequence: "Analyst checks against their own hand count of 20 sessions, finds 10%, and tells the producer the tool is unreliable; renewal is at risk. Willingness 1/5"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those' (no mention of n or abstention)"
+  proposed: "Every number must have count, denominator and a link to the rows; otherwise the chatbot returns 'I can show examples but not a rate'"
+  shallow: false
+  mechanism: "Response validator rejects any percentage or 'most/many/few' quantifier in the model's text that is not backed by a planner aggregate with n"
+  example: "Retrieval of 40 matching rows from 500 players becomes 'at least 40 of 500 players (8%); retrieval, not exhaustive' instead of 'about 30%'"
+  cost: S
+  depends_on: "nothing"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's counts are exact; the new open paths must not be less trustworthy than the table they replace"
+
+- id: analyst-14
+  title: "REFUSED as sole surface: chat-only answers; every numeric answer needs a table and chart that paste into a slide, because the analyst's output is a deck, not a conversation"
+  level: L3
+  cell: {part: chatbot-ui, delivery-surface: dashboard-standard-report, evidence-form: chart, user-segment: studio-analyst, question-type: how-many, mechanism-type: narrow-or-clarify-the-question, effort: XS-days}
+  object: "spec.md item 4: 'A chatbot for the gaming studio'"
+  situation: "Analyst gets the 8-step funnel as a paragraph of prose and has to retype 16 numbers into a bar chart"
+  consequence: "Chat prose is screenshot-ugly and retyping introduces errors; willingness for chat-only 2/5, for chat-with-table-and-PNG 5/5"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'who at the studio asks and what they ask'"
+  proposed: "Any aggregate answer renders a sortable table plus a 'Copy as table' and 'Download PNG chart' control; prose is one line above the table"
+  shallow: false
+  mechanism: "Planner returns a typed result (table schema + rows); the UI renders table and chart from the typed result, the model writes only a one-line caption"
+  example: "Funnel answer: 8-row table + bar chart PNG at 1600x900; pasted into the Monday deck unchanged"
+  cost: S
+  depends_on: "planner returns structured results, not prose"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table already exists; this makes the chatbot return it as a table instead of narrating it"
+
+- id: analyst-15
+  title: "'Why do players quit at step 3' returns a ranked reason list (reason, players, % of quitters, 3 clips each) built from the closed friction_reason enum, not a free-text essay"
+  level: L4
+  cell: {part: query-path, question-type: why, representation: issue-list-with-severity-frequency, evidence-form: severity-frequency-matrix, query-path: sql-over-closed-fields, granularity: tutorial-step, user-segment: studio-analyst}
+  object: "memo.md item 1: 'friction signal ... with closed enum fields and short open fields'"
+  situation: "Analyst asks why; the old pipeline has an MCQ 'reason for struggle: A/B/C/D' per video that nobody aggregates"
+  consequence: "Answer: 'cannot find map button 38 (40%), misread objective text 21 (22%), input not registering 12 (13%), other 23' each with 3 clips; the analyst files three tickets instead of one vague one"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "memo.md: 'friction signal, sentiment, quote with timestamp as evidence'"
+  proposed: "friction_reason enum of 12 values plus 'other' with a 15-word open field; why-questions aggregate the enum over quitters at the step and attach clip montages per value"
+  shallow: false
+  mechanism: "Ingestion tags each stall/quit observation with friction_reason; planner maps 'why' + step to a GROUP BY over quitters; clip montage per reason from the rows"
+  example: "Step 3 quitters (94): cannot-find-ui 38, misread-text 21, input-fail 12, other 23 ('other' quotes listed)"
+  cost: M
+  depends_on: "friction_reason enum defined per genre; step_state (analyst-2)"
+  part: query-path
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Reasons are aggregated across players with clips, instead of one option letter per video"
+
+- id: analyst-16
+  title: "Step vocabulary imported from the studio's own telemetry event names and tutorial design doc, so the analyst asks about 'tut_open_map' and the on-screen 'Open your map!' prompt resolves to the same step_id"
+  level: L3
+  cell: {part: ingestion-extraction, representation: common-data-model-with-per-game-vocab-map, question-origin: design-doc-patch-notes-store-page-derived, modality: on-screen-text-ocr, moment-in-journey: game-onboarding-day-0, reuse-scope-of-extraction: universal-primitives, granularity: tutorial-step}
+  object: "spec.md item 3: 'questions with options, written per game target'"
+  situation: "Analyst's dashboards use event names (tut_01_move, tut_02_open_map); JEV's questions say 'the map tutorial'; the two never line up in a join"
+  consequence: "Every step answer carries the studio's event name; the analyst joins video stall rates to telemetry funnel rates by step_id without a lookup table"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'whether game telemetry is joined'"
+  proposed: "Onboarding upload: CSV of (studio_step_name, on-screen prompt text, expected order); OCR matcher assigns step_id when prompt text appears on screen"
+  shallow: false
+  mechanism: "Universal step primitive (reached / completed / quit) with a per-game vocabulary map from studio names to OCR-visible prompts; the step detector uses the map at ingestion"
+  example: "Studio row 'tut_02_open_map | Open your map! | 2' → step_state rows carry step_id tut_02_open_map; analyst's telemetry funnel shows 94% fired, video shows 77% completed within 120 s"
+  cost: S
+  depends_on: "OCR of on-screen text at ingestion (frame pipeline)"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Questions are keyed to the studio's names, so answers join to the studio's data instead of living in a separate vocabulary"
+
+- id: analyst-17
+  title: "KPI-backward contrast: analyst uploads D7 retained/churned labels per player_id; the system lists the 10 observed fields whose rates differ most between churners and retainers, with lift and n"
+  level: L4
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, question-origin: kpi-backward-from-studio-metrics, question-type: who-are-the-churners-segment-discovery, modality: game-telemetry, evidence-form: contrast-vs-baseline, mechanism-type: auto-discover-without-question}
+  object: "spec.md item 3: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  situation: "The studio knows who churned by D7 from telemetry but not what they did on screen; the analyst does not know which of 60 fields to ask about"
+  consequence: "Answer: 'skipped_tutorial_text: 61% of churners vs 24% of retainers (lift 2.5, n 180/320); never_opened_inventory: 44% vs 12% (lift 3.7)'; the analyst asks follow-ups on two fields instead of sixty"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it'"
+  proposed: "Label upload (player_id, label); contrast job computes rate difference per closed field with a minimum n of 30 per arm and Benjamini-Hochberg at 0.05 across fields"
+  shallow: false
+  mechanism: "Closed-field columns per player joined to the uploaded label; per-field two-proportion test; ranked output with clip montage per top field"
+  example: "Churners (180) vs retainers (320): top field never_opened_inventory lift 3.7; the analyst's next question is 'show 5 clips of churners at the inventory prompt'"
+  cost: M
+  depends_on: "closed fields stored per player (memo.md item 1); studio player_id at upload (analyst-4)"
+  part: query-path
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The fixed table requires the analyst to ask the right question; this finds the question from the studio's own churn label"
+
+- id: analyst-18
+  title: "Query-time cohort filters on player metadata (platform, country, age band, prior-games-played, recruitment source) stored per session, so 'how many mobile players quit at step 3' needs no new extraction"
+  level: L4
+  cell: {part: store, scope: query-time-defined-cohort, modality: player-profile-metadata, query-path: sql-over-closed-fields, question-type: how-many, granularity: player, latency-tier: under-2s}
+  object: "spec.md Unspecified: 'how videos of one session are linked' (no player attributes named)"
+  situation: "Analyst's second question is almost always a slice: 'and on mobile?', 'and for players who said they play shooters?'"
+  consequence: "Slices answer in under 2 s from the same step_state rows; without metadata the analyst gets 'that information is not available'"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'a question over, say, 500 players is fast'"
+  proposed: "session_meta(player_id, platform, country, age_band, genre_experience, recruit_source, build_version) loaded from the playtest recruitment sheet at upload"
+  shallow: false
+  mechanism: "Planner joins any aggregate to session_meta when the question names a filter dimension; the filter vocabulary is shown as chips under the answer"
+  example: "Stall at step 3: all 20.0% (94/471); mobile 27.5% (41/149); PC 16.5% (53/322)"
+  cost: S
+  depends_on: "recruitment sheet columns supplied at upload"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The per-video table has no player attributes; slicing requires a join the table cannot do"
+
+- id: analyst-19
+  title: "Session and return accounting: videos of one player stitched into sessions by gap > 30 min, so 'how many finished the tutorial in their first sitting vs came back' and 'how many never returned after video 1' are countable"
+  level: L4
+  cell: {part: session-stitching, granularity: session, question-type: how-many, representation: step-funnel-state-machine-per-player, evidence-form: count-with-denominator, user-segment: studio-analyst, extraction-trigger: at-ingestion}
+  object: "spec.md item 1: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos.'"
+  situation: "Analyst asks 'how many players quit mid-tutorial and came back later?' and each video is a separate row with no session or ordering key"
+  consequence: "Answer: '362 finished in sitting 1, 48 finished in a later sitting, 90 never finished; 31 players have exactly one video'; today the per-video table cannot tell a 15-minute player from a 3-hour one"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'one session is many videos' and Unspecified 'how videos of one session are linked'"
+  proposed: "Stitcher orders videos per player by capture timestamp, splits sessions at gaps over 30 minutes, writes session_id, video_index, total_play_minutes"
+  shallow: false
+  mechanism: "Ingestion-time stitching from capture timestamps in the upload manifest; step_state rows carry session_id; planner answers 'first sitting' as session_index = 1"
+  example: "'Finished tutorial in first sitting': 362 of 500 (72.4%); 'returned for a second sitting': 97 of 500"
+  cost: S
+  depends_on: "capture timestamps per video in the upload"
+  part: session-stitching
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table is per video; sitting-level questions need a session key it lacks"
+
+- id: analyst-20
+  title: "'What did I not ask about' report: top 20 utterance topics from the week's players that match no existing field, each with player count and 3 quotes, generated after every ingestion batch"
+  level: L4
+  cell: {part: question-generation, question-origin: emergent-topic-clustering-of-player-speech, question-type: what-surprised-unknown-unknowns, mechanism-type: auto-discover-without-question, extraction-trigger: scheduled-batch, evidence-form: quote-with-timestamp, delivery-surface: dashboard-standard-report}
+  object: "spec.md Known problems: 'The question set is small, so most of what is in the video and transcript is never captured.'"
+  situation: "Analyst's 30 questions are all about the tutorial; 80 of 500 players complained about the font size in the settings menu and no field exists for it"
+  consequence: "Report row 'settings font size: 80 players, 3 quotes' appears without a question; the analyst promotes it to a field with one click (analyst-22)"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'most of what is in the video and transcript is never captured'"
+  proposed: "Cluster utterance embeddings per batch (HDBSCAN, min cluster 15 players), drop clusters already covered by a field, label the rest with a 5-word model summary"
+  shallow: false
+  mechanism: "Scheduled batch over utterance rows; cluster coverage checked against existing field embeddings; uncovered clusters listed with counts and quotes"
+  example: "Week 3 report: 'settings font size' 80 players, 'jump feels floaty' 54, 'where is save' 41; two become fields"
+  cost: M
+  depends_on: "utterance rows with embeddings (analyst-9)"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table cannot surface a topic nobody wrote a question for; this lists them with counts"
+
+- id: analyst-21
+  title: "Three-click drill: count answer → per-player list → clip, each step a cached sub-query on the same result id, so the analyst goes from '20% stalled' to a specific clip in under 6 s total"
+  level: L4
+  cell: {part: chatbot-ui, query-path: progressive-answer-then-refine, evidence-form: per-player-list, latency-tier: sub-200ms-cached, mechanism-type: reuse-or-cache-prior-work, question-type: how-many, user-segment: studio-analyst}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Analyst gets '94 players stalled' and wants to see who and then watch one; today each is a new typed question"
+  consequence: "Count, list and clip are three clicks on one answer card; the 94-row list and any clip load from the cached result set"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'aggregate queries over all players (instant)'"
+  proposed: "Answer card has 'show players' and per-row 'play clip'; result_id keys a cached row set with 15-minute TTL"
+  shallow: false
+  mechanism: "Planner caches the row set behind each aggregate; the UI requests pages of the same result_id; clip play resolves video_id and offset from the row"
+  example: "'94 stalled at step 3' → list sorted by stall seconds → player 117 clip at 00:14:22 in video 2"
+  cost: S
+  depends_on: "observation rows with offsets (analyst-5)"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table gives a count; this gives the rows and the moment behind it without re-querying"
+
+- id: analyst-22
+  title: "Studio-written tracker: the analyst types a question once, marks it 'track', and it becomes a field extracted for every future session and backfilled over history overnight"
+  level: L3
+  cell: {part: question-generation, question-origin: studio-written-at-runtime, extraction-trigger: on-studio-tracker-defined, representation: customer-defined-trackers-over-universal-primitives, schema-evolution: eager-backfill-all-history, latency-tier: overnight, reuse-scope-of-extraction: customer-defined-on-top-of-universal}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "Analyst asks 'did the player notice the daily reward popup' and wants it in every future weekly report, not a one-off"
+  consequence: "The field exists for all 500 historic players next morning and for every new session at ingestion; the weekly digest (analyst-8) can pin it"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'the question set grows from real use'"
+  proposed: "Tracker definition: question text, answer type (bool / enum / short text), 2 positive and 2 negative example clips chosen by the analyst, evidence rule 'must cite frame or utterance'"
+  shallow: false
+  mechanism: "Tracker becomes an extraction prompt appended to the per-session extraction; overnight job backfills history; coverage tracked per tracker"
+  example: "Tracker 'noticed daily reward popup' (bool): 500 backfilled overnight; 61% true; pinned to the Monday digest"
+  cost: M
+  depends_on: "per-field coverage (analyst-3); backfill runner (analyst-10)"
+  part: question-generation
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "The question set is written by the buyer at runtime, not by JEV per game before launch"
+
+- id: analyst-23
+  title: "Failed-question log page: every question that returned abstain, 'no field', or zero rows is listed with status (backfill queued / field proposed / rejected) so the analyst sees their unanswered questions turn into fields"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, question-origin: failed-query-log, delivery-surface: dashboard-standard-report, moment-in-journey: steady-state-weekly, user-segment: studio-analyst, uncertainty-policy: abstain-below-coverage, mechanism-type: human-in-the-loop}
+  object: "memo.md item 2: 'the question set grows from real use'"
+  situation: "Analyst asked 14 questions last month that returned nothing and has no idea whether anyone at JEV saw them"
+  consequence: "A page shows 14 rows with status; 9 are now fields, 3 are queued, 2 were rejected with a one-line reason; the analyst re-asks the 9"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'the question set grows from real use'"
+  proposed: "Table failed_question(question, asked_at, asker, reason {no-field, low-coverage, zero-rows}, status, field_id if created)"
+  shallow: false
+  mechanism: "Planner logs every abstain with its reason; question-generation stage consumes the log weekly; status written back; page rendered per studio"
+  example: "'Did players read the lore screen?' asked 3 times → field lore_screen_read_s created → status 'answered since 2026-11-03'"
+  cost: S
+  depends_on: "planner abstain reasons (analyst-10)"
+  part: feedback-loop-from-query-log
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no record of what it could not answer; this makes the gap list visible to the buyer"
+
+- id: analyst-24
+  title: "Answer permalink that freezes the number, the row set, the schema version and the model version, so a figure quoted in a greenlight deck reproduces identically 3 months later"
+  level: L4
+  cell: {part: evaluation, evidence-form: extraction-provenance-model-and-schema-version, schema-evolution: append-only-versioned-fields, moment-in-journey: pre-launch-greenlight, user-segment: studio-analyst, delivery-surface: chatbot, mechanism-type: reuse-or-cache-prior-work}
+  object: "memo.md item 2: 'cached as a new field'; spec.md item 3 'The answers form a structured table per video'"
+  situation: "Analyst quoted '20.0% stall at step 3' in a greenlight deck; after a model upgrade re-extraction the same question returns 17.4% and a producer asks which is right"
+  consequence: "The permalink shows 20.0% with 'schema v3, model m-2026-09, rows 94/471, computed 2026-10-20' and a diff view against the current 17.4%; the analyst explains the change instead of losing trust"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md item 2 describes caching results but not versioning them"
+  proposed: "Permalink stores result_id, row ids, field schema version, extraction model id, timestamp; 'recompute' shows the delta"
+  shallow: false
+  mechanism: "Observation rows are append-only with schema_version and model_id; permalink pins the row ids; recompute runs the plan on current rows and diffs"
+  example: "Deck figure 20.0% (v3) vs today 17.4% (v4): diff shows 13 players reclassified from stall to 'reading objective text'"
+  cost: M
+  depends_on: "append-only versioned observation rows"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is overwritten per re-run; this keeps the number the analyst already quoted"
+
+- id: analyst-25
+  title: "Small-n guard on every comparison: when either arm has under 30 players, the answer leads with 'n too small to compare' and shows the counts without a percentage difference"
+  level: L4
+  cell: {part: query-path, uncertainty-policy: answer-with-ci-and-n, question-type: compare-versions, scope: build-version-pair, evidence-form: contrast-vs-baseline, user-segment: studio-analyst, latency-tier: under-2s}
+  object: "spec.md item 4: 'a question over, say, 500 players'"
+  situation: "Build 1.3.3 has 11 recorded players; analyst asks whether the stall rate improved against 471"
+  consequence: "Answer: 'n=11 on 1.3.3 (2 stalled); comparison withheld until n >= 30' instead of '18% vs 20%, improved'; the analyst does not report a fix that is noise"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'a question over, say, 500 players is fast' (cohorts per build are much smaller than 500)"
+  proposed: "Minimum arm size 30 (configurable); below it the planner returns counts only and a 'remind me when n >= 30' control"
+  shallow: false
+  mechanism: "Comparison template checks arm sizes before computing the difference; the reminder is a one-shot alert on the pinned plan"
+  example: "1.3.3: 2 of 11 stalled; reminder fires 9 days later at n=34: 14.7% vs 20.0%, CI -16.4 to +5.8, not significant"
+  cost: XS
+  depends_on: "analyst-7 comparison template"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no comparison logic at all; this adds one that refuses to mislead"
+
+- id: analyst-26
+  title: "Speaking-player denominator: every what-said count uses the number of players who spoke at least 10 words in the step, and reports silent players separately, so 33% confusion is not diluted by 88 silent players"
+  level: L4
+  cell: {part: query-path, modality: silence-or-absence-of-speech, question-type: what-said, evidence-form: coverage-statement-n-of-m-players, granularity: tutorial-step, uncertainty-policy: answer-with-ci-and-n, user-segment: studio-analyst}
+  object: "spec.md item 2: 'the transcript alone is not enough; what is on screen is largely lost'"
+  situation: "88 of 500 players said nothing during the tutorial; a count of 'said they were confused' over 500 reads 27%, over speakers 33%"
+  consequence: "Answer shows both: '137 of 412 speaking players (33%); 88 silent players excluded'; the analyst reports the speaking rate and flags silence as its own metric"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'what is on screen is largely lost' (speech-only fields under-count silent players)"
+  proposed: "Per (player, step) field words_spoken; what-said aggregates use words_spoken >= 10 as denominator and print the silent count"
+  shallow: false
+  mechanism: "Ingestion counts words per step per player from utterance rows; planner swaps the denominator for speech-derived fields"
+  example: "'Confused' phrases at step 3: 71 of 390 speakers (18%); 81 silent at step 3"
+  cost: XS
+  depends_on: "utterance rows per step (analyst-9, analyst-2)"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The MCQ 'did the player express confusion' marks silent players as 'no', which is wrong; this separates them"
+
+- id: analyst-27
+  title: "Freeze / crash / black-screen counter from frames: 'how many players hit a freeze over 3 s in the tutorial' answered from a screen-state field, with the 10 longest freezes as clips"
+  level: L4
+  cell: {part: frame-pipeline, modality: screen-state-classifier, question-type: technical-issue-bug-perf, subject-domain: technical-bugs-performance, evidence-form: clip-montage-n-examples, granularity: frame, query-path: precomputed-aggregate}
+  object: "spec.md Known problems: 'Transcript loses visual information.'"
+  situation: "QA asks the analyst for playtest evidence of a loading hang; the transcript says nothing because players go quiet when the screen hangs"
+  consequence: "Answer: '23 of 500 players had a freeze over 3 s (longest 41 s at the step-4 load); 10 clips'; without frames the number is zero"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'Transcript loses visual information'"
+  proposed: "Frame sampler at 2 fps; identical-frame run over 3 s = freeze; black-frame run over 1 s = black screen; field freeze_events(player, step, start_ms, duration_s)"
+  shallow: false
+  mechanism: "Frame-diff at ingestion writes freeze rows; planner maps 'freeze / hang / crash' questions to the field and sorts by duration for clips"
+  example: "23 players, 31 freezes; 19 at the step-4 loading screen; longest 41 s; QA ticket attached with 10 clips"
+  cost: S
+  depends_on: "frame sampling at ingestion"
+  part: frame-pipeline
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "No transcript-based MCQ can see a freeze; the frame field makes it a countable number"
+
+- id: analyst-28
+  title: "Outside-target question gets a first answer from retrieval in 30 s with 'based on 40 matching rows', then a lazy backfill runs and the Slack thread updates with the full-cohort number"
+  level: L4
+  cell: {part: query-path, question-type: outside-game-target, query-path: progressive-answer-then-refine, extraction-trigger: on-first-question, latency-tier: progressive-streaming, delivery-surface: slack-jira-integration, mechanism-type: approximate-then-refine}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions'"
+  situation: "Analyst asks 'did anyone comment on the shop prices' (not a tutorial target); no field exists"
+  consequence: "30 s later: 'at least 17 players mentioned prices (retrieval, not exhaustive), 5 quotes'; 40 minutes later the Slack thread adds 'full extraction: 52 of 500 (10.4%)'"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "memo.md: 'open-field questions retrieve matching observation rows ... genuinely new questions trigger a one-time batch extraction'"
+  proposed: "Two-stage response: retrieval answer tagged 'lower bound' with n matched; backfill job auto-queued; completion posts to the same thread and updates the permalink"
+  shallow: false
+  mechanism: "Planner runs retrieval first and queues backfill in parallel; the answer card carries a 'refining' state until the field lands; both numbers stay visible"
+  example: "'Shop prices': lower bound 17 (30 s) → exact 52/500 (40 min) → tracker offered"
+  cost: M
+  depends_on: "retrieval over utterance rows (analyst-9); backfill runner (analyst-10)"
+  part: query-path
+  ingest_cost: L
+  query_cost: M
+  better_than_fixed_table: "The fixed table returns nothing for an off-target question; this returns a bound now and the exact number later"
+
+- id: analyst-29
+  title: "Metrics layer with 12 named tutorial metrics (stall_rate, step_completion, time_in_step_p50, quit_at_step, confusion_phrase_rate, ...) defined once per game, so 'stall rate at step 3' resolves to a definition instead of a model's guess"
+  level: L3
+  cell: {part: query-path, query-path: text-to-semantic-layer-metrics, representation: olap-cube-materialized-views, question-origin: established-gur-frameworks-heuristics-pxi-mda, latency-tier: under-2s, user-segment: studio-analyst, reuse-scope-of-extraction: genre-shared}
+  object: "spec.md item 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "Two analysts ask 'stall rate at step 3' a week apart and get 20% and 24% because the model picked 60 s one time and 45 s the other"
+  consequence: "Both get 20.0% with the definition 'players over 60 s on the step / players who reached it' shown under the number; the metric is the same in the digest, the dashboard and the chat"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md item 2: 'closed-field questions become aggregate queries' (no mention of named, versioned metric definitions)"
+  proposed: "metrics.yaml per game: name, SQL over step_state, threshold parameters, denominator rule; planner matches question text to metric names before free SQL"
+  shallow: false
+  mechanism: "Planner's first step is metric-name resolution against the semantic layer; only unmatched questions fall to free SQL or retrieval"
+  example: "'stall rate step 3' → stall_rate(step=3, threshold_s=60) → 20.0% (94/471), definition printed"
+  cost: S
+  depends_on: "step_state (analyst-2)"
+  part: query-path
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Metric definitions are explicit and shared; the fixed table's 'struggled' column hides its threshold"
+
+- id: analyst-30
+  title: "Day-0 standard tutorial report delivered when the first cohort finishes ingesting: funnel, time-in-step, top 5 friction reasons, 10 clips, before the analyst types a question"
+  level: L3
+  cell: {part: chatbot-ui, delivery-surface: dashboard-standard-report, moment-in-journey: first-cohort-ingested, question-origin: genre-template-library, mechanism-type: precompute-more, subject-domain: onboarding-tutorial, user-segment: studio-analyst}
+  object: "spec.md item 3: 'The targets are mostly detecting churn in the tutorial and just after it.'"
+  situation: "First 120 players ingested; the analyst opens the chatbot with a blank prompt and does not know what the system can answer"
+  consequence: "A 1-page report is waiting: funnel of 8 steps, p50 time per step, top 5 friction reasons with counts, 10 clips; the analyst's first typed questions are follow-ups, not discovery"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it'"
+  proposed: "Report template per genre with 6 fixed panels, rendered from step_state, step_duration_stats, friction_reason; one link in the ingestion-complete email"
+  shallow: false
+  mechanism: "Ingestion-complete event triggers the report plan; panels are the same planner plans the chatbot uses, so every panel is clickable into chat"
+  example: "Report for cohort 1 (120 players): step 3 quit 22%, p50 51 s; top reason 'cannot find map button' 31; 10 clips"
+  cost: S
+  depends_on: "analyst-2, analyst-6, analyst-15"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table waits for a question; the report shows what the table knows on day 0"
+
+- id: analyst-31
+  title: "REFUSED: entity-relation graph as the query surface; the analyst thinks in tables and will not write or read a path query, so a graph must be hidden behind the same table answers or it is unused"
+  level: L3
+  cell: {part: store, representation: entity-relation-graph, user-segment: studio-analyst, query-path: agentic-multi-tool-plan, delivery-surface: notebook, question-type: timeline, effort: L-multi-quarter}
+  object: "memo.md item 1: 'timestamped atomic observations across all videos of a session'"
+  situation: "Proposal to expose player → step → UI element → utterance relations as a graph the chatbot traverses and the analyst can explore"
+  consequence: "Analyst willingness 1/5 as a surface: every question they have is a count, a list, a duration or a clip; a graph browser adds a second mental model. Willingness 3/5 if it only backs the table answers"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'The answers form a structured table per video' (the buyer's existing mental model is tabular)"
+  proposed: "If built, keep the graph internal to the planner and never show relations in the UI; test: zero graph terms in any chatbot answer"
+  shallow: false
+  mechanism: "Graph store with typed edges (reached, clicked, said_during) queried by the planner for multi-hop questions, with results flattened to tables"
+  example: "'Players who clicked the locked recipe and then said something negative' is a 2-hop graph query returned as a 23-row player list; the analyst never sees the hops"
+  cost: L
+  depends_on: "observation log with entity ids"
+  part: store
+  ingest_cost: M
+  query_cost: M
+  better_than_fixed_table: "Only for multi-hop find-players-who questions; for the analyst's 30 questions the table is enough"
+
+- id: analyst-32
+  title: "Cross-title benchmark line under every rate: 'step-3 stall 20.0%; median across 14 titles in this genre on JEV: 12%', opt-in per studio, computed only on universal step primitives"
+  level: L4
+  cell: {part: evaluation, scope: cross-studio-benchmark, evidence-form: contrast-vs-baseline, tenancy-and-deployment: logically-isolated-per-studio, reuse-scope-of-extraction: universal-primitives, user-segment: studio-analyst, question-type: compare-steps}
+  object: "spec.md Constraints: 'Buyers are gaming studios.' (many studios; nothing in spec.md compares across them)"
+  situation: "Producer asks the analyst 'is 20% bad?' and the analyst has no reference beyond last year's title"
+  consequence: "The benchmark line answers it in the same card; studios that opt out see no line and contribute nothing. Analyst willingness 4/5; infosec may veto (not this persona's call)"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md item 3: 'pruned by the game target' (per-game pruning destroys comparability unless a universal layer exists)"
+  proposed: "Benchmark table over universal metrics only (stall_rate, step_completion, time_in_step) with genre tag, minimum 5 contributing titles, opt-in flag per studio"
+  shallow: false
+  mechanism: "Nightly job aggregates opted-in studios' universal metrics by genre into a benchmark table; the planner appends the median when the metric is universal and n_titles >= 5"
+  example: "'Step-3 stall 20.0% (94/471); genre median 12% across 14 titles, your title is in the top quartile of stall'"
+  cost: M
+  depends_on: "universal step primitives (analyst-16, analyst-29); per-studio opt-in"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Per-game question tables cannot be compared; a universal metric layer can"
+
+- id: analyst-33
+  title: "Frustration as a counted composite: a player is 'frustrated at step N' when at least 2 of {negative utterance, 3+ failed attempts within 60 s, non-speech sigh or groan, 10 s of rapid repeated input} co-occur, so 'how many got frustrated' is a number with a stated rule"
+  level: L4
+  cell: {part: ingestion-extraction, question-type: how-felt, representation: time-series-signals-affect-pace-silence, modality: audio-non-speech, subject-domain: player-affect, evidence-form: count-with-denominator, granularity: tutorial-step}
+  object: "memo.md item 1: 'friction signal, sentiment, quote with timestamp as evidence'"
+  situation: "Analyst asks 'how many players got frustrated at the boss' and the old table has a per-video 'sentiment: positive/neutral/negative' MCQ"
+  consequence: "Answer: '58 of 410 who reached the boss (14.1%) met the frustration rule; by signal: 41 negative utterance, 52 repeated failures, 19 sigh'; the rule is printed so the producer can argue with it"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'friction signal, sentiment'"
+  proposed: "Per (player, step) signal columns from transcript, screen-state attempt counter, non-speech audio tags and input-rate; frustrated = count of signals >= 2"
+  shallow: false
+  mechanism: "Ingestion emits the four signals as timestamped rows; a derived boolean per (player, step) applies the rule; the rule text is stored with the field and shown with answers"
+  example: "Boss step: 58/410 frustrated; 5 clips where all four signals fire within 30 s"
+  cost: M
+  depends_on: "non-speech audio tagging; attempt counter from screen state; input events if captured"
+  part: ingestion-extraction
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "A single sentiment MCQ per 15-minute video cannot localise or count; a composite per step can"
+
+- id: analyst-34
+  title: "One-player timeline on request: 'walk me through player 117' renders the stitched session as a step strip (step, entered, left, outcome) with utterances and friction rows under it, clips playable from any row"
+  level: L4
+  cell: {part: chatbot-ui, question-type: timeline, scope: one-player, granularity: session, representation: timestamped-observation-log, evidence-form: clip, latency-tier: under-2s}
+  object: "memo.md item 1: 'timestamped atomic observations across all videos of a session (step on screen, action, utterance, friction signal, sentiment, quote with timestamp as evidence)'"
+  situation: "A producer picks one churned player from the list (analyst-4) and asks what happened to them"
+  consequence: "A 3-hour, 12-video session renders as one strip in under 2 s; the analyst scrolls to the step-3 quit and plays the clip; today they open 12 videos"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'timestamped atomic observations across all videos of a session'"
+  proposed: "Timeline view from observation rows ordered by session offset; row types colour-coded; click plays [t-5 s, t+15 s]"
+  shallow: false
+  mechanism: "Planner routes a single-player timeline question to a row fetch by player_id ordered by session_offset_ms; the UI renders a strip"
+  example: "Player 117: steps 1-2 in 4 min, step 3 entered 00:06:10, 7 attempts, 'where is the map' at 00:08:41, quit at 00:11:02; clip plays"
+  cost: S
+  depends_on: "session stitching (analyst-19); observation rows with offsets"
+  part: chatbot-ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The per-video table has 12 unordered rows for this player; the timeline is one ordered strip"
