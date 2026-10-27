@@ -930,6 +930,56 @@
 | brand-14 | Peak-arousal moment catalogue of a game, sold as sponsorable 'moment packages' (clutch round, boss win, last-lap pass) | brand | Placements sit in menus where attention is near zero, and the agency cannot show the brand a moment-level reason to pay a premium |
 | cfo-19 | REFUSED: closed-loop in-session intervention that gifts currency to players the video model predicts will churn, running on-device | cfo | CFO refuses: gifts cannibalise IAP revenue, no paper predicts churn from human gameplay video, and on-device inference costs frame budget; would revisit only af |
 
+## Audit: mode-collapse clusters (many perspectives proposed the same thing)
+- Facecam / front-camera emotion scoring, refused (no positive anywhere) (about 25; e.g. cto-23, ds-8, f2p-21, bi-27)
+- Sell consented footage + inputs to AI world-model labs (positives and refusals) (about 22; e.g. data-1, cfo-11, data-17, data-20)
+- Ask-a-question chat over footage, scoped to a role (and its generic-chat refusals) (about 20; e.g. f2p-12, publisher-25, design-15, qa-24)
+- Always-on full-session recording of every player, refused (about 17; e.g. cto-8, f2p-22, player-27, design-22)
+- Pixel-only arousal / frustration / fun score (positive and refused) (about 16; e.g. ds-7, f2p-25, bi-26, design-11)
+- FTUE drop-off 'why' per funnel step with reason codes and clips (about 15; e.g. f2p-1, f2p-13, uxr-8, vendor-1)
+- On-device PII redaction (names, chat, notifications, payment sheets) before upload (about 14; e.g. ds-24, bi-19, player-7, privacy-1)
+- Closed-loop in-session hint, gift or ad skip on detected frustration (positive and refused) (about 14; e.g. ds-23, f2p-11, design-16, liveops-15)
+- Localisation overflow / truncation / untranslated-string sweep (about 13; e.g. f2p-17, qa-15, loc-1, indie-13)
+- Build-to-build screen / UI diff with alert or ticket (about 13; e.g. f2p-3, ds-14, bi-10, qa-3)
+- Last-N-seconds ring buffer attached to a support or report ticket with an AI summary (about 13; e.g. support-1, indie-10, outsource-11, privacy-15)
+- App-kill / quit-type classifier (fail screen vs interruption vs idle) on the last seconds (about 12; e.g. ds-2, f2p-5, indie-17, sdk-18)
+- Competitor FTUE / monetisation teardown from bot playthrough or public video (about 12; e.g. compintel-1, f2p-10, bi-16, indie-6)
+- Competitor shop-price and live-event OCR feed (about 12; e.g. compintel-2, compintel-3, monet-14, liveops-3)
+- Ad-promise vs first-session behaviour (creative id joined to what the player did) (about 11; e.g. f2p-14, ua-1, monet-19, bi-15)
+- Rewarded / interstitial ad actually rendered and visible (about 11; e.g. bi-21, indie-27, monet-7, qa-22)
+- Leak / exploit watch on public clips (watermark tracing, dupe-glitch spread) (about 11; e.g. sdk-30, tns-19, creator-5, ciso-3)
+- Customer-cloud / BYOC / air-gapped deployment (about 10; e.g. sdk-12, bi-20, qa-18, a11y-23)
+- Emulator-farm / bot fraud from identical tap paths and frame sequences (about 10; e.g. monet-24, tns-4, vendor-4, ua-7)
+- Cross-title FTUE scorecard or genre benchmark (portfolio, platform, vendor report) (about 10; e.g. publisher-1, f2p-26, platform-1, vendor-9)
+- Load / wait-screen seconds per device from pixels (about 8; e.g. f2p-6, bi-22, sdk-25, platform-4)
+
+## Audit: contested themes
+- Licensing gameplay footage + inputs to AI labs: Consent and rights. A separate AI-training opt-in with a payout, sold by the rights holder, is accepted. Reuse under the analytics EULA, platform capture without a licence from each studio, and any vendor resale clause are refused (studio IP, minors in the sample).
+- Emotion / arousal from gameplay pixels: Validity and actionability against regulation. Aggregate curves per level, with 50 or more sessions behind each, tested against outcomes, pass. A per-session or per-title score with no link to a step or outcome is refused, and EU AI Act disclosure applies.
+- Closed-loop in-session intervention: A hint or help prompt with a built-in holdout is accepted. A currency gift or discount (IAP cannibalisation, about 8% in cfo-19), a monetised trigger on frustration (manipulation), a cloud model in the frame loop, or auto-tuning without a designer is refused.
+- Unattended AI verdicts (release gates, badges, tickets, bans, sign-offs): Automation level. Buyers accept AI that triages and recommends. Owners of the decision refuse verdicts with no human sign-off, citing VLM precision of about 0.50 and the 16% who fully trust AI QA.
+- Cross-game benchmarks and market-intel feeds built from platform capture: Market-intel buyers would pay 4. The observed studio treats the feed as its IP handed to rivals and may retaliate. Aggregates only, no clips and a per-studio opt-out is the proposed compromise; platform-28 meets none of these conditions.
+- Generic ask-a-question / AI-summary product: Commoditisation. Chat scoped to a step or offer that returns clip lists and structured rows is bought. Prose-only chat or summaries over all sessions are refused because the BI team can reproduce them with Gemini at 1 fps.
+- Capture scope: trigger-scoped ring buffer vs always-on: A ring buffer that uploads only on a trigger passes. Holding all sessions from install, attaching voice chat, recording minors or capturing every install priced per MAU is refused on consent, battery and backlash grounds.
+- Per-case evidence packs for bans and appeals: T&S and support want a clip and input timeline per appeal. The CFO refuses packs priced per case for studios without competitive operations, because one wrongful-ban dispute costs more than a year of fees.
+- Processing location: vendor cloud vs studio cloud for pre-release footage: Per-session pricing in the vendor cloud is the default economics. Release, localisation and security owners refuse vendor-cloud upload of unreleased builds. The BYOC tier (cfo-25, at a 40% premium) is the price of passing review.
+- Video-only performance measurement vs counters: OEMs value perceived smoothness measured at the display output. QA and cert refuse video-derived FPS as a replacement for GameBench/PerfDog counters on cert floors.
+- Ad creatives cut from real player footage: UA wants volume from consented footage. Brand and community refuse it because friend lists and logos are visible and per-clip rights are missing, and they refuse auto-publishing without approval of each clip.
+- Competitor teardown as a self-serve or managed product: Price and commoditisation. Automated per-title extraction that replaces a $45-75k subscription is bought. A YouTube-link wrapper (a general video LLM does 80% of it free) and a $2,000 managed PDF per game are refused.
+- Paying players to share sessions: Soft-currency payment for consent is accepted. Swapping out a rewarded ad (lost ad revenue) and a bonus per cited clip (biases what players share) are refused.
+
+## Audit: expert-missing options
+- Live-services SRE pager from players' screens: on-call engineer at a live-service studio; input: SDK keyframes sampled at 1/min plus region, ISP and build; mechanism: OCR plus classifier counts 'connection lost', 'server maintenance' and login-error dialogs per region every 5 min and pages PagerDuty when the rate triples, before tickets or social posts arrive.
+- Store-review-to-clip join: product lead at a mobile F2P studio; input: App Store / Google Play review text plus consented SDK clips from the same build, device and country; mechanism: clusters 1-3 star review topics ('stuck at level 40', 'ads after every level') and attaches matching clips with the share of sessions that show the same moment, separating real defects from venting.
+- Narrative engagement map: narrative director at a single-player console studio; input: beta or recruited footage plus subtitle track; mechanism: per cutscene and dialogue node it measures skip rate, time to skip, dwell on choices and quest-log opens within 60 s after a story beat, flagging 'lost the plot' points before lock.
+- Audio QA bug detector: QA director at a AAA studio; input: internal QA rig footage with game audio plus build metadata; mechanism: detects missing SFX on animation events, looping or cut-off VO, music silence, clipping above -1 dBFS and A/V offset over 80 ms, filing one Jira ticket per event type with the clip.
+- Official esports data feed from broadcast: league data-rights lead at a mobile esports league; input: broadcast VOD and live stream; mechanism: HUD OCR and kill-feed parsing rebuild game state (gold, kills, objectives) into a low-latency API sold to betting operators and broadcast graphics, for titles with no official data API.
+- Patch-notes and known-issues drafter: community manager at a live-service studio; input: nightly bot-route diff of build N vs N-1 plus open Jira clusters; mechanism: lists every visible change (new shop tab, rebalanced numbers read by OCR, moved buttons) and drafts player-facing patch notes with GIFs, plus a 'known issues' list from the top visual bug clusters.
+- 72-hour launch war-room board: executive producer at a studio launching a title; input: SDK ring-buffer clips, helpdesk ticket clips and public TikTok/Twitch clips; mechanism: merges all three into one hourly ranked list of the top 5 visible problems by affected sessions and views, each with a clip, an owner and its trend since launch.
+- Twitch Drops / sponsored watch-time farming detector: creator-program manager paying for a Drops campaign; input: public live streams of the game during the campaign; mechanism: detects looped footage, menu-idle AFK streams and identical frame sequences across channels and credits only active-gameplay minutes in the campaign invoice.
+- Localisation reception from own-title creator streams: localisation lead at a publisher shipping in 12 languages; input: public JP, BR, DE and TR streams of its own game plus transcripts; mechanism: aligns streamer speech ('this translation makes no sense') with the on-screen string ID and screen, ranking strings by complaints per 1,000 stream minutes per language.
+- Cloud-gaming idle-session reclaim: capacity lead at a cloud-gaming service; input: server-rendered frames at 0.2 fps plus controller input stream; mechanism: classifies menu-idle, pause-screen and AFK states over 5+ minutes, warns the player, then suspends the GPU instance, reporting GPU-hours saved per title.
+
 ## Run stats
 - perspectives: 35 (20 written, 15 added by the critique stage, including the deal-blockers and external buyers)
 - axes: 17 solution-space axes, 227 values
