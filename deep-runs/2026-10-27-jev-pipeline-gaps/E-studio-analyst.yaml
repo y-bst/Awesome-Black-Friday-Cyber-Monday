@@ -1,0 +1,468 @@
+- id: analyst-1
+  title: "Studio question with no matching fixed question is silently answered from the nearest fixed question"
+  level: L4
+  cell: {stage: chatbot-query-planning, studio-question-type: question-outside-game-target, question-shape: question-not-in-set, chatbot-response-behaviour: substitutes-nearest-fixed-question, latency: under-2s}
+  object: "fixed question set per game target; chatbot answering 'from that table'"
+  situation: "Analyst asks 'What % of players complained about the music?'; the set only has 'Primary reason for leaving the tutorial' with option 'Audio/visual annoyance'; the bot maps the question to that column in under 2 s"
+  consequence: "Analyst reads '7% complained about music' when the 7% is players whose primary quit reason was audio/visual; players who complained but kept playing are invisible; the number goes into a readout"
+  p_typical: 0.35
+  grounded: quote
+  evidence: "Their questions are not known in advance. / The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "Query planner emits a 'mapped to question Qn: <text>' line on every answer and refuses with 'not in question set vN' when semantic match to any question is below a set threshold"
+  shallow: false
+- id: analyst-2
+  title: "No evidence span per answer row, so 'show me the clip where player 214 quits' has no target"
+  level: L3
+  cell: {stage: evidence-display, data-element: evidence-span, studio-question-type: show-me-raw-transcript-or-clip, correctness-failure: confident-no-evidence}
+  object: "'The answers form a structured table per video' (answer only, no span)"
+  situation: "Bot says player 214 'quit due to unclear objective' in video 3; analyst clicks or asks for the moment; the row stores video id + option, no start/end timestamp or quoted utterance"
+  consequence: "Analyst must scrub a 15-minute video manually or trust the label; disputes cannot be settled; the analyst stops trusting cohort numbers built from labels they cannot audit"
+  p_typical: 0.4
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Each answer row stores evidence_start_ms, evidence_end_ms and verbatim quote; chat answer links each cited row to a clip starting 10 s before evidence_start_ms"
+  shallow: false
+- id: analyst-3
+  title: "Cohort count over per-video rows counts one player up to n times"
+  level: L4
+  cell: {stage: session-level-aggregation, studio-question-type: cohort-count, scale: 500-players, session-shape: 5-20-videos, correctness-failure: duplicate-counted}
+  object: "per-video answers table; 'one session is many videos'"
+  situation: "Q 'Did the player express frustration?' = Yes in 6 of 12 videos for player 41; analyst asks 'How many of the 500 players were frustrated?'"
+  consequence: "Bot's COUNT(*) WHERE answer='Yes' returns 1,840 'players' out of 500, or a % above 100, or (if it divides by row count) a % that weights long sessions 12x"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "The answers form a structured table per video. / each video is capped at 15 minutes, so one session is many videos."
+  proposed: "Define per-question session rollup rule (any/first/last/majority) and expose a session- and player-level view the bot must query for cohort counts"
+  shallow: false
+- id: analyst-4
+  title: "Failed transcriptions shrink the denominator with no 'n=470 of 500' disclosure"
+  level: L4
+  cell: {stage: chatbot-answer, processing-status: transcription-failed, batch-failure-mix: some-sessions-failed-in-cohort, correctness-failure: wrong-denominator, studio-question-type: cohort-count}
+  object: "chatbot answer over 'say, 500 players'"
+  situation: "30 of 500 sessions have transcription-failed on their tutorial video; analyst asks 'What % churned in the tutorial?'"
+  consequence: "Bot answers '32%' computed over 470, without saying 30 players are missing; if failures correlate with churn (players who quit in 2 minutes produce near-empty audio), the % is biased low"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast."
+  proposed: "Every numeric answer prints 'n = answered / cohort size, k missing (reason)'"
+  shallow: false
+- id: analyst-5
+  title: "Tutorial questions answered 'No' on post-tutorial videos are counted as players who failed the step"
+  level: L4
+  cell: {data-element: null-vs-no, question-shape: event-did-not-happen-in-this-video, correctness-failure: null-treated-as-no, studio-question-type: find-players-who, session-shape: 5-20-videos}
+  object: "fixed question 'Did the player complete tutorial step 3?' run on every video"
+  situation: "Player finished step 3 in video 1; videos 2-12 are post-tutorial and the extractor answers 'No' because step 3 is not in them; analyst asks 'find players who never completed step 3'"
+  consequence: "Bot returns players who did complete it, because any 'No' row matches; list is inflated by every multi-video session"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "Every question gets a 'not applicable in this video' option distinct from 'No', and the bot query for 'never' uses session rollup with NA excluded"
+  shallow: false
+- id: analyst-6
+  title: "Analyst cannot ask the bot what it can answer; the question catalog is not exposed"
+  level: L3
+  cell: {stage: studio-ui, studio-question-type: what-can-you-answer, data-element: question-set-version, chatbot-response-behaviour: refuses-answerable-question}
+  object: "fixed question set per game target (not visible to the studio)"
+  situation: "Analyst types 'What can you tell me about this playtest?' or phrases a covered question in different words ('drop-off at onboarding' for 'tutorial churn')"
+  consequence: "Bot either lists generic abilities or says 'I don't have that data' for a question the table covers under other wording; analyst guesses phrasing for 20 minutes"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "who at the studio asks and what they ask ... (Unspecified)"
+  proposed: "Studio UI shows the active question set (id, text, options, version, cohort coverage) and the bot answers 'what can you answer' from that list"
+  shallow: false
+- id: analyst-7
+  title: "Same cohort question asked twice returns two different numbers"
+  level: L4
+  cell: {chatbot-response-behaviour: differs-on-re-ask, fast-path-dependency: text-to-sql-generated-correctly, answer-afterlife: copied-into-deck, scale: 500-players}
+  object: "chatbot over the answers table"
+  situation: "Analyst asks 'How many players churned in tutorial?' at 10:00 (bot filters option='Quit'); re-asks at 10:05 in a new chat (bot filters option IN ('Quit','Paused and did not return'))"
+  consequence: "Deck says 112, colleague's screenshot says 147; nobody can tell which query ran"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "Show the generated query/filter in an expandable 'how this was computed' panel and cache canonical query per (question id, option set)"
+  shallow: false
+- id: analyst-8
+  title: "Table larger than the LLM context is silently truncated before the bot counts"
+  level: L4
+  cell: {fast-path-dependency: table-fits-in-llm-context, chatbot-response-behaviour: silently-truncates-rows, scale: 500-players, latency: under-30s}
+  object: "'answers ... from that table' when the table is passed as context"
+  situation: "500 players x 12 videos x 10 questions = 60,000 rows; context holds about 8,000 rows; analyst asks a cohort count"
+  consequence: "Bot answers over the first ~67 players in row order, presents it as the 500-player answer, no warning"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "so that a question over, say, 500 players is fast. Reading 500 transcripts per question was too slow and too much data"
+  proposed: "Counts are computed by a query engine, never by the LLM reading rows; if rows are ever passed, the answer states rows_used / rows_total"
+  shallow: false
+- id: analyst-9
+  title: "Version comparison question has no game-version column to split on"
+  level: L3
+  cell: {studio-question-type: compare-two-versions, data-element: game-version, stage: build-and-metadata-tagging, correctness-failure: mixed-version-aggregation, time-and-change: game-update-changes-tutorial}
+  object: "answers table keyed per video; 'how videos of one session are linked' unspecified"
+  situation: "Studio shipped tutorial v1.3 mid-playtest; 200 sessions on v1.2, 300 on v1.3; analyst asks 'Did v1.3 reduce tutorial churn?'"
+  consequence: "Bot either refuses, splits by upload date as a proxy (wrong for sessions recorded on older builds), or reports one blended number"
+  p_typical: 0.14
+  grounded: inferred
+  evidence: "whether game telemetry is joined ... how videos of one session are linked (Unspecified)"
+  proposed: "Session row carries build_id and game_version as required fields at ingest; bot rejects version comparisons when >5% of sessions lack the tag and says how many"
+  shallow: false
+- id: analyst-10
+  title: "Which-step-loses-most question cannot be answered because rows are per 15-minute video, not per tutorial step"
+  level: L3
+  cell: {studio-question-type: compare-two-steps, data-element: tutorial-step, stage: per-video-answers, question-shape: answer-needs-visuals}
+  object: "'a structured table per video'"
+  situation: "Video 1 covers tutorial steps 1-6; analyst asks 'Is step 4 or step 5 where players give up?'"
+  consequence: "Bot answers 'video 1' or picks the step mentioned in an option label; step boundaries are on screen, not in speech, so no row identifies them"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "Transcript loses visual information. / The answers form a structured table per video."
+  proposed: "Add a per-session question 'last tutorial step reached' with one option per step id from the game's tutorial map"
+  shallow: false
+- id: analyst-11
+  title: "Timeline of one player sorts videos lexically and resets timestamps per video"
+  level: L4
+  cell: {studio-question-type: timeline-of-one-player, transcription-subsystem: timestamps-reset-per-video, correctness-failure: answer-attached-to-wrong-video-index, session-shape: 5-20-videos}
+  object: "video ids within a session; 'how videos of one session are linked' unspecified"
+  situation: "Analyst asks 'What happened to player 88 in order?' for a 12-video session named video_1 ... video_12"
+  consequence: "Bot narrates video_10, 11, 12 before video_2, and cites '03:12' twice for events 90 minutes apart; analyst's timeline in the report is wrong"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "how videos of one session are linked (Unspecified)"
+  proposed: "Store integer video_index and session_offset_ms per row; timeline answers print session-absolute hh:mm:ss"
+  shallow: false
+- id: analyst-12
+  title: "Follow-up 'why?' drops the cohort filter from the previous turn"
+  level: L4
+  cell: {studio-question-type: follow-up-question, stage: chatbot-query-planning, data-element: chatbot-conversation-log, correctness-failure: wrong-denominator}
+  object: "studio chatbot multi-turn conversation"
+  situation: "Turn 1: 'How many Android players quit in the tutorial?' -> 38. Turn 2: 'Why did they quit?'"
+  consequence: "Turn 2 reason distribution is computed over all 500 players (or all quitters on all platforms), presented as 'their' reasons"
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none"
+  proposed: "Bot echoes the active cohort filter ('Android, quit in tutorial, n=38') at the top of every follow-up answer"
+  shallow: false
+- id: analyst-13
+  title: "'Other' is the top quit reason and has no text behind it"
+  level: L4
+  cell: {stage: answer-options, question-shape: fits-no-option, correctness-failure: other-option-overused, studio-question-type: cohort-why}
+  object: "fixed options for 'Primary reason for leaving'"
+  situation: "Options are Too hard / Confusing / Bored / Technical issue / Other; 41% of quitters are 'Other'"
+  consequence: "Analyst asks 'what does Other mean?' and the bot has nothing; the single biggest bucket is the one the studio learns nothing about"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "'Other' rows store a 1-sentence free-text reason; bot clusters them on request and alerts the question author when Other exceeds 15%"
+  shallow: false
+- id: analyst-14
+  title: "'What should we change?' gets generic game-design advice phrased as if from the data"
+  level: L3
+  cell: {studio-question-type: recommendation-what-should-we-change, chatbot-response-behaviour: answers-from-general-game-knowledge, correctness-failure: confident-no-evidence, stage: chatbot-answer}
+  object: "chatbot answer"
+  situation: "Analyst asks 'What should we change in the tutorial to cut churn?'"
+  consequence: "Bot writes 'Shorten the tutorial and add skip options' with no row cited; reads as a finding of the playtest"
+  p_typical: 0.11
+  grounded: speculative
+  evidence: "none"
+  proposed: "Recommendation answers separate 'From your data (rows cited)' from 'General suggestion (not from data)' as labelled sections"
+  shallow: false
+- id: analyst-15
+  title: "Time-to-quit distribution only resolvable to the 15-minute video index"
+  level: L4
+  cell: {studio-question-type: distribution-not-count, question-shape: answer-is-a-time, stage: answer-options, data-element: timestamp}
+  object: "15-minute video cap; option-based answers"
+  situation: "Analyst asks 'Show the distribution of minutes before players quit'"
+  consequence: "Only buckets 0-15, 15-30, 30-45 exist (video index of the quit); a tutorial lasting 8 minutes collapses into one bucket; bot may invent minute-level values"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "each video is capped at 15 minutes, so one session is many videos."
+  proposed: "Store quit_offset_ms (session-absolute) as a numeric field from the evidence span instead of an option"
+  shallow: false
+- id: analyst-16
+  title: "Analyst's wrong correction is accepted by the bot and changes later answers"
+  level: L3
+  cell: {studio-question-type: correction-that-is-wrong, stage: studio-feedback-loop, recovery-action: manual-override-answer, answer-afterlife: disputed-by-studio}
+  object: "chatbot conversation; answers table"
+  situation: "Analyst says 'No, player 12 finished the tutorial' (confusing player 12 with player 21); bot replies 'You're right, updated: 112 -> 111'"
+  consequence: "Either the bot's in-chat number drifts from the table, or an override is written to the table by someone with no evidence; no audit row records who changed what"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Corrections create a dispute record with the cited evidence span; table values change only through a reviewed override with author and timestamp"
+  shallow: false
+- id: analyst-17
+  title: "Morning-after question answered over the 12 sessions that finished processing, not the 50 recorded"
+  level: L4
+  cell: {processing-status: transcribing, latency: "ingest-to-queryable (hours or days after session)", studio-question-type: cohort-count, scale: 50-players}
+  object: "'Ingestion time and cost are not a concern.'"
+  situation: "50-player playtest ends at 18:00; at 09:00 next day 38 sessions are queued or transcribing; analyst asks 'tutorial churn for yesterday's playtest?'"
+  consequence: "Bot answers '25% (3 of 12)' or '25%' with no n; analyst presents at 10:00 standup before the other 38 land"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Ingestion time and cost are not a concern. Answering a studio's question must be fast."
+  proposed: "Answer header shows 'processed 12/50 sessions, ETA hh:mm'; bot declines cohort % when coverage < 80% unless analyst confirms"
+  shallow: false
+- id: analyst-18
+  title: "Query during a re-extraction mixes old and new option sets with no version shown"
+  level: L4
+  cell: {time-and-change: rerun-in-progress-while-queried, question-set-version-state: mixed-versions-in-table, correctness-failure: mixed-version-aggregation, scale: 500-players-x-3-question-set-versions}
+  object: "answers table during a question-set change"
+  situation: "Question set v2 splits 'Confusing' into 'Confusing UI' and 'Confusing objective'; rerun has reached 300 of 500 players when analyst asks 'top quit reason'"
+  consequence: "v1 'Confusing' (200 players) outranks the two halves of v2; bot reports 'Confusing' as #1; an hour later the answer flips"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "Bot reads only a published snapshot (question_set_version + extraction_run_id) and names it in each answer; reruns publish atomically"
+  shallow: false
+- id: analyst-19
+  title: "Option renamed under the same id splits or merges a trend line without notice"
+  level: L4
+  cell: {question-set-version-state: option-renamed-same-id, studio-question-type: trend-over-time, time-and-change: question-set-revised, data-element: option}
+  object: "fixed answer options per question"
+  situation: "Option id 3 'Controls confusing' renamed to 'Input unclear' in March; analyst asks 'trend of control complaints Jan-Jun'"
+  consequence: "Bot matches on label text, so the line drops to 0 in March and 'Input unclear' appears from nowhere; or it matches on id and the analyst cannot see the meaning changed"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Option relabels create a new option id with a declared 'equivalent_to' link; trend answers annotate the change date"
+  shallow: false
+- id: analyst-20
+  title: "'Quote me what players said' returns invented quotes because the table holds no text"
+  level: L4
+  cell: {studio-question-type: quote-me-evidence, correctness-failure: hallucinated-answer, stage: chatbot-answer, data-element: utterance}
+  object: "answers table (options only) feeding the chatbot"
+  situation: "Analyst asks 'Give me 3 quotes from players who quit at the crafting step'"
+  consequence: "Bot writes plausible quotes ('I have no idea what to craft') attributed to player ids; they go into a slide as verbatim player voice"
+  p_typical: 0.13
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "Quotes are served only from stored evidence spans with transcript offset; bot says 'no stored quotes' otherwise"
+  shallow: false
+- id: analyst-21
+  title: "find-players-who list shows 20 ids and drops the rest without 'showing 20 of 73'"
+  level: L4
+  cell: {studio-question-type: find-players-who, chatbot-response-behaviour: silently-truncates-rows, scale: 500-players, stage: studio-ui}
+  object: "chatbot answer to a player list query"
+  situation: "Analyst asks 'Which players quit after the first boss?'; 73 match; reply renders 20 ids inline"
+  consequence: "Analyst copies 20 ids into a recontact list believing it is complete; 53 players never contacted"
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none"
+  proposed: "List answers print total count and offer full CSV export of all 73 ids"
+  shallow: false
+- id: analyst-22
+  title: "Device-platform split answered without device-platform in the table"
+  level: L3
+  cell: {data-element: device-platform, stage: chatbot-query-planning, chatbot-response-behaviour: answers-from-general-game-knowledge, scale: 500-players}
+  object: "'whether game telemetry is joined' (unspecified)"
+  situation: "Analyst asks 'Is tutorial churn worse on Android than iOS?'; no device field on session or video rows"
+  consequence: "Bot infers device from what players say ('my phone is lagging') for a few rows, or answers from general mobile benchmarks; output looks like a measured split"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "whether game telemetry is joined ... (Unspecified)"
+  proposed: "Bot lists which metadata fields exist for this game and replies 'device not recorded for this playtest' when absent"
+  shallow: false
+- id: analyst-23
+  title: "Cross-studio benchmark request answered with another tenant's data or uncited industry numbers"
+  level: L3
+  cell: {tenancy: cross-studio-benchmark-request, studio-question-type: cross-game-or-cross-studio-benchmark, chatbot-response-behaviour: answers-in-wrong-tenant-scope, data-element: studio-tenant}
+  object: "studio chatbot; 'Buyers are gaming studios'"
+  situation: "Analyst asks 'How does our tutorial churn compare to other mobile RPGs you've tested?'"
+  consequence: "If the bot's query has no studio filter, it returns another studio's churn %; if it does, it may quote an invented 'industry average 35%'"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Buyers are gaming studios."
+  proposed: "Bot replies with a fixed 'benchmarks across studios are not available' message; tenant id is a mandatory query predicate"
+  shallow: false
+- id: analyst-24
+  title: "Silent player's quit reason is answered confidently with no confidence or evidence indicator"
+  level: L4
+  cell: {speech-shape: silent-player, processing-status: transcript-empty, correctness-failure: confident-no-evidence, data-element: answer-confidence, studio-question-type: one-player-what-happened}
+  object: "per-video answer row; transcript"
+  situation: "Player 301 said 4 words in 15 minutes; extractor still picks 'Bored' for 'Primary reason for leaving'; analyst asks 'Why did player 301 quit?'"
+  consequence: "Bot: 'Player 301 quit because they were bored.' Same tone as a player who explained at length"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "The owner's view: the transcript alone is not enough; what is on screen is largely lost."
+  proposed: "Rows store transcript word count and extractor confidence; bot prefixes 'low evidence (4 words spoken)' when below 50 words"
+  shallow: false
+- id: analyst-25
+  title: "Moderator's hint credited as the player discovering a mechanic unaided"
+  level: L4
+  cell: {speech-shape: moderator-speaking-or-leading, correctness-failure: moderator-words-attributed-to-player, question-shape: fits-an-option, studio-question-type: cohort-count}
+  object: "transcript (no diarisation specified); question 'Did the player find the inventory unaided?'"
+  situation: "Moderator says 'try the bag icon' at 04:10; player opens inventory at 04:15; extractor answers Yes"
+  consequence: "Analyst reports '82% found inventory unaided'; true unaided rate in sessions with a talking moderator is unknown"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "What a transcript contains (speech only, on-screen text, events) ... (Unspecified)"
+  proposed: "Transcript carries speaker labels; questions about unaided discovery check for non-player speech in the preceding 60 s"
+  shallow: false
+- id: analyst-26
+  title: "Visual-only tutorial cue failure reported as 'instructions unclear' and acted on with a text rewrite"
+  level: L3
+  cell: {question-shape: perceptual-cause-not-verbalised, correctness-failure: perceptual-cause-attributed-to-verbal-option, answer-afterlife: acted-on-tutorial-changed, studio-question-type: cohort-why}
+  object: "'Transcript loses visual information.'"
+  situation: "Step 4 highlights the next door with a red glow that colour-blind or low-contrast players miss; they say 'where do I go?'; extractor picks 'Instructions unclear' for 60%"
+  consequence: "Studio rewrites tutorial text; churn at step 4 unchanged; the next playtest shows the same 60%"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Transcript loses visual information."
+  proposed: "Options for cause questions include 'cause not determinable from audio'; bot flags cohort-why answers where >30% of rows co-occur with 'where/what' questions in speech"
+  shallow: false
+- id: analyst-27
+  title: "Raw transcript or clip request falls off the fast path into minutes-long retrieval with no progress"
+  level: L4
+  cell: {fast-path-dependency: question-requires-raw-transcript-fallback, latency: minutes, studio-question-type: show-me-raw-transcript-or-clip, session-shape: 10-plus-hour-session}
+  object: "'Reading 500 transcripts per question was too slow'"
+  situation: "Analyst asks 'Show me what player 77 said around hour 9'; session is 44 videos; bot must locate video 37 and load its transcript"
+  consequence: "Chat spinner for 2+ minutes or a timeout; or bot loads the wrong video because offset-to-video mapping is not stored"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists."
+  proposed: "Single-player transcript lookups by session offset served from an index (session_id, offset_ms -> video_id, transcript chunk) under 2 s"
+  shallow: false
+- id: analyst-28
+  title: "Answer pasted into a deck carries no question-set version, run id, n or date"
+  level: L4
+  cell: {answer-afterlife: copied-into-deck, time-and-change: question-set-revised, data-element: extraction-run-id, studio-question-type: cohort-count}
+  object: "chatbot answer text"
+  situation: "Analyst copies '31% of players churned in tutorial' into a QBR deck; 3 weeks later the set is revised and re-extracted; re-asking gives 27%"
+  consequence: "Analyst cannot show which data produced 31%; the review questions the analyst, not the pipeline"
+  p_typical: 0.06
+  grounded: speculative
+  evidence: "none"
+  proposed: "Every answer ends with a copyable footer: cohort, n, question id + set version, extraction_run_id, as-of date"
+  shallow: false
+- id: analyst-29
+  title: "Cohort count changes after a player deletion with no note; old chat still quotes the deleted player"
+  level: L3
+  cell: {answer-afterlife: cited-after-player-deletion, time-and-change: player-deletion-request, processing-status: deleted-by-request, data-element: cached-aggregate}
+  object: "answers table; chatbot conversation history"
+  situation: "Player 412 requests deletion; next week analyst re-asks 'how many quit in tutorial' (112 -> 111) and scrolls back to last week's chat which names player 412's quit reason"
+  consequence: "Analyst sees an unexplained drift; deleted player's data persists in chat history and exported CSVs"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Answers show 'cohort changed since your last ask: -1 deleted' and deletion purges chat logs and cached aggregates referencing the player id"
+  shallow: false
+- id: analyst-30
+  title: "Precomputed tutorial-churn aggregate served after a model-upgrade rerun changed the rows"
+  level: L4
+  cell: {fast-path-dependency: cache-stale-after-rerun, latency: fast-but-stale, data-element: cached-aggregate, time-and-change: model-upgraded}
+  object: "fast-answer path ('Answering a studio's question must be fast')"
+  situation: "Extraction model upgraded and rerun moves tutorial churn from 31% to 27%; headline cache still returns 31% in 300 ms while a drill-down query returns 27%"
+  consequence: "Analyst sees 31% at the top and a breakdown summing to 27% in the same answer"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Answering a studio's question must be fast."
+  proposed: "Cache keys include extraction_run_id; publishing a new run invalidates all aggregates for that game"
+  shallow: false
+- id: analyst-31
+  title: "Unasked step read as 'no player did it' instead of 'not measured'"
+  level: L4
+  cell: {studio-question-type: question-about-a-step-the-set-never-asked, question-shape: negation-player-never-did-x, chatbot-response-behaviour: mixes-null-with-no, correctness-failure: null-treated-as-no}
+  object: "fixed question set (no question about the map)"
+  situation: "Analyst asks 'Did any players open the map during the tutorial?'"
+  consequence: "Bot finds no map column and answers 'No players opened the map' (absence of column read as absence of event); design team removes the map hint"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "The question set is small, so most of what is in the video and transcript is never captured."
+  proposed: "Planner distinguishes 'no column covers this' (reply: not measured) from 'column exists, all No'"
+  shallow: false
+- id: analyst-32
+  title: "Playtest readout with 15 analysts querying at once pushes answers past 40 s with no first token"
+  level: L4
+  cell: {latency: p99-tail-under-concurrency, scale: many-concurrent-studio-users, fast-path-dependency: concurrent-studio-load, chatbot-response-behaviour: times-out}
+  object: "'Answering a studio's question must be fast.'; 'latency and cost limits per query' unspecified"
+  situation: "Readout meeting: 15 analysts each send a text-to-SQL + summarise question within 1 minute"
+  consequence: "p99 exceeds 40 s, several requests time out with a generic error; analysts retry, doubling load"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "latency and cost limits per query ... (Unspecified)"
+  proposed: "Set a per-query SLO (p95 < 5 s at 20 concurrent users), stream a 'computing over n rows' first token under 1 s"
+  shallow: false
+- id: analyst-33
+  title: "Count question ('how many deaths in the tutorial?') stored as per-video buckets that cannot be summed"
+  level: L4
+  cell: {question-shape: answer-is-a-count, studio-question-type: cohort-count, stage: answer-options, session-shape: 2-4-videos}
+  object: "multiple-choice answer options"
+  situation: "Option set 0 / 1-2 / 3+ per video; tutorial spans videos 1-2; analyst asks 'average deaths before finishing the tutorial'"
+  consequence: "Bot adds bucket midpoints or picks the max bucket; '3+' in two videos becomes 6 or 3; reported average is an artefact of bucket choice"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "fixed set of questions with options"
+  proposed: "Count questions store an integer field per video and sum per session"
+  shallow: false
+- id: analyst-34
+  title: "Sessions whose recording started mid-tutorial counted as players who skipped early steps"
+  level: L3
+  cell: {session-shape: tutorial-started-before-recording, question-shape: event-did-not-happen-in-this-video, correctness-failure: null-treated-as-no, studio-question-type: cohort-count}
+  object: "video capture; question 'Did the player skip the intro cinematic?'"
+  situation: "In 9 of 50 sessions recording started 3 minutes into the tutorial; intro is absent; extractor answers 'Yes, skipped' or 'No, watched' at random"
+  consequence: "Analyst reports 'skip rate 34%' with 18% of sessions having no observable intro"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Session record flags 'recording began at tutorial step k'; questions about earlier steps return NA for those sessions"
+  shallow: false
+- id: analyst-35
+  title: "Quotes from Portuguese sessions shown in English with no 'translated' marker"
+  level: L3
+  cell: {speech-shape: non-english, studio-question-type: quote-me-evidence, data-element: utterance, stage: chatbot-answer}
+  object: "'languages' (unspecified)"
+  situation: "Analyst asks in English for quotes; source sessions are Brazilian Portuguese"
+  consequence: "Bot outputs English sentences in quotation marks; analyst presents them as verbatim; slang ('tá travado') loses meaning"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "languages ... (Unspecified)"
+  proposed: "Quote answers show original text plus a labelled translation and the source language code"
+  shallow: false
+- id: analyst-36
+  title: "Player with 3 sessions counted as 3 players in 'find players who returned'"
+  level: L4
+  cell: {session-shape: same-player-multiple-sessions, studio-question-type: find-players-who, data-element: player, correctness-failure: duplicate-counted}
+  object: "session vs player keys in the answers table"
+  situation: "Player 55 plays on day 1, 2 and 4; analyst asks 'how many players came back after quitting the tutorial?'"
+  consequence: "If rows are keyed by session, bot cannot link the 3 sessions and returns 0 returners; if keyed by a recycled tester id, it links different people"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "how videos of one session are linked ... (Unspecified)"
+  proposed: "Stable player_id distinct from session_id on every row; bot states whether a count is per player or per session"
+  shallow: false
+- id: analyst-37
+  title: "Single-choice quit reason hides the second cause, so cohort-why percentages are forced-choice artefacts"
+  level: L4
+  cell: {question-shape: two-options-both-partly-true, correctness-failure: forced-choice-bias, studio-question-type: cohort-why, data-element: answer}
+  object: "multiple-choice 'Primary reason for leaving'"
+  situation: "Player says 'too hard, and honestly kind of boring'; extractor picks 'Too hard'; across cohort, 62% 'Too hard'"
+  consequence: "Analyst reports difficulty as the dominant cause; boredom (co-present in maybe a third) never surfaces"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "fixed set of questions with options"
+  proposed: "Cause questions are multi-select with a primary flag; bot reports both primary-only and any-mention rates"
+  shallow: false
+- id: analyst-38
+  title: "Crash that split one session into two is counted as a tutorial quit"
+  level: L3
+  cell: {session-shape: session-split-by-crash-into-two, studio-question-type: cohort-count, data-element: session, correctness-failure: wrong-denominator}
+  object: "session linking ('how videos of one session are linked' unspecified)"
+  situation: "Game crashes at step 5; player relaunches and finishes; pipeline stores session A (ends mid-tutorial) and session B (starts mid-tutorial)"
+  consequence: "Session A counts as churn, session B as a separate player; churn rate inflated and the crash (a bug the studio wants) is reported as a design problem"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "how videos of one session are linked ... (Unspecified)"
+  proposed: "Sessions from one player within 10 minutes are merged with a 'crash_restart' marker; churn excludes sessions ending in a crash"
+  shallow: false
+- id: analyst-39
+  title: "Version comparison reports percentages on 13 vs 487 sessions with no sample size"
+  level: L4
+  cell: {studio-question-type: compare-two-versions, scale: 50-players, data-element: cohort, correctness-failure: wrong-denominator}
+  object: "chatbot numeric answer"
+  situation: "Only 13 sessions on build 1.4; analyst asks 'Is 1.4 tutorial churn better than 1.3?'"
+  consequence: "Bot says '1.4: 15% vs 1.3: 31%, 16 points better'; 2 of 13 is noise; the studio ships on it"
+  p_typical: 0.11
+  grounded: inferred
+  evidence: "so that a question over, say, 500 players is fast"
+  proposed: "Every comparison prints n per group and a 95% interval; bot adds 'too few sessions' below n = 30"
+  shallow: false

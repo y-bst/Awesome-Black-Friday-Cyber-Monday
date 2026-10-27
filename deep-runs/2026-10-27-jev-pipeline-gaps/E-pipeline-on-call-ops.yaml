@@ -1,0 +1,504 @@
+- id: ops-1
+  title: "Session of 8 videos where 6 transcribe and 2 hit transcription-failed: no 'partial' session status, and session-level aggregation still emits a session row as if all 8 were read"
+  level: L3
+  cell: {stage: session-level-aggregation, session-shape: 5-20-videos, processing-status: transcription-failed, batch-failure-mix: one-video-of-session-failed, recovery-action: retry-one-video}
+  object: "session -> video -> transcript chain; spec item 1 'one session is many videos' and item 3 'a structured table per video'"
+  situation: "Videos 3 and 7 of an 8-video, 2-hour session fail speech-to-text (vendor 5xx, then retries exhausted); videos 1,2,4,5,6,8 reach extraction and write answer rows"
+  consequence: "Session-level answer 'player quit during tutorial: No' is computed from 6 of 8 videos (75% coverage); the 30 missing minutes may contain the quit; the cohort count includes this session at full weight and nobody sees that it is partial"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "A session can be n hours; each video is capped at 15 minutes, so one session is many videos."
+  proposed: "Session status = min over its videos (complete only when 8/8 complete); store videos_expected and videos_complete per session; aggregation excludes or flags sessions with coverage < 100%; per-video retry button keyed on (session_id, video_index)"
+  shallow: false
+- id: ops-2
+  title: "Answers table has no row for a queued video and the chatbot reads the missing row as 'No' for 'did the player abandon the tutorial'"
+  level: L4
+  cell: {stage: answers-table, data-element: null-vs-no, processing-status: queued, correctness-failure: null-treated-as-no, chatbot-response-behaviour: mixes-null-with-no}
+  object: "answers table per video (spec item 3); the chatbot answering 'from that table' (spec item 4)"
+  situation: "120 of 500 players' tutorial videos are still queued for extraction when the studio asks 'how many players abandoned the tutorial?'; a LEFT JOIN or an LLM reading the table sees no 'Yes' for those 120 and counts them as not abandoning"
+  consequence: "Reported abandonment = 95/500 = 19% instead of 95/380 = 25%; the 120 unprocessed players silently lower the rate by 6 points"
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Write a placeholder row per (video, question) at ingest with status=pending and answer=NULL; test: query returning count must report pending=120 separately; chatbot prompt forbids treating pending as No"
+  shallow: false
+- id: ops-3
+  title: "Question Q5 fails extraction on 3 of 12 videos (LLM returned an option string not in the list) while Q1-Q4 and Q6-Q8 succeed; video status says 'extracted', no per-question status exists"
+  level: L3
+  cell: {stage: per-video-answers, processing-status: extraction-partial-some-questions, batch-failure-mix: some-questions-failed-in-one-video, recovery-action: retry-one-question, correctness-failure: null-treated-as-no}
+  object: "fixed set of questions with options per transcript (spec item 3)"
+  situation: "Model output for Q5 is 'Partially - the player found the menu later' which matches none of the 4 option ids; the parser drops it and marks the video done"
+  consequence: "Q5 has 9 answers for 12 videos with no record that 3 failed; the only retry path is re-running the whole video, which re-calls all 8 questions and can flip the 7 answers that were already stored"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "Status per (video_id, question_id) with values ok / parse_failed / model_error; retry endpoint scoped to one (video_id, question_id); daily count of parse_failed per question with alert above 2%"
+  shallow: false
+- id: ops-4
+  title: "Re-run after a prompt change reaches 470 of 500 players before the job stalls; cohort counts mix prompt v1 rows (30 players) and v2 rows (470) with nothing in the answer saying so"
+  level: L3
+  cell: {stage: rerun-and-backfill, scale: 500-players, processing-status: rerun-in-progress, recovery-action: backfill-after-question-set-change, correctness-failure: mixed-version-aggregation, studio-question-type: cohort-count}
+  object: "answers table rows per video; prompt-version (no field for it in spec)"
+  situation: "Extraction prompt for 'reason for leaving tutorial' is reworded; backfill job processes players in id order and dies on a rate-limit at player 471; nobody restarts it for 4 days"
+  consequence: "'Instructions unclear' share = blend of v1 (which over-picks it) and v2; on-call has no query listing which 30 players are still on v1 because rows carry no prompt_version"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "the framework for generating the questions so that any type of question can be answered."
+  proposed: "Every answer row stores prompt_version and extraction_run_id; backfill progress table (players_total=500, players_done=470) shown in the ops dashboard; chatbot only reads rows where prompt_version = active version, and reports '470/500 on current version'"
+  shallow: false
+- id: ops-5
+  title: "Non-idempotent retry inserts a second answer row for (video 4, Q2); 'players who quit at step 3' counts this player twice"
+  level: L4
+  cell: {stage: answers-table, batch-failure-mix: retry-produced-duplicate, correctness-failure: duplicate-counted, data-element: extraction-run-id, recovery-action: retry-one-video}
+  object: "answers table per video (spec item 3)"
+  situation: "Worker writes rows, then times out before acking the queue message; the message is redelivered and the worker inserts 8 more rows with new auto-increment ids"
+  consequence: "Check 'SELECT video_id, question_id, COUNT(*) FROM answers GROUP BY 1,2 HAVING COUNT(*) > 1' returns rows; cohort count of 'quit at step 3' is 41 instead of 40; with nondeterministic LLM output the two rows may also disagree (one Yes, one No)"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Unique key (video_id, question_id, question_set_version, prompt_version); writes are upserts; nightly duplicate check with zero tolerance"
+  shallow: false
+- id: ops-6
+  title: "A game's daily ingest drops from ~40 sessions to 0 after a build update broke the capture uploader; no alert fires for 9 days"
+  level: L4
+  cell: {stage: upload-and-ingest, processing-status: not-yet-uploaded, scale: 10-games-at-once, time-and-change: game-update-changes-tutorial, latency: "ingest-to-queryable (hours or days after session)"}
+  object: "video capture -> upload path (spec item 1); 'how videos of one session are linked' is unspecified"
+  situation: "Studio ships build 1.4 with the new tutorial; the capture SDK version in that build fails auth on upload; sessions are played but nothing arrives"
+  consequence: "The exact cohort the studio wants (new tutorial) is empty; the chatbot answers 'compare old vs new tutorial' from the old build only or says nothing; ops sees no failed jobs because no jobs were created"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Per-game ingest-volume monitor: alert when sessions/day < 20% of trailing 7-day median for 24h; alert includes last build_id seen"
+  shallow: false
+- id: ops-7
+  title: "Video 4 of a 9-video session arrives 2 days after session-level aggregation ran; session row and cached cohort aggregate are never recomputed"
+  level: L3
+  cell: {stage: aggregate-cache, batch-failure-mix: late-arriving-video-after-aggregation, session-shape: missing-middle-video, fast-path-dependency: cache-stale-after-rerun, latency: fast-but-stale}
+  object: "session-level aggregation and precomputed aggregate behind 'a question over, say, 500 players is fast' (spec item 4)"
+  situation: "Upload of video 4 retried from the player's machine after a network outage; it is transcribed and extracted on arrival, but the session aggregate was finalised when videos 1-3 and 5-9 were complete"
+  consequence: "Video 4 holds the tutorial quit; the session still reads 'completed tutorial'; cohort quit rate stays 1 player low until someone rebuilds the cache by hand"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast."
+  proposed: "Any per-video answer write emits session_dirty(session_id); aggregation and cache keyed on session re-run on dirty; session never finalises while a gap in video_index exists without a 'gap confirmed' flag"
+  shallow: false
+- id: ops-8
+  title: "Silent player's video yields an empty transcript; status goes to 'complete' and extraction runs on an empty string, returning a forced option for all 8 questions"
+  level: L4
+  cell: {stage: per-video-answers, processing-status: transcript-empty, speech-shape: silent-player, correctness-failure: hallucinated-answer, transcription-subsystem: empty-transcript-for-non-empty-video}
+  object: "transcript (spec item 2) fed to fixed question set (spec item 3)"
+  situation: "Player plays 15 minutes without speaking and game audio is low; speech-to-text returns 0 words; the extraction prompt still asks 'why did the player leave the tutorial' with 4 options and no 'cannot tell'"
+  consequence: "Answer rows exist with confident options for a video with no evidence; empty-transcript share per game is not measured, so a cohort of quiet players looks like 'lost interest'"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Each video is converted to a transcript. The owner's view: the transcript alone is not enough"
+  proposed: "If transcript word count < 20 for a 15-minute video, set status transcript-empty, skip extraction, write answer=NULL reason=no_speech; dashboard shows % transcript-empty per game per day"
+  shallow: false
+- id: ops-9
+  title: "Video that fails transcription 3 times sits in a dead-letter queue with no owner; its session never completes and the chatbot drops it from cohorts without a count"
+  level: L3
+  cell: {stage: job-orchestration-and-status, processing-status: transcription-failed, batch-failure-mix: some-sessions-failed-in-cohort, recovery-action: skip-and-mark-unknown, studio-question-type: cohort-count}
+  object: "job pipeline between video and transcript (spec item 2); no failure state defined in spec"
+  situation: "14 of 500 sessions have at least one video in the DLQ after a vendor incident; DLQ has no TTL, no daily report and no 'give up and mark unknown' action"
+  consequence: "Those 14 sessions are excluded or half-included indefinitely; on-call learns about it only when a studio asks why a named player is missing"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "DLQ items older than 48h trigger a page; an action 'mark video unknown' lets the session complete with coverage < 100% and a visible flag"
+  shallow: false
+- id: ops-10
+  title: "Session whose upload produced zero videos (game crashed at launch) never creates a session row, so the players most likely to churn are absent from the denominator"
+  level: L3
+  cell: {stage: session-level-aggregation, session-shape: zero-videos-session-failed, processing-status: not-yet-uploaded, correctness-failure: wrong-denominator, studio-question-type: cohort-count}
+  object: "session (spec item 1); the 500-player cohort the chatbot counts over (spec item 4)"
+  situation: "12 of 500 recruited players' sessions crash before the capture writes its first video; the pipeline is video-driven, so no record of these sessions exists"
+  consequence: "Tutorial churn computed over 488 players; the 12 who churned hardest (could not start) are invisible; ops cannot list 'sessions expected vs received'"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Create the session record at recording start with status not-yet-uploaded; sessions with 0 videos after 24h become status zero-videos and are reported in every cohort answer as a separate count"
+  shallow: false
+- id: ops-11
+  title: "Transcription vendor outage of 6 hours fails every job in a 50,000-video backfill; exponential retries without a global rate cap create a retry storm when the vendor recovers"
+  level: L3
+  cell: {stage: transcription, batch-failure-mix: all-failed, scale: 50000-videos, recovery-action: rerun-whole-session, latency: batch-overnight}
+  object: "transcription stage (spec item 2); 'Ingestion time and cost are not a concern'"
+  situation: "Vendor returns 503 for 6h; 50,000 queued jobs each retry 5 times then dead-letter; on recovery, a manual 'rerun all' re-submits all sessions, including the 30% that had already succeeded"
+  consequence: "Duplicate transcription spend on ~15,000 videos and a second wave of 429 rate-limit failures; the overnight batch finishes 2 days late, and status per video cannot tell 'failed in outage' from 'failed on content'"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern. Answering a studio's question must be fast."
+  proposed: "Circuit breaker on vendor error rate > 50% over 5 min pauses the queue instead of failing jobs; rerun selects only videos with status transcription-failed and failure_reason=vendor_unavailable"
+  shallow: false
+- id: ops-12
+  title: "Extraction model deprecated by vendor forces a backfill of all videos; during the multi-day backfill the table holds rows from two extraction models with no extraction_model_version column"
+  level: L3
+  cell: {stage: rerun-and-backfill, time-and-change: extraction-vendor-deprecates-model, recovery-action: backfill-after-model-upgrade, processing-status: superseded-by-rerun, data-element: extraction-model-version}
+  object: "answers table (spec item 3) produced by an LLM over transcripts"
+  situation: "Vendor gives 30 days' notice; backfill over 50,000 videos x 8 questions = 400,000 calls runs for 5 days; new rows overwrite old rows in place as each video finishes"
+  consequence: "For 5 days any cohort answer mixes two models whose option distributions differ; after cutover there is no way to compare old vs new on the same videos because old rows were overwritten"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Backfill writes to a shadow table tagged with model version; switch the chatbot's read pointer only when shadow coverage = 100%; keep the old table 30 days for a diff report per question"
+  shallow: false
+- id: ops-13
+  title: "Rerun appends new rows without flagging the old ones as superseded; chatbot reads both versions of Q3 for the same video"
+  level: L4
+  cell: {stage: rerun-and-backfill, processing-status: superseded-by-rerun, correctness-failure: duplicate-counted, question-set-version-state: mixed-versions-in-table, chatbot-response-behaviour: invents-number}
+  object: "answers table rows per video (spec item 3)"
+  situation: "Re-extraction after a question set edit inserts rows with question_set_version=2 but the read path filters only on game_target, not version"
+  consequence: "Sum of option counts for Q3 = 2x the number of videos for re-run videos; the chatbot reports '1.6 reasons per player'; test: for each (video, question) the read path returns exactly 1 row"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "Column is_current set false on old rows in the same transaction that inserts new rows; read path filters is_current = true"
+  shallow: false
+- id: ops-14
+  title: "Studio asks at 3am while a backfill is 60% done; the same question asked at 9am gives a different number and the 3am number is already in a deck"
+  level: L3
+  cell: {time-and-change: rerun-in-progress-while-queried, processing-status: rerun-in-progress, chatbot-response-behaviour: differs-on-re-ask, latency: fast-but-stale, answer-afterlife: copied-into-deck}
+  object: "chatbot answer from the table (spec item 4)"
+  situation: "Backfill after a prompt change runs overnight; at 03:00 42% of rows are v1 and 58% v2; the answer carries no run id or 'backfill in progress' notice"
+  consequence: "Deck says 31% tutorial churn, chatbot says 27% at 09:00; nobody can reproduce 31% because the v1 rows were overwritten"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Answering a studio's question must be fast."
+  proposed: "Chatbot answers append 'data as of <table snapshot id>; backfill 58% complete'; snapshots retained 30 days so a deck number can be re-derived"
+  shallow: false
+- id: ops-15
+  title: "Manual override of one disputed answer is silently overwritten by the next model-upgrade backfill"
+  level: L3
+  cell: {stage: rerun-and-backfill, recovery-action: manual-override-answer, answer-afterlife: disputed-by-studio, time-and-change: model-upgraded, data-element: answer}
+  object: "answers table row (spec item 3)"
+  situation: "Studio disputes 'player 217 quit due to difficulty'; an analyst watches the video and sets the answer to 'crash'; 3 weeks later the backfill rewrites all rows for that game"
+  consequence: "Correction lost; the studio sees the disputed answer return; no audit trail shows the override ever existed"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Override stored as a separate row (source=human, author, timestamp) that the read path prefers over source=model; backfill skips (video, question) pairs with a human override and reports the count skipped"
+  shallow: false
+- id: ops-16
+  title: "Deletion request completes while an extraction job for the same video is in flight; the job then writes 8 answer rows for a deleted player"
+  level: L3
+  cell: {stage: retention-and-deletion, recovery-action: delete-and-propagate, processing-status: extracting, time-and-change: player-deletion-request, data-element: answer}
+  object: "player -> video -> transcript -> answers chain (spec items 1-3)"
+  situation: "Delete job removes video, transcript and existing answer rows at 10:00:00; an extraction worker that loaded the transcript at 09:59:50 writes its results at 10:00:20"
+  consequence: "Orphan answer rows reference a deleted video_id; the player keeps appearing in cohort counts; a deletion audit would show the player 'deleted' while their data is still queryable"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "none"
+  proposed: "Deletion writes a tombstone (player_id, deleted_at) first; every writer checks the tombstone in the same transaction as the insert; post-delete sweep at +1h re-deletes stragglers"
+  shallow: false
+- id: ops-17
+  title: "Precomputed cohort aggregate still includes a player deleted by request; chatbot cites the old count after deletion"
+  level: L3
+  cell: {stage: aggregate-cache, processing-status: deleted-by-request, data-element: cached-aggregate, answer-afterlife: cited-after-player-deletion, fast-path-dependency: precomputed-aggregate-exists}
+  object: "fast path behind 'a question over, say, 500 players is fast' (spec item 4)"
+  situation: "Player deletion removes base rows; the cached '% quit at tutorial step 2' for that game was built yesterday and has no dependency on player ids"
+  consequence: "Answer still reflects 500 players, one of whom no longer exists; on-call has no list of caches that touched that player"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "so that a question over, say, 500 players is fast"
+  proposed: "Cache entries store the set or count of session ids they cover; deletion marks every cache containing that session dirty; rebuild within 24h"
+  shallow: false
+- id: ops-18
+  title: "Client upload retry creates a duplicate upload of the same 15-minute video under a new video_id; pipeline reports all-succeed and the player's events count twice"
+  level: L4
+  cell: {stage: upload-and-ingest, session-shape: duplicate-upload, batch-failure-mix: all-succeed, correctness-failure: duplicate-counted, question-shape: answer-is-a-count}
+  object: "video (spec item 1); answers table per video (spec item 3)"
+  situation: "Network drops at 99% upload; client retries with a fresh multipart id; server stores both; both transcribe and extract"
+  consequence: "'Number of deaths in tutorial' doubles for that player; session shows 9 videos where 8 were recorded; check: two videos in one session with identical content hash and duration"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes, so one session is many videos"
+  proposed: "Dedup on (session_id, video_index) and on content SHA-256 at ingest; second copy is linked as duplicate_of and never enqueued"
+  shallow: false
+- id: ops-19
+  title: "Upload truncated to 9 minutes of a 15-minute video is accepted as a normal video; status never shows uploaded-partial"
+  level: L4
+  cell: {stage: upload-and-ingest, processing-status: uploaded-partial, capture-integrity: upload-truncated, session-shape: 5-20-videos, batch-failure-mix: all-succeed}
+  object: "15-minute video cap (spec item 1)"
+  situation: "Capture client crashes mid-upload; server finalises what it received; transcription and extraction succeed on 9 minutes"
+  consequence: "6 minutes of the session are gone with no record; check: non-final video with duration < 14:30 or container missing end-of-file index"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes"
+  proposed: "Client sends expected duration and byte length in a manifest; server sets uploaded-partial when received < expected and requests re-upload"
+  shallow: false
+- id: ops-20
+  title: "Audio extraction fails on an unreadable codec and the job records transcript-empty instead of transcription-failed, so no retry is ever attempted"
+  level: L3
+  cell: {stage: audio-extraction, capture-integrity: codec-unreadable, processing-status: transcript-empty, recovery-action: retry-one-video, transcription-subsystem: empty-transcript-for-non-empty-video}
+  object: "video -> transcript conversion (spec item 2)"
+  situation: "A capture tool update writes audio in a codec the extractor build lacks; ffmpeg exits non-zero; the wrapper catches the error and passes an empty audio file to speech-to-text"
+  consequence: "Every session from devices with the new capture tool looks like a silent player; retry logic skips transcript-empty as 'not an error'"
+  p_typical: 0.03
+  grounded: speculative
+  evidence: "Each video is converted to a transcript."
+  proposed: "Separate failure_reason values decode_error vs no_speech; decode_error is retryable and alerts when > 1% of a day's videos"
+  shallow: false
+- id: ops-21
+  title: "Extraction call refused or filtered by the LLM vendor on a profanity-heavy transcript; the runner maps the refusal to the 'Other' option instead of extraction-failed"
+  level: L3
+  cell: {stage: extraction-prompt, processing-status: extraction-failed, speech-shape: profanity-or-slang, correctness-failure: other-option-overused, batch-failure-mix: some-questions-failed-in-one-video}
+  object: "fixed question set with options (spec item 3)"
+  situation: "Frustrated player swears continuously in video 2; vendor content filter returns a refusal for 3 of 8 questions; fallback code picks the last option"
+  consequence: "'Other' rises to 18% for the angriest players, the very cohort the churn target is about; ops sees no failures"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "Refusal and parse failure write status extraction-failed with reason; dashboard shows refusal rate per question per game; no fallback to any option"
+  shallow: false
+- id: ops-22
+  title: "Stitched transcript of a 10-hour session exceeds the extraction context; the runner truncates it and still marks the session complete"
+  level: L3
+  cell: {stage: session-stitching, scale: 1-player-10-hour-session, transcription-subsystem: truncated-at-length-limit, processing-status: complete, session-shape: 10-plus-hour-session}
+  object: "'Long multi-video sessions' (spec, known problems)"
+  situation: "40 videos x ~2,000 words = ~80,000 words; session-level questions get the first N tokens only"
+  consequence: "Answers about post-tutorial churn (late in the session) come from text that never reached the model; status complete hides the truncation"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Long multi-video sessions."
+  proposed: "Record input_tokens_sent vs input_tokens_total per call; status complete-truncated when they differ; session questions run per video and reduce, not over one concatenation"
+  shallow: false
+- id: ops-23
+  title: "One studio's 50,000-video backfill fills the shared queue and new sessions from 9 other games wait 3 days to become queryable"
+  level: L3
+  cell: {stage: job-orchestration-and-status, tenancy: many-studios-shared-infra, scale: 10-games-at-once, recovery-action: backfill-after-question-set-change, latency: "ingest-to-queryable (hours or days after session)"}
+  object: "ingest pipeline; 'Ingestion time and cost are not a concern'"
+  situation: "Backfill and fresh ingest share one FIFO queue with no priority or per-tenant cap"
+  consequence: "A studio that just ran a playtest cannot ask about it for 72h; the 'ingestion time is not a concern' constraint holds for cost but not for freshness"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "Two queues: fresh ingest (priority) and backfill (capped at 30% of workers); SLO ingest-to-queryable p95 < 6h measured per game"
+  shallow: false
+- id: ops-24
+  title: "Chatbot cohort answer gives no coverage line, so '380 of 500 sessions complete, 120 queued' is never shown to the studio"
+  level: L4
+  cell: {stage: chatbot-answer, processing-status: queued, studio-question-type: cohort-count, scale: 500-players, time-and-change: first-game-onboarded}
+  object: "chatbot answer over 500 players (spec item 4)"
+  situation: "First playtest of a newly onboarded game; analyst asks the morning after; a quarter of the sessions are still in the queue"
+  consequence: "Analyst reads '22% tutorial churn' as final; expected answer text includes 'based on 380 of 500 sessions; 120 queued; 0 failed'"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "so that a question over, say, 500 players is fast"
+  proposed: "Every cohort answer appends a status breakdown from a per-session status table (complete / partial / queued / failed / deleted)"
+  shallow: false
+- id: ops-25
+  title: "Rollback from question set v3 to v2 leaves v3 rows in the table; no rule says which rows are current after a rollback"
+  level: L3
+  cell: {stage: question-set-registry, question-set-version-state: rollback-to-old-version, recovery-action: backfill-after-question-set-change, processing-status: superseded-by-rerun, correctness-failure: mixed-version-aggregation}
+  object: "fixed question set 'written per game target' (spec item 3)"
+  situation: "v3 adds an option that the model over-picks; PM rolls back to v2 after 2 days; 1,200 videos processed under v3 keep v3 rows"
+  consequence: "Readers filtering 'latest version' get v3; readers filtering 'active version' get v2 for most and nothing for 1,200 videos"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "a fixed set of questions with options, written per game target"
+  proposed: "Registry holds active_version per game target separately from max version; rollback enqueues re-extraction of rows whose version != active and reports remaining count"
+  shallow: false
+- id: ops-26
+  title: "Option renamed under the same id mid-backfill: option 3 means 'UI unclear' in old rows and 'Instructions unclear' in new rows"
+  level: L3
+  cell: {stage: answers-table, question-set-version-state: option-renamed-same-id, processing-status: rerun-in-progress, correctness-failure: mixed-version-aggregation, studio-question-type: distribution-not-count}
+  object: "answer options of the fixed question set (spec item 3)"
+  situation: "PM edits label text in the registry without bumping version; table stores option ids; backfill is 40% through"
+  consequence: "Distribution chart labels all option-3 rows with the new text; 60% of them were answered against the old meaning"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "a fixed set of questions with options"
+  proposed: "Any label edit creates a new option id or a new version; registry rejects in-place label changes when rows exist"
+  shallow: false
+- id: ops-27
+  title: "Question retired from the set keeps its rows; chatbot keeps answering from a question that covers only players processed before retirement"
+  level: L3
+  cell: {stage: rerun-and-backfill, question-set-version-state: question-retired, fast-path-dependency: precomputed-aggregate-exists, chatbot-response-behaviour: invents-number, scale: 500-players}
+  object: "fixed question set and answers table (spec item 3)"
+  situation: "Q7 retired in March; 300 of 500 players were processed before; aggregate for Q7 still in cache"
+  consequence: "Chatbot says '45% of players' for Q7 using 300 as if it were 500, or divides by 500"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "Retired questions marked in registry; chatbot query planner excludes them unless asked, and states the covered player count when it uses them"
+  shallow: false
+- id: ops-28
+  title: "Session split into two by a game crash gets two session ids; no merge operation exists, so one player has 'quit tutorial' in session A and 'completed' in session B"
+  level: L3
+  cell: {stage: session-stitching, session-shape: session-split-by-crash-into-two, recovery-action: rerun-whole-session, data-element: player, correctness-failure: inconsistent-across-videos}
+  object: "'how videos of one session are linked' (spec, unspecified)"
+  situation: "Game crashes at minute 22; player relaunches; capture starts a new session id"
+  consequence: "Crash counted as tutorial quit in A; player counted twice in the cohort; on-call has no command to merge A and B and re-run aggregation"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "how videos of one session are linked"
+  proposed: "Merge operation: reassign B's videos to A with video_index offset, mark B merged_into=A, re-run session aggregation; heuristic flag for same player with sessions < 10 min apart"
+  shallow: false
+- id: ops-29
+  title: "Parallel workers finish video 7 before video 2 and the stitcher assigns video_index by completion time, attaching answers to the wrong position in the session"
+  level: L4
+  cell: {stage: job-orchestration-and-status, session-shape: videos-out-of-order, capture-integrity: clock-drift-between-videos, correctness-failure: answer-attached-to-wrong-video-index, question-shape: answer-depends-on-prior-video}
+  object: "'how videos of one session are linked' (spec, unspecified)"
+  situation: "No video_index in the upload manifest; ordering derived from upload or completion timestamp; capture device clock drifts 3 minutes"
+  consequence: "Timeline shows the quit before the tutorial start; test: for every session, video_index sequence equals recording start order from the capture manifest"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "how videos of one session are linked"
+  proposed: "Capture client writes video_index and recording_start into each upload; stitcher sorts on video_index only and flags gaps"
+  shallow: false
+- id: ops-30
+  title: "Final 40-second video fails transcription (below vendor minimum length) and blocks the session from ever reaching complete"
+  level: L3
+  cell: {stage: transcription, session-shape: last-video-under-1-minute, processing-status: transcription-failed, batch-failure-mix: one-video-of-session-failed, recovery-action: skip-and-mark-unknown}
+  object: "15-minute split (spec item 1)"
+  situation: "Session length 2h00m40s yields 8 full videos plus one 40-second tail; vendor returns an error for audio under 60s"
+  consequence: "Retries fail deterministically 5 times; session stuck in transcribing; it is excluded from cohorts that require complete sessions"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes"
+  proposed: "Tail videos under 60s are padded or concatenated to the previous video before transcription; non-retryable errors go to skip-and-mark-unknown after 1 attempt"
+  shallow: false
+- id: ops-31
+  title: "Transcription model upgraded mid-session backfill: videos re-transcribed with the new model do not trigger re-extraction, so answers are computed from the old transcript text"
+  level: L3
+  cell: {stage: rerun-and-backfill, transcription-subsystem: transcription-model-version-differs-across-videos, time-and-change: transcription-model-upgraded, data-element: transcription-model-version, recovery-action: backfill-after-model-upgrade}
+  object: "transcript -> answers dependency (spec items 2 and 3)"
+  situation: "Speech-to-text v2 rolled out; 5 of 12 videos of a session re-transcribed; extraction job keyed only on video_id sees rows exist and skips"
+  consequence: "Answers no longer match the stored transcript; evidence quotes shown to the studio point to text that is not in the current transcript"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Answer rows store transcript_id/hash; a transcript change invalidates its answers and enqueues re-extraction"
+  shallow: false
+- id: ops-32
+  title: "Cached aggregate for 'reason for leaving tutorial' is not invalidated after a backfill; chatbot answers in under 2s with pre-backfill numbers"
+  level: L4
+  cell: {stage: aggregate-cache, fast-path-dependency: cache-stale-after-rerun, latency: fast-but-stale, processing-status: complete, chatbot-response-behaviour: differs-on-re-ask}
+  object: "fast path for 500-player questions (spec item 4)"
+  situation: "Backfill completes at 14:00; cache TTL is 24h; cache key is (game, question) without question_set_version"
+  consequence: "Until 14:00 next day the cached answer differs from a fresh query; test: cache_key includes active question_set_version and max(extraction_run_id) and the answer changes after backfill"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "Answering a studio's question must be fast."
+  proposed: "Cache key includes table snapshot id; backfill completion bumps the snapshot id"
+  shallow: false
+- id: ops-33
+  title: "Adding one option to one question re-extracts all 50 questions for every video because the runner cannot scope a rerun to one question"
+  level: L3
+  cell: {stage: rerun-and-backfill, scale: 500-players-x-3-question-set-versions, question-set-version-state: option-added, recovery-action: backfill-after-question-set-change, latency: batch-overnight}
+  object: "fixed question set per game target (spec item 3)"
+  situation: "500 players x ~12 videos x 50 questions = 300,000 calls per backfill; 3 versions in a month = 900,000 calls; only 6,000 (one question) needed re-running each time"
+  consequence: "Backfill takes 3 days instead of 1 hour; during it the table is mixed-version (see rerun-in-progress); 49 unchanged questions may flip answers from LLM nondeterminism"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "Versions are per question, not per set; backfill selects (video, question) pairs whose question version != active"
+  shallow: false
+- id: ops-34
+  title: "Videos and transcripts expire at retention before a question-set change; backfill cannot run for older sessions, leaving the table permanently mixed-version"
+  level: L3
+  cell: {stage: retention-and-deletion, time-and-change: retention-expiry, recovery-action: backfill-after-question-set-change, question-set-version-state: mixed-versions-in-table, studio-question-type: trend-over-time}
+  object: "transcript (spec item 2) as the only re-extraction input"
+  situation: "Transcripts kept 90 days; question set v4 ships in month 7; sessions from months 1-4 have only v3 answers and no transcript"
+  consequence: "Trend over 7 months compares v3 answers (months 1-4) to v4 (5-7); the trend break is an artefact of the version"
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "none"
+  proposed: "Retention for transcripts set >= the period over which trends are reported, or trend answers restricted to rows on one version with the covered months stated"
+  shallow: false
+- id: ops-35
+  title: "Studio offboarded while 3,000 of its jobs are still queued; workers keep writing answer rows for a tenant that no longer exists"
+  level: L3
+  cell: {stage: job-orchestration-and-status, tenancy: studio-offboarded, processing-status: queued, recovery-action: delete-and-propagate, time-and-change: studio-offboarded}
+  object: "answers table and chatbot for 'the gaming studio' (spec item 4)"
+  situation: "Offboarding deletes the studio's tables at 12:00; queued extraction jobs carry the tenant id and recreate rows from 12:01"
+  consequence: "Data retained after contract end; storage and inference spent on a gone tenant"
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "Buyers are gaming studios."
+  proposed: "Offboarding first sets tenant state=closing, drains or cancels its queued jobs, then deletes; workers reject jobs for closed tenants"
+  shallow: false
+- id: ops-36
+  title: "Answer rows carry no extraction_run_id, so on-call cannot list rows written by the bad prompt deployed Tuesday 14:00-17:00"
+  level: L3
+  cell: {stage: extraction-prompt, data-element: extraction-run-id, correctness-failure: stale-after-prompt-change, recovery-action: rerun-whole-session, time-and-change: question-set-revised}
+  object: "answers table (spec item 3)"
+  situation: "Prompt with a typo in option 2 was live for 3 hours and processed 140 sessions; fix deployed; nobody knows which rows to redo"
+  consequence: "Either all 50,000 videos are re-run or the 140 bad sessions stay; with run ids it is a 140-session rerun"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Each extraction job writes run_id, prompt_version, model_version, started_at on every row; runbook query 'rows where prompt_version = X'"
+  shallow: false
+- id: ops-37
+  title: "New game with 0 players processed: chatbot answers '0% churn' or a general-knowledge guess instead of 'no sessions processed yet'"
+  level: L4
+  cell: {stage: chatbot-answer, scale: 0-players-new-game, time-and-change: first-game-onboarded, chatbot-response-behaviour: invents-number, processing-status: not-yet-uploaded}
+  object: "chatbot answering from the table (spec item 4)"
+  situation: "Studio account created and analyst invited before the first playtest; analyst asks 'where do players drop off in the tutorial?'"
+  consequence: "First impression of the product is a wrong answer; expected output: 'No sessions for <game> are complete yet; 0 uploaded, 0 queued'"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Their questions are not known in advance."
+  proposed: "Planner checks per-game status counts before querying; zero complete sessions returns a fixed status message"
+  shallow: false
+- id: ops-38
+  title: "Capture mic device unplugged for a whole playtest day: every video has no audio track, all transcripts empty, and no per-game empty-transcript rate alert exists"
+  level: L4
+  cell: {stage: audio-extraction, capture-integrity: no-audio-track, session-shape: video-with-no-audio-track, processing-status: transcript-empty, scale: 50-players}
+  object: "video -> transcript (spec item 2)"
+  situation: "Lab PC audio driver updated overnight; 50 sessions recorded with video only"
+  consequence: "50 sessions produce answers or NULLs that look like silent players; observable: share of transcript-empty videos for that game jumps from ~3% to 100% with no alert"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Ingest checks for an audio stream and audio RMS > threshold; alert when > 20% of a game's videos in a day lack audio"
+  shallow: false
+- id: ops-39
+  title: "Retry of one video re-extracts all questions with temperature > 0, flipping answers that had already been read and quoted"
+  level: L3
+  cell: {stage: per-video-answers, recovery-action: retry-one-video, answer-afterlife: copied-into-deck, chatbot-response-behaviour: differs-on-re-ask, correctness-failure: inconsistent-across-videos}
+  object: "per-video answers (spec item 3)"
+  situation: "Video 5 retried because Q8 failed; Q1-Q7 re-run too and 2 of 7 answers change"
+  consequence: "Player-level story in a deck no longer matches the table; on-call retry caused a data change nobody requested"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Retry targets only failed (video, question) pairs; extraction at temperature 0 with a fixed seed where the vendor allows"
+  shallow: false
+- id: ops-40
+  title: "Overlapping videos from a capture restart cover the same 5 minutes twice; count questions double the events in the overlap"
+  level: L3
+  cell: {stage: session-level-aggregation, session-shape: overlapping-videos, question-shape: answer-is-a-count, correctness-failure: duplicate-counted, batch-failure-mix: all-succeed}
+  object: "15-minute videos of one session (spec item 1)"
+  situation: "Capture restarts at 14:10 and re-captures from a 5-minute buffer; video A covers 14:00-14:15, video B 14:10-14:25"
+  consequence: "'Deaths during tutorial' summed per video counts the 2 deaths at 14:12 twice; pipeline status is all green"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes, so one session is many videos"
+  proposed: "Store recording_start and recording_end per video; stitcher trims overlap before session-level counts and logs overlap seconds"
+  shallow: false
+- id: ops-41
+  title: "Backfill writing 400,000 rows while studios query pushes chatbot p99 latency past the timeout"
+  level: L4
+  cell: {stage: answers-table, fast-path-dependency: concurrent-studio-load, latency: p99-tail-under-concurrency, chatbot-response-behaviour: times-out, recovery-action: backfill-after-model-upgrade}
+  object: "'Answering a studio's question must be fast' (spec constraints)"
+  situation: "Backfill upserts and index rebuilds on the answers table run during studio working hours; 20 concurrent analysts query"
+  consequence: "p50 stays under 2s but p99 exceeds 30s and requests time out; observable: chatbot p99 latency graph rises only during backfill windows"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern. Answering a studio's question must be fast."
+  proposed: "Backfill writes to a shadow table and swaps; or read replica for the chatbot; backfill throttled when chatbot p99 > 5s"
+  shallow: false
+- id: ops-42
+  title: "No per-session status view exists for on-call: answering 'why is player 312 missing' requires grepping logs across 4 services"
+  level: L3
+  cell: {stage: job-orchestration-and-status, processing-status: extracting, data-element: session, studio-question-type: one-player-what-happened, batch-failure-mix: some-sessions-failed-in-cohort}
+  object: "pipeline stages capture -> transcript -> questions -> table -> chatbot (spec items 1-4)"
+  situation: "Studio asks the chatbot about player 312, gets nothing, escalates; on-call needs to know which of 14 videos reached which stage"
+  consequence: "Triage takes hours per ticket; studio waits; repeated failures in one stage are not noticed as a pattern"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "Status table keyed (session_id, video_index, stage) with state, attempts, last_error, updated_at; one query shows a session's full state"
+  shallow: false

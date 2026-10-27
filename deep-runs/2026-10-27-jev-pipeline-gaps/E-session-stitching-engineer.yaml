@@ -1,0 +1,456 @@
+- id: stitch-1
+  title: "No session key is defined, so two same-day sessions of one player that are linked by player id + date merge into one 'session' and per-session answers mix both"
+  level: L3
+  cell: {stage: session-stitching, data-element: session, session-shape: same-player-multiple-sessions, correctness-failure: answer-attached-to-wrong-video-index, scale: 500-players}
+  object: "Unspecified: 'how videos of one session are linked'"
+  situation: "Player P plays 10:00-10:45 (3 videos) and 16:00-18:00 (8 videos) on 2026-10-27; with no session_id written at capture time, stitching by player id + date produces one 11-video session with a 5-hour hole between video 3 and video 4."
+  consequence: "Session duration reads 8 h instead of 2 h 45 min; 'did the player quit after the tutorial' is answered from the second sitting; the 10:45 quit is lost as a churn event."
+  p_typical: 0.25
+  grounded: quote
+  evidence: "Unspecified: ... how videos of one session are linked."
+  proposed: "Recorder mints session_id at capture start and writes it plus video_index into every video's metadata; stitching never infers sessions from player id + date."
+  shallow: false
+- id: stitch-2
+  title: "Videos are ordered by upload/arrival time, so a retried video 3 that arrives after video 5 is stored as index 5 and every 'first video where X' answer shifts"
+  level: L4
+  cell: {stage: upload-and-ingest, data-element: timestamp, session-shape: videos-out-of-order, correctness-failure: answer-attached-to-wrong-video-index, batch-failure-mix: one-video-of-session-failed}
+  object: "'each video is capped at 15 minutes, so one session is many videos'; per-video rows of the answers table"
+  situation: "Upload of video 3 of an 8-video session fails, is retried 40 minutes later and lands after videos 4 and 5; the pipeline assigns index by arrival order."
+  consequence: "Answer 'player first got stuck in video 3 (30-45 min)' becomes 'video 5 (60-75 min)'; a timeline query for that player shows the stuck moment after the quit-intent moment."
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "A session can be n hours; each video is capped at 15 minutes, so one session is many videos."
+  proposed: "Order by recorder-written video_index (monotonic per session_id); test: shuffle upload order of 8 videos, assert identical stored indexes."
+  shallow: false
+- id: stitch-3
+  title: "A missing middle video is invisible to session aggregation: 7 of 8 videos present yields a session marked complete and a tutorial-completion answer from the wrong side of the gap"
+  level: L4
+  cell: {stage: session-level-aggregation, session-shape: missing-middle-video, processing-status: not-yet-uploaded, data-element: null-vs-no, batch-failure-mix: one-video-of-session-failed}
+  object: "Per-video answer rows rolled up per session; question 'Did the player finish the tutorial?'"
+  situation: "Video 4 (45-60 min) is never uploaded; videos 1-3 say tutorial in progress, videos 5-8 never mention the tutorial."
+  consequence: "Session reads 'tutorial not finished, player active 2 h' or 'finished' depending on rollup; the 15 minutes containing the step where the player stalled are absent and nothing in the table says so."
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "Known problems named by the owner: ... Long multi-video sessions."
+  proposed: "Session row stores expected_video_count and present_indexes; a session with a gap gets status 'partial' and session-level answers that depend on the gap are null, not No."
+  shallow: false
+- id: stitch-4
+  title: "No session-end marker: aggregation that runs while videos 7-9 are still uploading computes 'player left at 90 min' and is never recomputed when they arrive"
+  level: L4
+  cell: {stage: session-level-aggregation, batch-failure-mix: late-arriving-video-after-aggregation, processing-status: uploaded-partial, correctness-failure: hallucinated-answer, latency: "ingest-to-queryable (hours or days after session)"}
+  object: "Session-level churn answer derived from the last available video"
+  situation: "A 2 h 15 min session uploads videos 1-6 by 20:00; videos 7-9 arrive at 02:00 from a slow connection; the nightly rollup ran at 23:00."
+  consequence: "The answers table and any cached cohort aggregate count the player as churned at 90 min; the player actually played 135 min. The error persists because no event re-triggers rollup."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "Recorder emits an explicit session_closed event with final video count; rollup runs only after it (or after a 48 h timeout that marks the session 'closed-by-timeout')."
+  shallow: false
+- id: stitch-5
+  title: "A session with no end event and no timeout rule never reaches 'complete', so it is silently excluded from every cohort query"
+  level: L3
+  cell: {stage: job-orchestration-and-status, processing-status: uploaded-partial, session-shape: session-ends-mid-sentence, studio-question-type: cohort-count, latency: "ingest-to-queryable (hours or days after session)"}
+  object: "Session processing status (not described in spec)"
+  situation: "Recorder process is killed by the OS at 1 h 52 min; no session_closed event is sent; rollup waits for one."
+  consequence: "Player is missing from 'how many of 500 players quit in the tutorial'; the chatbot reports n=487 without saying 13 sessions are stuck open."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Unspecified: ... how videos of one session are linked."
+  proposed: "Close sessions with no new video for 6 h as 'closed-by-timeout'; chatbot answers list counts per session status."
+  shallow: false
+- id: stitch-6
+  title: "Overlapping videos (recorder restart re-captures the last 10-30 s) double-count events in count questions"
+  level: L4
+  cell: {stage: session-stitching, session-shape: overlapping-videos, question-shape: answer-is-a-count, correctness-failure: duplicate-counted, capture-integrity: clock-drift-between-videos}
+  object: "Count-type question, e.g. 'How many times did the player die?' summed across per-video rows"
+  situation: "Video 2 ends 15:00 at a death; recorder restarts with a 20 s pre-roll buffer, so video 3 starts with the same death and the player's 'ugh, again' line."
+  consequence: "Deaths sum to 9 instead of 8; cross-player 'average deaths in tutorial' is inflated by roughly 1 per boundary for every player whose recorder uses pre-roll."
+  p_typical: 0.05
+  grounded: speculative
+  evidence: "each video is capped at 15 minutes"
+  proposed: "Store capture start/end wall-clock per video; stitching trims transcript segments whose time falls inside the previous video's range before counting."
+  shallow: false
+- id: stitch-7
+  title: "A sentence cut at the 15:00 boundary is answered on half its meaning in each video ('I'm going to quit' | 'the tutorial if this doesn't load')"
+  level: L3
+  cell: {stage: 15-minute-split, transcription-subsystem: sentence-cut-at-15min-boundary, session-shape: 5-20-videos, question-shape: answer-spans-videos, correctness-failure: hallucinated-answer}
+  object: "Fixed question 'Did the player express intent to quit?' run per video"
+  situation: "Video 3 ends at 'I'm going to quit-'; video 4 starts 'the tutorial if this doesn't load, it's fine now'."
+  consequence: "Video 3 row: Yes, quit intent; video 4 row: No. Rollup 'any video Yes' marks a player who continued 2 more hours as a quit-intent case."
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Transcribe each video with the previous video's final 60 s as context and attach the boundary-straddling utterance to both, flagged 'boundary'."
+  shallow: false
+- id: stitch-8
+  title: "A stuck period that straddles a boundary (14:00 of video 2 to 03:00 of video 3) answers No to 'stuck more than 3 minutes?' in both videos"
+  level: L4
+  cell: {stage: per-video-answers, question-shape: answer-spans-videos, session-shape: 5-20-videos, data-element: tutorial-step, correctness-failure: inconsistent-across-videos}
+  object: "Per-video answers table: 'The answers form a structured table per video.'"
+  situation: "Player is stuck on tutorial step 3 for 4 minutes: 1 minute at the end of video 2 and 3 minutes at the start of video 3; question threshold is >3 minutes."
+  consequence: "Neither video meets the threshold; 'how many players got stuck >3 min at step 3' undercounts every player whose stall crossed a 15-minute mark (about 1 stall in 5 for 4-minute stalls if stalls are uniform in time)."
+  p_typical: 0.2
+  grounded: quote
+  evidence: "The answers form a structured table per video."
+  proposed: "Duration questions are answered at session level from per-video start/end-of-state fields, or extracted on a window spanning adjacent videos."
+  shallow: false
+- id: stitch-9
+  title: "No rollup rule for contradictory per-video answers: 'completed tutorial' is Yes in video 2 and No in videos 3-8 because the tutorial is never mentioned again"
+  level: L4
+  cell: {stage: session-level-aggregation, correctness-failure: inconsistent-across-videos, question-shape: event-did-not-happen-in-this-video, data-element: null-vs-no, studio-question-type: cohort-count}
+  object: "Question 'Did the player complete the tutorial?' applied to every video of a session"
+  situation: "8-video session; completion happens in video 2; videos 3-8 return No because the event is absent from their transcripts."
+  consequence: "Rollup by majority gives No (6 of 8), by last gives No, by any gives Yes; the chatbot or its SQL picks one silently, and cohort completion rate swings between about 20% and 80% depending on which."
+  p_typical: 0.2
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "Each question declares its rollup (any / all / first / last / sum / max) in the question-set registry; per-video answer distinguishes 'did not occur in this video' from No."
+  shallow: false
+- id: stitch-10
+  title: "Majority or modal rollup over a 40-video session dilutes the single churn-reason video: 39 'Other/none' rows outvote 1 'controls frustrating'"
+  level: L4
+  cell: {stage: session-level-aggregation, session-shape: 10-plus-hour-session, scale: 1-player-10-hour-session, correctness-failure: other-option-overused, question-shape: answer-is-a-why}
+  object: "Question 'Main reason the player stopped?' answered per video"
+  situation: "10-hour session = 40 videos; the quit reason is spoken only in video 40; videos 1-39 return 'Other' or 'No reason given'."
+  consequence: "Session answer = 'Other'; long sessions contribute almost no churn reasons; the cohort 'why did players quit' chart is dominated by short-session players."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Known problems named by the owner: ... Long multi-video sessions."
+  proposed: "Reason-type questions roll up from the last video with a non-empty answer, not from a vote; test: 40-video fixture with reason only in video 40."
+  shallow: false
+- id: stitch-11
+  title: "Cohort percentages computed over per-video rows weight a 40-video player 40x a 1-video player"
+  level: L4
+  cell: {stage: chatbot-query-planning, correctness-failure: wrong-denominator, studio-question-type: cohort-count, scale: 500-players, fast-path-dependency: text-to-sql-generated-correctly}
+  object: "'so that a question over, say, 500 players is fast' answered from a per-video table"
+  situation: "Studio asks 'what % of players got confused by crafting?'; the query does COUNT(*) WHERE answer='Yes' / COUNT(*) over 4,200 video rows for 500 players."
+  consequence: "Result is % of videos, not % of players; heavy players dominate; the number shifts by 2-3x versus a per-player count with no indication of which denominator was used."
+  p_typical: 0.15
+  grounded: quote
+  evidence: "so that a question over, say, 500 players is fast"
+  proposed: "Expose a session-level and a player-level table; the chatbot's SQL may only aggregate per-player rows for 'players' questions; answer text states the denominator."
+  shallow: false
+- id: stitch-12
+  title: "Questions whose answer depends on the prior video ('Is the player still in the tutorial?') are unanswerable from a video that does not mention the tutorial"
+  level: L3
+  cell: {stage: extraction-prompt, question-shape: answer-depends-on-prior-video, session-shape: 5-20-videos, data-element: tutorial-step, correctness-failure: forced-choice-bias}
+  object: "Fixed question set run independently over each transcript"
+  situation: "Video 5 transcript is 15 minutes of the player talking about combat; tutorial step 7 of 9 was reached at the end of video 4."
+  consequence: "Extractor is forced to pick 'Not in tutorial' or 'In tutorial' with no evidence; step-level churn ('players who quit at step 8') cannot be located."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options"
+  proposed: "Pass a carry-over state block (last known tutorial step, last answers) from video k-1 into the prompt for video k; run videos of a session sequentially."
+  shallow: false
+- id: stitch-13
+  title: "Recording that starts mid-tutorial makes video 1 look like the tutorial start, so 'first step where the player struggled' reports step 3 for a player who struggled at step 1"
+  level: L3
+  cell: {stage: video-capture, session-shape: tutorial-started-before-recording, data-element: tutorial-step, studio-question-type: compare-two-steps, correctness-failure: confident-no-evidence}
+  object: "Targets: 'detecting churn in the tutorial and just after it'"
+  situation: "Moderator starts recording 4 minutes after the player launched the game; video 1 begins in tutorial step 3."
+  consequence: "Step 1-2 struggle counts are biased low for every such session; nothing in the table marks the session as left-truncated."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "Session row stores 'recording_started_at_step' (from a first-video question) and step-level cohort queries exclude left-truncated sessions or report them separately."
+  shallow: false
+- id: stitch-14
+  title: "A game crash at 40 min that the recorder treats as session end creates a fake churn plus a second 'new player' session"
+  level: L4
+  cell: {stage: session-stitching, session-shape: session-split-by-crash-into-two, correctness-failure: duplicate-counted, studio-question-type: cohort-count, data-element: player}
+  object: "Session as the unit of churn in the answers table"
+  situation: "Game crashes at 40:12; player relaunches 2 minutes later; recorder issues a new session id."
+  consequence: "Session A counts as 'quit after 40 min'; session B, starting on the main menu, is counted as another tutorial attempt; churn rate rises by 1 per crash and player count by 1."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Stitch sessions of the same player with a gap under 10 min into one logical session with a 'crash_gap' marker; churn requires no follow-on session within 24 h."
+  shallow: false
+- id: stitch-15
+  title: "An abrupt final video (quit, crash, moderator stop, truncated upload) is always read as 'player quit' because the transcript cannot tell them apart"
+  level: L3
+  cell: {stage: session-level-aggregation, session-shape: session-ends-mid-sentence, capture-integrity: upload-truncated, correctness-failure: hallucinated-answer, question-shape: unknowable-from-audio}
+  object: "Churn question applied to the last video of a session"
+  situation: "Last video ends mid-word at 06:41; the cause is an upload truncated by a network drop, not a quit."
+  consequence: "Player is counted as churned at 1 h 36 min; cohort churn timing shows a false spike at upload-failure times."
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "Transcript loses visual information."
+  proposed: "Record end_reason from the recorder (user-stop / process-exit / moderator-stop / upload-incomplete by byte count) and only count 'user-stop' or 'process-exit with no relaunch' as churn."
+  shallow: false
+- id: stitch-16
+  title: "A 40-second final video runs the full question set on 'ok bye', producing a neutral 'final sentiment' that overwrites the frustrated sentiment of the previous 15 minutes"
+  level: L4
+  cell: {stage: per-video-answers, session-shape: last-video-under-1-minute, question-shape: event-did-not-happen-in-this-video, correctness-failure: hallucinated-answer, speech-shape: continuous-think-aloud}
+  object: "Fixed questions run on every video regardless of length"
+  situation: "Session ends with a 0:40 video containing 6 words; rollup for 'sentiment at end of session' takes the last video."
+  consequence: "Session ends 'Neutral'; the frustration in video N-1 that preceded the quit is not the recorded end state."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes"
+  proposed: "Merge a trailing video under 2 minutes into the previous one before extraction, or have 'last' rollups skip videos with fewer than 50 words."
+  shallow: false
+- id: stitch-17
+  title: "A duplicate upload of video 3 (client retry) gets a new video id and doubles its counts and its 15 minutes of session duration"
+  level: L4
+  cell: {stage: upload-and-ingest, session-shape: duplicate-upload, batch-failure-mix: retry-produced-duplicate, correctness-failure: duplicate-counted, recovery-action: retry-one-video}
+  object: "Per-video rows of the answers table"
+  situation: "Client times out on video 3 after the server stored it, and retries; the server stores a second copy as video 9 or a second row with index 3."
+  consequence: "Death count, 'times player asked for help' and session duration are inflated; session shows 9 videos for an 8-video play."
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "one session is many videos"
+  proposed: "Idempotency key = (session_id, video_index, content hash); a second upload with the same key is a no-op; test: upload the same file twice, assert one row."
+  shallow: false
+- id: stitch-18
+  title: "Transcript timestamps restart at 00:00 per video, so 'when did the player quit' answers '07:12' instead of 1:37:12 session time"
+  level: L4
+  cell: {stage: session-stitching, transcription-subsystem: timestamps-reset-per-video, question-shape: answer-is-a-time, studio-question-type: timeline-of-one-player, data-element: timestamp}
+  object: "Transcript timestamps; studio question 'At what point did player P stop?'"
+  situation: "Quit happens at 07:12 in video 7 of a session."
+  consequence: "Chatbot reports 7 minutes or the analyst must know video index and add offsets by hand; cohort 'median time to quit' computed from per-video times is meaningless (all values under 15:00)."
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "each video is capped at 15 minutes, so one session is many videos"
+  proposed: "Store session_offset_s per video from capture start times and write every time-valued answer in session time."
+  shallow: false
+- id: stitch-19
+  title: "Session offset computed as video_index x 15 min is wrong after any short mid-session video, shifting every later timestamp"
+  level: L4
+  cell: {stage: session-stitching, data-element: timestamp, session-shape: session-split-by-crash-into-two, question-shape: answer-is-a-time, studio-question-type: timeline-of-one-player}
+  object: "'each video is capped at 15 minutes' read as 'each video is 15 minutes'"
+  situation: "Recorder restarts after a crash so video 4 is 9 min long; offsets for videos 5-12 are assumed 60, 75, 90... min."
+  consequence: "Every event after video 4 is placed 6 minutes late; a timeline that aligns quit time with a known server-side event is off by 6 min per short video."
+  p_typical: 0.04
+  grounded: quote
+  evidence: "each video is capped at 15 minutes"
+  proposed: "Offset = sum of actual durations of prior videos (or capture start wall-clock minus session start); test with a 9-minute middle video."
+  shallow: false
+- id: stitch-20
+  title: "Videos ordered by device-local start time reorder when the clock jumps (DST end on 2026-11-01, NTP correction) during a long session"
+  level: L3
+  cell: {stage: session-stitching, capture-integrity: clock-drift-between-videos, session-shape: videos-out-of-order, scale: 1-player-10-hour-session, time-and-change: a-year-of-data}
+  object: "Video capture start time used for ordering and offsets"
+  situation: "A US session running 2026-10-31 22:00 to 2026-11-01 04:00 local crosses 02:00 -> 01:00; videos starting 01:15 (first) and 01:15 (second) carry identical local times."
+  consequence: "Two videos tie or invert; offsets for the rest of the session are off by 60 minutes; this recurs once or twice a year per DST region."
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "A session can be n hours"
+  proposed: "Recorder writes UTC monotonic start times plus video_index; ordering never uses local wall-clock."
+  shallow: false
+- id: stitch-21
+  title: "A middle video with no audio track yields an empty transcript and all-No answers, so 15 minutes read as 'player silent and not stuck' instead of 'unknown'"
+  level: L4
+  cell: {stage: transcription, session-shape: video-with-no-audio-track, processing-status: transcript-empty, data-element: null-vs-no, correctness-failure: null-treated-as-no}
+  object: "Transcript of one video in a multi-video session"
+  situation: "Audio device disconnected for video 6 of 10; video track records fine."
+  consequence: "Session rollups for 'any frustration', 'stuck >3 min', 'asked for help' treat video 6 as a clean No; the period may hold the churn trigger."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "Each video is converted to a transcript."
+  proposed: "Per-video audio_present flag; videos with no audio produce null answers and the session is marked 'audio gap 75-90 min'."
+  shallow: false
+- id: stitch-22
+  title: "Sessions with zero videos are absent from the table, so the chatbot's denominator silently becomes 'players with at least one processed video'"
+  level: L3
+  cell: {stage: answers-table, session-shape: zero-videos-session-failed, correctness-failure: wrong-denominator, studio-question-type: cohort-count, batch-failure-mix: some-sessions-failed-in-cohort}
+  object: "'a question over, say, 500 players'"
+  situation: "500 players recruited; 13 sessions produced no video (recorder failed to start)."
+  consequence: "Chatbot reports '% of 487 players' or '% of players' with no n; the studio believes it is 500; failed sessions may correlate with low-end devices, biasing the cohort."
+  p_typical: 0.05
+  grounded: quote
+  evidence: "so that a question over, say, 500 players is fast"
+  proposed: "Session registry row exists from recruitment with status; every cohort answer states recruited / with video / fully processed counts."
+  shallow: false
+- id: stitch-23
+  title: "Language auto-detected per 15-minute video flips to Spanish on a video dominated by NPC dialogue, producing one garbage transcript inside an English session"
+  level: L3
+  cell: {stage: language-detection, transcription-subsystem: language-flips-between-videos, speech-shape: game-audio-dominates, session-shape: 5-20-videos, correctness-failure: inconsistent-across-videos}
+  object: "Transcription run per video"
+  situation: "Video 5 is a 12-minute Spanish-voiced cutscene with the player silent; detector picks es; the player's 3 minutes of English are transcribed as Spanish phonetics."
+  consequence: "Video 5 answers are noise; session rollup includes them; no session-level language exists to catch the flip."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "Unspecified: ... languages"
+  proposed: "Detect language once per session (majority over first 3 videos or moderator tag) and pin it for all videos; flag videos whose detected language differs."
+  shallow: false
+- id: stitch-24
+  title: "Per-video diarisation labels reset each video, so SPEAKER_0 is the player in video 1 and the moderator in video 2, and moderator hints are credited to the player"
+  level: L3
+  cell: {stage: transcription, speech-shape: moderator-speaking-or-leading, correctness-failure: moderator-words-attributed-to-player, session-shape: 2-4-videos, data-element: utterance}
+  object: "Transcript speaker labels across videos of one session"
+  situation: "Moderator speaks first in video 2 ('try the button on the left'); diariser numbers speakers by first appearance per file."
+  consequence: "'Did the player figure out the jump mechanic unaided?' answers Yes for video 2; the leading hint is counted as player insight."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "Each video is converted to a transcript."
+  proposed: "Enrol the player's voice from video 1 and map speakers per video by embedding similarity; store speaker role (player / moderator / game) not index."
+  shallow: false
+- id: stitch-25
+  title: "A transcription-model re-run that stops after videos 1-5 leaves one session with two transcription model versions, and session answers mix them"
+  level: L3
+  cell: {stage: rerun-and-backfill, transcription-subsystem: transcription-model-version-differs-across-videos, processing-status: rerun-in-progress, data-element: transcription-model-version, time-and-change: transcription-model-upgraded}
+  object: "Session rollup over per-video answers"
+  situation: "Backfill after a transcription upgrade processes videos per job, not per session; it is stopped at 60% for cost; session S has v2 transcripts for videos 1-5 and v1 for 6-8."
+  consequence: "v2 transcribes profanity/hesitation differently, so 'frustration expressed' flips between video 5 and 6 for model reasons; the session timeline shows a fake mood change."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "Ingestion time and cost are not a concern."
+  proposed: "Backfills operate on whole sessions atomically; session row carries one transcription_model_version or 'mixed', and mixed sessions are excluded from rollups."
+  shallow: false
+- id: stitch-26
+  title: "Retrying only the failed video under a newer question-set version leaves 7 videos at v1 and 1 at v2 in the same session rollup"
+  level: L3
+  cell: {stage: session-level-aggregation, question-set-version-state: option-renamed-same-id, recovery-action: retry-one-video, correctness-failure: mixed-version-aggregation, batch-failure-mix: one-video-of-session-failed}
+  object: "Question set per game target and its options"
+  situation: "Video 6 failed extraction on 2026-10-20; on 2026-10-27 it is retried after option 'confused by UI' was renamed 'could not find control' under the same id."
+  consequence: "Session rollup combines answers whose options mean different things; 'any video = confused by UI' misses video 6."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options, written per game target."
+  proposed: "Retries pin the question_set_version of the session's first extraction run unless the whole session is re-extracted."
+  shallow: false
+- id: stitch-27
+  title: "A late retry that fixes video 4 does not invalidate the session rollup or the cached cohort aggregate the chatbot reads"
+  level: L4
+  cell: {stage: aggregate-cache, batch-failure-mix: late-arriving-video-after-aggregation, fast-path-dependency: cache-stale-after-rerun, latency: fast-but-stale, recovery-action: retry-one-video}
+  object: "Chatbot fast path: 'Answering a studio's question must be fast.'"
+  situation: "Video 4 extraction succeeds 2 days late; per-video row is written; session and cohort aggregates built on day 0 are not rebuilt."
+  consequence: "Chatbot answers in under 2 s from the stale aggregate; a raw SQL count over per-video rows gives a different number; the same question differs depending on path."
+  p_typical: 0.06
+  grounded: quote
+  evidence: "Answering a studio's question must be fast."
+  proposed: "Any per-video row write emits a session-dirty event that rebuilds the session row and invalidates cohort aggregates containing that session."
+  shallow: false
+- id: stitch-28
+  title: "Churn is decided per session, so a player who stops after the tutorial on Monday and returns for 3 hours on Wednesday is counted as tutorial churn"
+  level: L3
+  cell: {stage: session-level-aggregation, session-shape: same-player-multiple-sessions, data-element: player, studio-question-type: find-players-who, correctness-failure: right-answer-wrong-player}
+  object: "Target: 'detecting churn in the tutorial and just after it'"
+  situation: "Session 1 (Mon, 1 video) ends right after tutorial; session 2 (Wed, 12 videos) exists for the same player."
+  consequence: "'Find players who quit right after the tutorial' returns this player; churn is overstated by every multi-session returner."
+  p_typical: 0.09
+  grounded: quote
+  evidence: "The targets are mostly detecting churn in the tutorial and just after it."
+  proposed: "Churn is a player-level field computed across sessions with a stated return window (e.g. no session within 7 days)."
+  shallow: false
+- id: stitch-29
+  title: "Lab player IDs reused across days ('P012' Monday and Thursday are different people) merge two people into one cross-session history"
+  level: L3
+  cell: {stage: build-and-metadata-tagging, data-element: player, session-shape: same-player-multiple-sessions, correctness-failure: right-answer-wrong-player, scale: 50-players}
+  object: "Player identifier joining sessions"
+  situation: "Moderator reuses seat-based ids; the stitching rule from stitch-28 links Monday's P012 to Thursday's P012."
+  consequence: "Monday's player is recorded as a returner, not a churner; Thursday's player inherits Monday's tutorial answers."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "Unspecified: ... how videos of one session are linked."
+  proposed: "Player id is a globally unique id minted at consent; seat labels are stored separately and never used as join keys."
+  shallow: false
+- id: stitch-30
+  title: "Per-video rows carry no within-video time, so a cohort 'where in the session did players quit' can only be answered to 15-minute buckets"
+  level: L4
+  cell: {stage: answers-table, data-element: evidence-span, studio-question-type: distribution-not-count, question-shape: answer-is-a-time, scale: 500-players}
+  object: "'The answers form a structured table per video.'"
+  situation: "Studio asks for the distribution of quit times across 500 players to compare with step timings of 2-5 minutes each."
+  consequence: "Histogram has 15-minute bins; tutorial steps shorter than 15 min are indistinguishable; the chatbot either refuses or invents finer times."
+  p_typical: 0.07
+  grounded: quote
+  evidence: "The answers form a structured table per video."
+  proposed: "Every answer stores evidence_start_s and evidence_end_s in session time; time questions read those, not video index."
+  shallow: false
+- id: stitch-31
+  title: "Evidence for a struggle that straddles two videos can link only one clip, which cuts at 15:00 exactly when the player gives up"
+  level: L3
+  cell: {stage: evidence-display, data-element: evidence-span, question-shape: answer-spans-videos, studio-question-type: quote-me-evidence, answer-afterlife: copied-into-deck}
+  object: "Evidence clip / quote attached to a chatbot answer (not described in spec)"
+  situation: "Analyst asks 'show me player P getting stuck at step 3'; the stall runs 14:20 video 2 to 02:30 video 3."
+  consequence: "Clip shows 40 s ending mid-stall; the resolution or quit is in a separate file; the deck shows a misleading partial moment."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "Transcript loses visual information."
+  proposed: "Evidence spans are stored in session time and the player concatenates adjacent videos (ffmpeg concat) on playback."
+  shallow: false
+- id: stitch-32
+  title: "Falling back to raw transcript for one 10-hour session means ~100k tokens (40 videos x ~2.5k tokens) per question, far past an under-2s target"
+  level: L4
+  cell: {stage: chatbot-query-planning, session-shape: 10-plus-hour-session, fast-path-dependency: question-requires-raw-transcript-fallback, latency: under-2s, studio-question-type: question-about-a-step-the-set-never-asked}
+  object: "'Reading 500 transcripts per question was too slow and too much data'"
+  situation: "Studio asks about a mechanic no fixed question covers for one long-session player; think-aloud at ~130 words/min x 600 min = ~78k words."
+  consequence: "Single-player fallback takes tens of seconds and may truncate; for a cohort it is impossible; no per-video or per-session summary layer exists to search first."
+  p_typical: 0.07
+  grounded: quote
+  evidence: "Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists."
+  proposed: "At ingest, store a per-video free-text summary and a session summary (cheap, ingest cost is fine) and index them for retrieval before raw-transcript fallback."
+  shallow: false
+- id: stitch-33
+  title: "Session-level negation ('player never opened the shop') is answered No-from-absence even when 1 of 8 videos is missing or failed"
+  level: L4
+  cell: {stage: session-level-aggregation, question-shape: negation-player-never-did-x, processing-status: extraction-failed, data-element: null-vs-no, studio-question-type: find-players-who}
+  object: "Per-video Yes/No question rolled up with 'all No => never'"
+  situation: "Video 5 extraction failed; videos 1-4 and 6-8 say shop not opened."
+  consequence: "'Find players who never opened the shop' includes this player; the studio targets the wrong players for a shop-discoverability fix."
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "The answers form a structured table per video."
+  proposed: "'Never' requires all expected videos in status complete; otherwise the session answer is 'unknown (1 of 8 missing)'."
+  shallow: false
+- id: stitch-34
+  title: "A moderator pause (stop recording for a 10-minute break, restart) is either a new session or a hidden gap, and 'time in tutorial' includes the break"
+  level: L3
+  cell: {stage: video-capture, session-shape: missing-middle-video, data-element: moderator, question-shape: answer-is-a-time, capture-integrity: mic-muted-for-a-period}
+  object: "Session duration and time-in-step derived from videos"
+  situation: "Moderator stops capture at 32:00, restarts at 42:00; wall-clock offsets place video 4 at 42:00, index offsets at 30:00."
+  consequence: "Time-in-tutorial is 10 min too long (wall-clock) or the break is invisible (index); either way a 'slow tutorial' signal is fabricated or hidden."
+  p_typical: 0.04
+  grounded: speculative
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Recorder logs pause/resume events; session time = active capture time, and gaps are stored as explicit 'paused' intervals."
+  shallow: false
+- id: stitch-35
+  title: "Two capture streams for one session (screen capture + facecam/mic recorder) each produce 15-minute videos and collide on video_index"
+  level: L3
+  cell: {stage: upload-and-ingest, session-shape: duplicate-upload, data-element: video, correctness-failure: duplicate-counted, capture-integrity: stereo-channel-only-game-audio}
+  object: "'one session is many videos'"
+  situation: "Lab setup records game screen with game audio and a separate webcam file with the player's mic; both upload under the same session id with indexes 1-8."
+  consequence: "Stitching keeps one stream at random per index: some videos have only game audio (empty think-aloud), others have speech; answers alternate between null and real every other 15 minutes."
+  p_typical: 0.02
+  grounded: speculative
+  evidence: "A player's gameplay session is captured as video."
+  proposed: "Video key = (session_id, stream_id, video_index); transcription runs on the stream tagged 'player mic', time-aligned to the screen stream."
+  shallow: false
+- id: stitch-36
+  title: "Text-to-SQL re-derives the session rollup per question, so 'did player P finish the tutorial' uses bool_or one time and last-video the next"
+  level: L4
+  cell: {stage: chatbot-query-planning, chatbot-response-behaviour: differs-on-re-ask, fast-path-dependency: text-to-sql-generated-correctly, studio-question-type: follow-up-question, scale: 5000-players}
+  object: "Chatbot answering from the per-video table"
+  situation: "Same question asked twice; first generated SQL uses MAX(answer='Yes') per session, second uses the answer from MAX(video_index)."
+  consequence: "Cohort completion rate reads 71% then 38%; the studio exec sees the number change when re-asked."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "A chatbot for the gaming studio answers the studio's questions from that table"
+  proposed: "Materialise session- and player-level rollups at ingest with registry-defined rules; the chatbot queries those, never per-video rows, for cohort questions."
+  shallow: false
+- id: stitch-37
+  title: "A deletion request for a player misses a late or orphaned video that was never linked to a session id"
+  level: L3
+  cell: {stage: retention-and-deletion, processing-status: deleted-by-request, batch-failure-mix: late-arriving-video-after-aggregation, time-and-change: player-deletion-request, recovery-action: delete-and-propagate}
+  object: "Unspecified linkage: 'how videos of one session are linked'"
+  situation: "Deletion cascades from player -> sessions -> videos; video 9 arrived after deletion (or failed linking) and sits with session_id null."
+  consequence: "The player's voice and transcript survive deletion; its answer rows may be stitched back into a session later."
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "Unspecified: ... how videos of one session are linked."
+  proposed: "Videos carry player_id directly as well as session_id; deletion tombstones the player so late arrivals are rejected at ingest."
+  shallow: false
+- id: stitch-38
+  title: "Per-video extraction of a 'player's skill level' question re-guesses from scratch every 15 minutes, so a 20-video session gets 20 independent and drifting labels"
+  level: L3
+  cell: {stage: per-video-answers, correctness-failure: inconsistent-across-videos, session-shape: 5-20-videos, question-shape: answer-depends-on-prior-video, data-element: answer-confidence}
+  object: "Fixed question set applied per video"
+  situation: "Question 'Is the player experienced with the genre? (Novice/Some/Expert)'; the player says 'I've played every Souls game' in video 1 only."
+  consequence: "Video 1 = Expert, videos 2-20 = Novice/Some by guess; segment 'experts quit at step X' depends on rollup and on which videos were sampled."
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "The transcript is run through a fixed set of questions with options"
+  proposed: "Mark questions as session-static in the registry; extract them once over the session (or carry forward the first confident answer) instead of per video."
+  shallow: false
