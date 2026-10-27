@@ -1,0 +1,489 @@
+- id: fillB-1
+  title: '''How many players churned in the tutorial?'' is answered ''112 of 500 (22%)'' with no line saying which of three
+    churn readings the planner used'
+  situation: 'Readings available in a 500-player cohort: session ended before the ''completed tutorial'' question turned Yes
+    (112), player pressed the tutorial skip (31), player never recorded a second session (64). No asks-clarifying-question-or-states-interpretation
+    behaviour exists: the planner neither asks back nor prints ''churn = session ended before tutorial end''.'
+  consequence: The studio reads 22% as 'players lost for good'; a reader who meant non-return would expect 13%. The reply
+    gives no way to see that a reading was chosen.
+  proposed: Every cohort-count reply carries a 'Computed as:' line naming question id, option and unit; when two or more stored
+    definitions match, the planner asks one multiple-choice clarifying question before running SQL.
+  grounded: inferred
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." -- churn is the named target, but
+    no churn definition and no rule that the reply states the definition it used'
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  priority: 100.0
+  also_from: null
+- id: fillB-2
+  title: '''How many players got stuck at the crafting step?'' maps to the stored ''stuck more than 3 minutes?'' question
+    and the reply never says ''3 minutes'''
+  situation: 'Studio designer means ''retried the recipe 3+ times''; planner silently uses the 3-minute question. Reply: ''87
+    players got stuck at crafting''. A 2-minute stall with 5 retries counts as not stuck.'
+  consequence: Designer sizes a crafting redesign on 87; the retry-based count, if it existed, could be double. The threshold
+    lives only in the question text the studio never sees.
+  proposed: Reply template prints the matched question's full text ('stuck = no progress for more than 3 minutes') under every
+    count; the planner states 'no stored question measures retries' when the wording names retries.
+  grounded: inferred
+  evidence: '"Buyers are gaming studios. Their questions are not known in advance." -- studio words like ''stuck'' must be
+    mapped to a fixed question whose threshold the reply does not show'
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  priority: 100.0
+  also_from: null
+- id: chat-3
+  title: Studio question with no matching fixed question gets silently answered with the nearest question's data ('camera
+    complaints' answered from 'frustrated with controls')
+  situation: Analyst asks 'how many players complained about the camera?'; set only has 'Did the player express frustration
+    with controls?'; the planner maps by embedding similarity above some threshold and runs it.
+  consequence: Reply reads '112 players (22%) complained about the camera' when the number counts control frustration; the
+    substitution is invisible in the reply.
+  proposed: Planner must output the fixed question id(s) it used; if similarity < a set threshold (e.g. 0.85) the reply says
+    'not tracked; closest tracked question is X' and shows X's wording verbatim.
+  grounded: quote
+  evidence: '"Their questions are not known in advance." + "The question set is small, so most of what is in the video and
+    transcript is never captured."'
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 100.0
+  also_from:
+  - analyst
+  - exec
+  - qauthor
+  - skeptic
+- id: fillB-5
+  title: '''Churned in the tutorial'' is answered from the churn question that pools ''the tutorial and just after it'', so
+    post-tutorial quits are counted as tutorial quits'
+  situation: The only churn question covers tutorial plus the first 10 minutes after it. Studio asks for tutorial-only churn;
+    of 112 quitters, 41 left after the tutorial-complete screen. Planner returns 112.
+  consequence: Tutorial redesign is sized on 112 when 71 left inside the tutorial; the 41 post-tutorial quits point at the
+    first-mission screen, which no one opens.
+  proposed: Split the churn question into 'quit inside tutorial' and 'quit within N minutes after tutorial end'; when only
+    the pooled one exists, the reply says 'includes the period just after the tutorial'.
+  grounded: quote
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it."'
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 100.0
+  also_from: null
+- id: stitch-9
+  title: 'No rollup rule for contradictory per-video answers: ''completed tutorial'' is Yes in video 2 and No in videos 3-8
+    because the tutorial is never mentioned again'
+  situation: 8-video session; completion happens in video 2; videos 3-8 return No because the event is absent from their transcripts.
+  consequence: Rollup by majority gives No (6 of 8), by last gives No, by any gives Yes; the chatbot or its SQL picks one
+    silently, and cohort completion rate swings between about 20% and 80% depending on which.
+  proposed: Each question declares its rollup (any / all / first / last / sum / max) in the question-set registry; per-video
+    answer distinguishes 'did not occur in this video' from No.
+  grounded: quote
+  evidence: '"The answers form a structured table per video." / "each video is capped at 15 minutes, so one session is many
+    videos."'
+  scores:
+    severity: 5.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 3.0
+  priority: 100.0
+  also_from:
+  - auditor-32
+  - skeptic-11
+  - extract-6
+- id: l10n-3
+  title: Speech-to-text vendor masks profanity, so the strongest frustration signal is removed before the 'expressed frustration'
+    question is asked
+  situation: The player says 'what the f*** am I supposed to do here' at 07:12; the vendor's default profanity filter emits
+    'what the **** am I supposed to do here' or drops the word
+  consequence: The extractor reads a neutral question and answers 'No frustration'; on a 500-player cohort the frustration
+    count for the tutorial step is understated by every swearing player, and nobody can tell because the masking is invisible
+    in the stored transcript
+  proposed: Disable vendor profanity masking at the ASR call (profanity_filter=false) and store a per-video flag profanity_masked
+    so old transcripts can be identified and re-transcribed
+  grounded: speculative
+  evidence: none
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  priority: 80.0
+  also_from:
+  - design-20
+  - extract-30
+  - speech-8
+- id: eval-13
+  title: Benchmark contains only answerable questions, so substituting the nearest fixed question is never caught
+  situation: Studio asks 'How many players struggled with the crafting step?'; the set only asks about 'combat tutorial';
+    bot answers with the combat number.
+  consequence: Confident wrong answer; the eval scores 100% because it never asks an unanswerable question.
+  proposed: At least 20% of benchmark questions are unanswerable from the table, with expected answer 'not covered by the
+    question set'; measure false-answer rate.
+  grounded: quote
+  evidence: '"The question set is small, so most of what is in the video and transcript is never captured." + "Their questions
+    are not known in advance."'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 1.0
+  priority: 80.0
+  also_from: null
+- id: speech-1
+  title: 'Silent player: empty transcript flows into extraction and every ''did the player say/do X'' question is answered
+    ''No'' instead of ''unknown'''
+  situation: A player who does not think aloud produces a 0-word transcript; the fixed questions (e.g. 'Did the player express
+    confusion at tutorial step 2?') are still run once per video
+  consequence: The answers table holds 'No' / 'Other' for that video; the cohort count 'how many players were confused' undercounts
+    silent players and the studio reads silence as satisfaction
+  proposed: Skip extraction when word count < N and write answer=NULL with reason=no_speech; the chatbot reports the denominator
+    of players with speech
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target."; questions run
+    regardless of transcript length, and no unknown/not-assessable state is described'
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from:
+  - pipe-19
+  - ops-8
+  - design-5
+- id: chat-1
+  title: Cohort churn count over the per-video answers table counts video rows, not distinct players, so '% of 500 players
+    who quit in the tutorial' uses ~4,000 rows as the denominator
+  situation: Analyst asks 'what % of players quit during the tutorial?'; the generated query is COUNT(answer='quit')/COUNT(*)
+    over video rows; 500 players average 8 videos each, so denominator is ~4,000 video rows and a player who answered 'quit'
+    in 2 videos counts twice in the numerator.
+  consequence: Bot reports ~4% instead of ~30% (or >100% when numerator counts per-video 'Yes' and denominator counts players);
+    a studio decision is made on a number off by roughly the videos-per-session factor.
+  proposed: 'Planner rule: every cohort-count resolves to COUNT(DISTINCT player_id) over a session-level view; a test asserts
+    denominator == distinct players in scope and the reply prints ''n = 500 players''.'
+  grounded: quote
+  evidence: '"The answers form a structured table per video." + "so that a question over, say, 500 players is fast."'
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from:
+  - stitch
+  - skeptic-4
+  - onboard-24
+  - analyst-3
+  - ds-2
+  - exec-21
+  - qauthor-34
+- id: analyst-24
+  title: Silent player's quit reason is answered confidently with no confidence or evidence indicator
+  situation: Player 301 said 4 words in 15 minutes; extractor still picks 'Bored' for 'Primary reason for leaving'; analyst
+    asks 'Why did player 301 quit?'
+  consequence: 'Bot: ''Player 301 quit because they were bored.'' Same tone as a player who explained at length'
+  proposed: Rows store transcript word count and extractor confidence; bot prefixes 'low evidence (4 words spoken)' when below
+    50 words
+  grounded: inferred
+  evidence: '"the transcript alone is not enough; what is on screen is largely lost." -- a near-empty transcript still gets
+    an answer; no abstain or confidence field is specified'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from: null
+- id: extract-1
+  title: Per-video question 'Why did the player leave the tutorial?' has no 'not observed in this video' option, so video
+    7 of 12 (tutorial finished in video 2) still gets a reason picked
+  situation: Session of 12 x 15-minute videos; tutorial ends in video 2; videos 3-12 contain no tutorial content, yet each
+    is asked the tutorial-churn question with options A-D only
+  consequence: 10 of 12 rows carry a churn reason for a tutorial the player never left in that video; a cohort count of 'reason
+    = unclear instructions' is inflated by up to 10x per player
+  proposed: Every question gets two reserved options, NOT_APPLICABLE (event absent from this video) and INSUFFICIENT_EVIDENCE,
+    stored as distinct values from any content option; assert on a labelled set that videos with no tutorial speech return
+    NOT_APPLICABLE >= 95% of the time
+  grounded: quote
+  evidence: '"The targets are mostly detecting churn in the tutorial and just after it." / "The answers form a structured
+    table per video." / "each video is capped at 15 minutes, so one session is many videos."'
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from: null
+- id: ops-1
+  title: 'Session of 8 videos where 6 transcribe and 2 hit transcription-failed: no ''partial'' session status, and session-level
+    aggregation still emits a session row as if all 8 were read'
+  situation: Videos 3 and 7 of an 8-video, 2-hour session fail speech-to-text (vendor 5xx, then retries exhausted); videos
+    1,2,4,5,6,8 reach extraction and write answer rows
+  consequence: 'Session-level answer ''player quit during tutorial: No'' is computed from 6 of 8 videos (75% coverage); the
+    30 missing minutes may contain the quit; the cohort count includes this session at full weight and nobody sees that it
+    is partial'
+  proposed: Session status = min over its videos (complete only when 8/8 complete); store videos_expected and videos_complete
+    per session; aggregation excludes or flags sessions with coverage < 100%; per-video retry button keyed on (session_id,
+    video_index)
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." -- implied: some
+    videos of a session can fail transcription and no partial-session status exists'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from:
+  - pipe-3
+  - speech
+- id: design-32
+  title: Two options both partly true ('controls confusing' and 'too difficult') force a single label that sends the redesign
+    the wrong way
+  situation: Player says 'I do not get the roll and also the enemy hits too hard'.
+  consequence: Extractor picks the first-listed option in about the same share of cases; option order decides whether the
+    designer reworks controls or enemy damage.
+  proposed: Allow multi-select with a primary flag, and randomise option order in the extraction prompt.
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." -- implied: single-choice
+    options with no multi-cause rule are implied'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from:
+  - qauthor-5
+- id: skeptic-8
+  title: Multiple-choice with 3-6 options and no abstain option forces a pick when the transcript holds no evidence for any
+    option
+  situation: 'Player''s reason for quitting is a phone call (not on the list of 4 options: confusing, boring, too hard, bug)'
+  consequence: LLM picks 'boring'; the cohort chart shows boredom inflated by every off-list cause
+  proposed: Every question gets 'not discussed' and 'other (free text)' options; measure the share of each per question per
+    week
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." -- implied: no
+    abstain or not-observed option is stated, so a pick is forced'
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from:
+  - qauthor-3
+- id: ds-1
+  title: Answers table has no way to distinguish a missing answer from the option 'No', so cohort percentages use an undefined
+    denominator
+  situation: 500 players, 40 videos have extraction-partial-some-questions (question 7 failed) and the row stores empty; the
+    studio asks how many players were confused at step 2
+  consequence: Empty cells are counted as 'No' (or dropped) silently, so the confused share is reported as e.g. 31% of 500
+    when the valid denominator is 460 (33.7%); the chatbot cannot say which
+  proposed: Add an explicit status column per (video, question) with values answered / failed / not-applicable and make every
+    aggregate report n_answered next to n_total
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no coding is given for a missing or failed answer'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from:
+  - cost
+- id: privacy-1
+  title: Deletion request removes video and transcript but nothing defines removal of the per-video answer rows and the cached
+    aggregate
+  situation: Player 212 of 500 withdraws consent; engineers delete the video file and transcript. The answer rows for that
+    player's 6 videos and any precomputed cohort count that included them are not keyed to a deletion job.
+  consequence: Derived data about the player (for example 'quit at tutorial step 3, frustrated') stays queryable by the studio
+    chatbot; the deletion is incomplete and the cohort count still includes the player.
+  proposed: 'Define a deletion manifest per player: video, transcript, every answer row across all extraction-run-ids, cached
+    aggregates (recomputed within a stated number of hours), and a completion receipt.'
+  grounded: inferred
+  evidence: '"The answers form a structured table per video." - no deletion path for answer rows is defined'
+  scores:
+    severity: 5.0
+    occurrence: 4.0
+    detectability: 4.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from:
+  - pipe
+- id: fillA-21
+  title: WER is undefined on a reference with 0 words, so the ASR's invented text on silent or music-only minutes (about 30%
+    of sampled videos) is never counted; no insertions-per-silent-minute metric exists
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. A reference sample includes
+    silent and music-only minutes; WER divides by reference word count, so those minutes are excluded or score 0/0.
+  consequence: The figure that would show 'Thanks for watching'-style inventions on silence, the text that becomes confident
+    answers for silent players, is the one the metric cannot see.
+  proposed: Report insertions per silent or music-only minute as a separate metric with a threshold (for example under 1 word
+    per 10 minutes).
+  grounded: inferred
+  evidence: '"Each video is converted to a transcript." -- a transcript of a silent minute should be empty and no metric checks
+    that it is.'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from: null
+- id: fillB-3
+  title: '''How many new players quit the tutorial?'' has three readings (first session ever, first session on this build,
+    genre-new from screener) and the bot counts all 500 as new'
+  situation: Cohort of 500 players includes 120 returning from an earlier build's playtest. 'New' has no column, so the planner
+    drops the qualifier and answers over all 500 without saying the filter was ignored.
+  consequence: Returning players already know the tutorial; including them lowers the quit rate the studio believes is a first-time
+    rate. A dropped qualifier is invisible because the reply never echoes the filter set it applied.
+  proposed: 'When any filter word in the question maps to no column, the reply opens with ''Could not apply: new players (no
+    first-session field)'' and returns the unfiltered count only after that line.'
+  grounded: inferred
+  evidence: '"Buyers are gaming studios. Their questions are not known in advance." -- ''new players'' arrives as studio wording
+    with no matching column, and no rule says a dropped qualifier is reported'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from: null
+- id: fillB-12
+  title: Answers table encodes 'not processed', 'not observed' and 'not applicable' as sentinel option ids ('-1', 'NA', 'X')
+    with no data dictionary, and generated SQL counts them as answers
+  situation: Planner writes SELECT COUNT(*) FILTER (WHERE option_id='B') * 1.0 / COUNT(*) FROM answers WHERE question_id='q4'.
+    Of 4,000 rows, 900 hold '-1' (not processed) or 'NA' (step not reached).
+  consequence: Rate is 620/4,000 = 15.5% instead of 620/3,100 = 20%; nothing in the schema says '-1' and 'NA' must be excluded,
+    so each query decides differently.
+  proposed: 'Machine-readable dictionary per column: allowed values, which codes are missing and why, and the default denominator
+    filter (WHERE option_id NOT IN (''-1'',''NA'',''X'')), injected into the planner prompt.'
+  grounded: inferred
+  evidence: '"current question count and answer types" -- answer types and codes are unspecified, so the planner has no definition
+    of missing-value codes'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 2.0
+  priority: 80.0
+  also_from: null
+- id: stitch-8
+  title: A stuck period that straddles a boundary (14:00 of video 2 to 03:00 of video 3) answers No to 'stuck more than 3
+    minutes?' in both videos
+  situation: 'Player is stuck on tutorial step 3 for 4 minutes: 1 minute at the end of video 2 and 3 minutes at the start
+    of video 3; question threshold is >3 minutes.'
+  consequence: Neither video meets the threshold; 'how many players got stuck >3 min at step 3' undercounts every player whose
+    stall crossed a 15-minute mark (about 1 stall in 5 for 4-minute stalls if stalls are uniform in time).
+  proposed: Duration questions are answered at session level from per-video start/end-of-state fields, or extracted on a window
+    spanning adjacent videos.
+  grounded: quote
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." + "The answers
+    form a structured table per video."'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 80.0
+  also_from: null
+- id: percep-29
+  title: Cohort 'why did they leave' distribution sums to 100% over verbal causes only, so the chatbot reports 0% for visibility
+    causes and the absence reads as evidence
+  situation: Studio asks 'why do players leave the tutorial'; the option set has 5 verbal reasons and no visual one
+  consequence: 'Answer: ''lost interest 41%, too hard 30%, unclear 18%, bug 7%, other 4%''; the studio reads ''no visibility
+    problems'' from a table that could not have recorded one'
+  proposed: Every cohort-why answer states which cause classes the question set can observe; percentages are shown over 'reasons
+    observable from speech', with 'not observable from speech' as an explicit row
+  grounded: quote
+  evidence: '"The question set is small, so most of what is in the video and transcript is never captured." / "Transcript
+    loses visual information."'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 80.0
+  also_from: null
+- id: uxr-5
+  title: Think-aloud decays after the first 15-30 minutes, so videos 3-20 have sparse transcripts and per-video answers drift
+    to 'no issue' over the session
+  situation: Words per minute falls from ~120 in video 1 to under 20 by video 4 because the player stops narrating, not because
+    the experience got better
+  consequence: 'Observable: per-video rate of ''frustrated'' answers drops monotonically with video index across the cohort;
+    the chatbot reports ''frustration falls after the tutorial'', which is an artefact of narration fatigue in exactly the
+    ''just after'' window the owner targets'
+  proposed: Store words-per-minute per video and have aggregation exclude or flag videos under 30 wpm as low-signal instead
+    of 'no issue'
+  grounded: inferred
+  evidence: '"A session can be n hours; each video is capped at 15 minutes, so one session is many videos." -- implied: long
+    sessions span many videos and narration density across them is not addressed'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 80.0
+  also_from: null
+- id: qauthor-18
+  title: Visual-cause question has verbal options only, so the LLM attributes a visual failure to a verbal cause
+  situation: player misses a low-contrast tutorial arrow, says nothing for 90 seconds, then quits; question 'Why did the player
+    stall?' offers 'boring', 'confusing text', 'controls', 'other'
+  consequence: LLM answers 'boring' or 'other' with confidence; the true cause (the arrow was invisible) is recorded as a
+    motivation problem and the studio fixes the wrong thing
+  proposed: add option 'cannot tell from audio (possible visual cause)' to every why question and report its share
+  grounded: quote
+  evidence: '"Transcript loses visual information." / "The question set is small, so most of what is in the video and transcript
+    is never captured."'
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 80.0
+  also_from:
+  - extract-23
+- id: eval-1
+  title: No labelled gold set exists for any question in the per-game fixed question set, so per-question accuracy is unmeasurable
+  situation: A studio is onboarded and the question set runs over 500 players; no video has a human-assigned correct option
+    for any question.
+  consequence: Nobody can state whether question Q3 is right 95% or 60% of the time; every chatbot number inherits an unknown
+    error rate.
+  proposed: Before go-live per game, label at least 150 videos x every question by a human watching the video; publish accuracy
+    per question with a 95% interval.
+  grounded: inferred
+  evidence: '"The transcript is run through a fixed set of questions with options, written per game target." - no labelled
+    correct answers are mentioned for any question'
+  scores:
+    severity: 4.0
+    occurrence: 5.0
+    detectability: 4.0
+    cost_to_address: 3.0
+  priority: 80.0
+  also_from: null
+- id: uxr-28
+  title: Unexpected issues outside the question set (e.g. a soft-lock seen by 40 of 500 players) are never captured; no free-text
+    'surprising observations' column
+  situation: Researchers found most top issues by watching for what they did not plan to look for
+  consequence: Emergent issues never reach the table; the chatbot answers the nearest fixed question instead and the studio
+    never learns the soft-lock exists
+  proposed: One open-ended per-video extraction 'notable problems not covered by the set' stored as text plus embeddings;
+    weekly clustering report
+  grounded: quote
+  evidence: The question set is small, so most of what is in the video and transcript is never captured.
+  scores:
+    severity: 4.0
+    occurrence: 4.0
+    detectability: 5.0
+    cost_to_address: 3.0
+  priority: 80.0
+  also_from: null
