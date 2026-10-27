@@ -1,0 +1,692 @@
+- id: publisher-1
+  title: "Common data model with a per-title vocabulary map: every title's tutorial steps are mapped at onboarding onto 6 canonical phase concepts (ONB.FIRST_INPUT, ONB.FIRST_FAIL, ONB.FIRST_REWARD, ONB.CORE_VERB_INTRO, ONB.FREE_CHOICE, ONB.TUTORIAL_EXIT) so that 'step-3 stall rate' is comparable across 12 titles with 4 to 11 steps each"
+  level: L4
+  cell: {part: schema-evolution, representation: common-data-model-with-per-game-vocab-map, granularity: tutorial-step, scope: cross-game, user-segment: publisher-portfolio, reuse-scope-of-extraction: universal-primitives, moment-in-journey: game-onboarding-day-0, mechanism-type: transfer-across-games}
+  object: "spec.md step 3: 'a fixed set of questions with options, written per game target'"
+  situation: "The publisher asks whether title B's stall at its step 'Craft a torch' is bad; title A has no crafting step, title C calls the same phase 'Forge'"
+  consequence: "Per-game question wording makes the three titles incomparable; with a vocab map each game's local step names resolve to one canonical phase id and the stall rate per phase has the same denominator definition in all 12 titles"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'written per game target'; B-perspectives clinical-data-abstraction-lead: 'a common data model with vocabulary mapping per site, which here means per game'"
+  proposed: "vocab_map.yaml per title: local_step_name -> canonical_phase_id (6 phases) plus optional sub-step; observation log rows carry both local_step and canonical_phase columns"
+  shallow: false
+  part: store
+  mechanism: "Observation log and answers table get two columns per step reference (local_step, canonical_phase); the canonical set is 6 phase ids owned by the publisher, the local set is free text owned by the studio"
+  example: "Publisher asks 'Which of our 12 titles has the worst FIRST_FAIL stall rate?'; SQL groups by canonical_phase = ONB.FIRST_FAIL across titles and returns title B at 41% of 480 players vs portfolio median 22%"
+  cost: M
+  depends_on: "an onboarding step that captures the step list per title; 6 canonical phase definitions written once"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has one column per game-specific question; this gives one column shared by all titles, so cross-title GROUP BY works at all"
+
+- id: publisher-2
+  title: "Nightly portfolio benchmark cube: a materialised table keyed by (title, build_version, canonical_phase, metric_id) with 15 fixed metrics and portfolio p25/median/p75 columns, refreshed at 02:00 and served under 200 ms from the dashboard"
+  level: L4
+  cell: {part: store, representation: olap-cube-materialized-views, query-path: precomputed-aggregate, latency-tier: sub-200ms-cached, delivery-surface: dashboard-standard-report, scope: cross-game, granularity: studio-portfolio, user-segment: publisher-portfolio}
+  object: "spec.md constraint: 'Answering a studio's question must be fast'; memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Portfolio insights director opens the Monday review with 12 titles and wants stall, completion, time-to-exit per phase for each, already ranked"
+  consequence: "Without the cube every portfolio view is 12 x 15 x 6 = 1,080 aggregate queries at open time; with it one table scan of 1,080 rows renders in under 200 ms"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'aggregate queries over all players (instant)'; B-perspectives publisher-portfolio-buyer: 'wants standard reports plus drill-down'"
+  proposed: "benchmark_cube table with columns title_id, build_id, canonical_phase, metric_id, value, n_players, portfolio_p25, portfolio_p50, portfolio_p75, computed_at, schema_version"
+  shallow: false
+  part: store
+  mechanism: "A scheduled job aggregates the per-session answers into one row per (title, build, phase, metric) and writes portfolio percentiles beside each value; the dashboard reads only this table"
+  example: "Director asks 'Is title B's step-3 stall rate bad?'; the cube row (B, 1.4.2, ONB.FIRST_FAIL, stall_rate) reads 0.41 with portfolio p75 = 0.29, n = 480, so the answer is 'worst quartile' with no model call"
+  cost: S
+  depends_on: "publisher-1 canonical phases; a per-session answers table with the 15 metrics"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is per video per game; the cube is per title per phase with the portfolio distribution attached, so 'is this bad' is one row read"
+
+- id: publisher-3
+  title: "Frozen 'portfolio 15' metric set: 15 metric definitions (stall_rate_per_phase, tutorial_completion, median_seconds_to_exit, restart_count, help_seek_rate, silence_over_60s_rate, negative_affect_rate, quit_in_tutorial, quit_within_10min_after, first_fail_recovery_rate, menu_time_share, input_error_rate, skip_rate, repeat_phase_rate, confusion_utterance_rate) with frozen SQL definitions and a version tag, which studios cannot edit"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: frozen-schema, reuse-scope-of-extraction: universal-primitives, user-segment: publisher-portfolio, mechanism-type: narrow-or-clarify-the-question, question-origin: kpi-backward-from-studio-metrics}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction ... cached as a new field, so the question set grows from real use'"
+  situation: "Studio B's analyst redefines stall as 'over 45 s' while the portfolio uses 'over 90 s'; the publisher's benchmark silently mixes both"
+  consequence: "One wrong cross-title number at a greenlight review discredits the whole benchmark; freezing 15 definitions under portfolio_metrics_v1 keeps every title on the same denominator, and the growth the memo wants happens outside this core"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "memo.md: 'the question set grows from real use'; B-perspectives publisher-portfolio-buyer: 'per-studio bespoke questions destroy comparability'"
+  proposed: "portfolio_metrics_v1.yaml with 15 entries (id, SQL over the observation log, denominator rule, unit); write access restricted to the publisher tenant admin role"
+  shallow: false
+  part: question-generation
+  mechanism: "15 metric definitions are stored as versioned SQL over canonical columns; the question generator may add fields but may not change these 15; the cube only reads v1 definitions"
+  example: "Studio B asks the chatbot 'stall rate at Craft a torch with a 45 s threshold'; the planner answers it as a studio-local ad hoc query and labels it 'not the portfolio stall_rate (90 s)' so the two numbers are never confused"
+  cost: S
+  depends_on: "publisher-1 canonical columns"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's questions differ per game; the 15 metrics are the same SQL for every title, so a number from title A and a number from title B mean the same thing"
+
+- id: publisher-4
+  title: "REFUSED: letting a studio rewrite core metric questions at runtime through the chatbot ('from now on count stall from 45 s'); the publisher persona will not buy a product where studio-written-at-runtime questions can alter a benchmarked field"
+  level: L3
+  cell: {part: question-generation, question-origin: studio-written-at-runtime, user-segment: publisher-portfolio, schema-evolution: frozen-schema, mechanism-type: narrow-or-clarify-the-question, delivery-surface: chatbot}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "A designer at one of 12 titles types a redefinition of a core field into the chatbot and the backfill overwrites the column used in the portfolio cube"
+  consequence: "Low willingness: the director's quarterly deck now compares 11 titles on one definition and 1 on another; the persona would drop the vendor over this, so runtime rewrites must land in a studio-local namespace (studio_fields.*) and never in portfolio_metrics_v1"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "B-perspectives publisher-portfolio-buyer: 'per-studio bespoke questions destroy comparability'; memo.md: 'cached as a new field'"
+  proposed: "Planner routes any question that names a core metric id with a changed threshold to a new studio_fields column and appends '(studio-local definition)' to the answer"
+  shallow: false
+  part: query
+  mechanism: "A namespace rule in the planner: writes from chatbot-triggered backfills go only to studio_fields.*; portfolio_metrics.* is read-only outside the publisher admin role"
+  example: "Title B's designer asks for a 45 s stall; the chatbot creates studio_fields.stall_45s for title B only and answers from it, while the portfolio cube keeps stall_rate at 90 s"
+  cost: S
+  depends_on: "publisher-3 frozen core"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no notion of who may change a column; the namespace rule makes 'who changed this number' answerable"
+
+- id: publisher-5
+  title: "Two-layer question bank: a publisher core layer (the 15 metrics plus 40 canonical-phase questions, identical for all titles) and a studio extension layer (unbounded, per title), with the chatbot labelling every answer 'core' or 'studio-local'"
+  level: L4
+  cell: {part: question-generation, reuse-scope-of-extraction: customer-defined-on-top-of-universal, representation: customer-defined-trackers-over-universal-primitives, user-segment: publisher-portfolio, question-origin: ontology-generated, mechanism-type: transfer-across-games, evidence-form: extraction-provenance-model-and-schema-version}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "The publisher wants comparability and the 12 studios each want their own questions; the memo's single ontology pruned per game produces 12 different question sets"
+  consequence: "With two layers, 55 questions are never pruned (they are the comparable core) and the per-game pruning only shapes the extension layer; the answer header shows which layer it came from"
+  p_typical: 0.10
+  grounded: quote
+  evidence: "memo.md: 'pruned by the game target'; B-perspectives conversation-analytics-vendor: 'universal pre-extracted primitives ... computed for every call regardless of tenant'"
+  proposed: "questions table gets a layer column (core | studio) and an owner column (publisher | title_id); the ontology generator writes studio-layer rows only"
+  shallow: false
+  part: question-generation
+  mechanism: "Question records carry layer and owner; core-layer questions are instantiated for every title from the canonical phases, studio-layer questions come from the memo's ontology pruned per game"
+  example: "Title C asks 'how many players failed the Forge step twice?'; the answer '71 of 410 (studio-local)' sits next to 'FIRST_FAIL repeat_phase_rate 17% (core, portfolio p50 = 12%)'"
+  cost: M
+  depends_on: "publisher-1, publisher-3"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table is all studio-local; the core layer gives every title 55 shared questions on day 0 and keeps them unpruned"
+
+- id: publisher-6
+  title: "Per-player step funnel expressed as a state machine over the 6 canonical phases, so a 4-step tutorial and an 11-step tutorial produce the same 6-node funnel and the portfolio funnel chart overlays 12 titles on one axis"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: player, scope: cross-game, question-type: compare-steps, evidence-form: chart, user-segment: publisher-portfolio, subject-domain: onboarding-tutorial}
+  object: "spec.md known problem: 'Long multi-video sessions'; memo.md item 1: 'step on screen, action, utterance'"
+  situation: "The director wants one funnel chart with 12 lines; titles have different step counts and names, so per-step funnels cannot be overlaid"
+  consequence: "Each player's session becomes a path through 6 canonical states with entry and exit timestamps; the chart's x-axis is the 6 phases and each title is one line with its n in the legend"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "B-perspectives games-user-research-lead: 'funnel/progression analysis'; B-perspectives publisher-portfolio-buyer: 'Cross-title benchmarks ... require a shared, comparable representation'"
+  proposed: "player_funnel table: player_id, title_id, build_id, phase_id, entered_at, exited_at, exit_reason (advance | quit | skip | timeout); derived from the observation log at ingestion"
+  shallow: false
+  part: store
+  mechanism: "At ingestion the observation log is folded per player into 6 phase records with timestamps and exit reasons across all videos of the session; cross-title charts read this table"
+  example: "Director asks 'where in the tutorial do we lose players across the portfolio?'; the chart shows FIRST_FAIL as the phase with the largest drop in 9 of 12 titles, title B at 38% exit_reason = quit"
+  cost: M
+  depends_on: "publisher-1 vocab map; session stitching that orders videos within a session"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table answers 'did the player quit at step X' per game; the funnel table answers it per canonical phase across every game with one query"
+
+- id: publisher-7
+  title: "Benchmark cell suppression below n = 30 players per title per build: the cell renders 'n = 12 of 30 needed' instead of a number, and the chatbot abstains with the same coverage statement"
+  level: L4
+  cell: {part: evaluation, uncertainty-policy: abstain-below-coverage, evidence-form: coverage-statement-n-of-m-players, scope: cross-game, user-segment: publisher-portfolio, delivery-surface: dashboard-standard-report, question-type: how-many}
+  object: "spec.md step 4: 'a question over, say, 500 players is fast'"
+  situation: "A newly onboarded title has 12 sessions ingested; its stall rate of 50% (6 of 12) appears in the portfolio ranking above titles with 480 players"
+  consequence: "The director acts on a number with a 95% CI wider than 50 points; with suppression the cell is blank until 30 players exist and the ranking excludes the title"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "B-perspectives statistician: 'sampling 500 players, confidence intervals in chatbot answers, denominators'; B-perspectives ask-your-data-veteran: 'trust collapse after one wrong number'"
+  proposed: "min_n = 30 stored per metric in portfolio_metrics_v1.yaml; cube rows with n_players < min_n carry value = null and a coverage string"
+  shallow: false
+  part: evaluation
+  mechanism: "The cube writer compares n_players with the metric's min_n and nulls the value; the chatbot planner checks the same threshold before answering any cross-title comparison"
+  example: "Director asks 'is title D's stall rate bad?'; the answer is 'Not reportable: 12 of 30 players needed for the portfolio benchmark; the studio-local view is available'"
+  cost: S
+  depends_on: "publisher-2 cube"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table returns a percentage over any n; this refuses to rank titles on fewer than 30 players"
+
+- id: publisher-8
+  title: "Monthly portfolio digest pushed by email on the 1st: 12 titles ranked by tutorial_completion delta vs prior month, the 3 largest moves explained with the contributing canonical phase, no question typed"
+  level: L4
+  cell: {part: export-integration, delivery-surface: scheduled-digest, mechanism-type: push-instead-of-pull, latency-tier: push-no-query, moment-in-journey: steady-state-weekly, user-segment: publisher-portfolio, question-type: compare-versions}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "The director oversees 12 studios and does not log into 12 chatbots; the question 'what changed this month' is the same every month"
+  consequence: "The answer arrives as a 1-page digest with a ranked table and 3 bullet explanations; drill-down links open the cube row and the clip montage"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "B-perspectives publisher-portfolio-buyer: 'wants standard reports plus drill-down'; C-axes delivery-surface note: 'push a digest so the question is never typed'"
+  proposed: "digest job on cron 0 6 1 * *: reads cube rows for the last 2 months, computes deltas, selects top-3 absolute changes, renders HTML with 3 deep links"
+  shallow: false
+  part: ui
+  mechanism: "A scheduled job reads the benchmark cube, computes month-over-month deltas per title, and sends a fixed-layout digest; the explanation picks the canonical phase with the largest contribution to the delta"
+  example: "Digest line: 'Title B tutorial_completion 61% -> 52% (-9 pts, n = 480 -> 455); largest contributor FIRST_FAIL exit rate +7 pts; 5 clips'"
+  cost: S
+  depends_on: "publisher-2 cube"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table waits to be asked; the digest answers the one question the publisher asks every month without a chatbot session"
+
+- id: publisher-9
+  title: "Renewal-review usage and outcome report per title: questions asked (count), answered from the core (count), backfilled (count), fixes shipped with a pre/post measurement (count), and the pre/post delta on the 15 metrics, generated for the annual central buy"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, moment-in-journey: renewal-review, question-type: did-the-fix-work-pre-post, user-segment: publisher-portfolio, delivery-surface: dashboard-standard-report, evidence-form: contrast-vs-baseline, scope: build-version-pair}
+  object: "spec.md constraint: 'Buyers are gaming studios'"
+  situation: "The publisher buys centrally once a year for 12 titles and has to justify the renewal with evidence that answers changed shipped builds"
+  consequence: "Without this the renewal argument is anecdotal; with it each title shows, for example, '38 questions, 29 core, 9 backfilled, 4 fixes measured, FIRST_FAIL stall 41% -> 27% between builds 1.4.2 and 1.5.0'"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "B-perspectives publisher-portfolio-buyer: 'Buys annually and centrally'; memo.md: 'the question set grows from real use'"
+  proposed: "query_log table (title, asked_at, question, path = core | retrieval | backfill) and fix_log table (title, build_before, build_after, metric_id, value_before, value_after) joined into a renewal report"
+  shallow: false
+  part: evaluation
+  mechanism: "Every chatbot answer writes a query_log row with its path; a studio marks a build as a fix for a metric, and the report joins the two logs to the cube for the pre/post values"
+  example: "Renewal page for title B: 'Fix for FIRST_FAIL shipped in 1.5.0: stall_rate 0.41 (n = 480) -> 0.27 (n = 310), portfolio p50 = 0.22'"
+  cost: M
+  depends_on: "publisher-2 cube; a query log in the chatbot"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no record of which questions were asked or which fixes were measured; this makes the renewal case a table"
+
+- id: publisher-10
+  title: "Pre-launch greenlight scorecard: a fixed 1-page report with the 15 metrics as a severity-by-frequency matrix (4 severity bands x 4 frequency bands) against portfolio percentiles, required before a title passes the publisher's greenlight gate"
+  level: L4
+  cell: {part: export-integration, moment-in-journey: pre-launch-greenlight, question-type: what-to-fix-first-prioritised, evidence-form: severity-frequency-matrix, user-segment: publisher-portfolio, delivery-surface: dashboard-standard-report, representation: issue-list-with-severity-frequency}
+  object: "spec.md step 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "A title is 6 weeks from launch; the greenlight committee needs one page, not a chatbot transcript"
+  consequence: "The committee sees, for example, 'FIRST_FAIL stall: severity high (quit follows in 38%), frequency high (41% of 480 players), portfolio p75 = 29%' in the top-left cell, with the 2 next cells below it"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "B-perspectives games-user-research-lead: 'a prioritised issue list with severity and frequency, not a Q&A'; B-perspectives publisher-portfolio-buyer: 'standard reports plus drill-down'"
+  proposed: "scorecard template: severity = share of affected players who quit within 10 min; frequency = share of players affected; both bucketed into 4 bands; matrix cells link to clip montages"
+  shallow: false
+  part: ui
+  mechanism: "For each of the 15 metrics the scorecard computes severity (downstream quit share) and frequency (affected share) from the funnel table and places the metric in a 4 x 4 matrix with the portfolio percentile printed in the cell"
+  example: "Title B greenlight scorecard: top-left cell holds FIRST_FAIL stall (41%, quit-after 38%), below it help_seek_rate (33%, quit-after 21%); 13 metrics fall in the lower-right"
+  cost: M
+  depends_on: "publisher-6 funnel table, publisher-2 cube"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table lists answers; the matrix ranks the 15 metrics by what to fix first with the portfolio comparison printed"
+
+- id: publisher-11
+  title: "Publisher tenant over logically isolated studio tenants: raw observations and clips stay in each title's isolated partition, only the 15 core metrics with n cross the boundary into the publisher's benchmark partition, enforced by a row-level policy on title_id"
+  level: L4
+  cell: {part: tenancy-access-control, tenancy-and-deployment: logically-isolated-per-studio, scope: cross-studio-benchmark, user-segment: publisher-portfolio, granularity: studio-portfolio, mechanism-type: transfer-across-games, evidence-form: count-with-denominator}
+  object: "memo.md item 1: 'timestamped atomic observations across all videos of a session ... quote with timestamp as evidence'"
+  situation: "Two of the 12 titles are developed by external studios under NDA; the publisher may see their benchmark numbers but not their footage or quotes"
+  consequence: "A cross-title view that reads observations would leak quotes across the NDA line; the policy lets the cube job read aggregates only, and the publisher's drill-down to clips works for owned titles and returns 'clip access: studio-only' for the 2 external ones"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "B-perspectives studio-security-reviewer: 'Cross-studio leakage through a shared ontology, shared question bank or shared cache is another risk'; C-axes tenancy note: 'The security and publisher perspectives pull in opposite directions'"
+  proposed: "Two roles: publisher_benchmark (SELECT on benchmark_cube only) and title_member (SELECT on observations WHERE title_id = own); clip URLs signed per title"
+  shallow: false
+  part: store
+  mechanism: "Row-level security on title_id for observation and clip tables; the cube writer runs as a service role that writes only aggregate rows with n >= 30 into the publisher partition"
+  example: "Director asks 'show me 5 clips of FIRST_FAIL stalls in title E (external studio)'; the chatbot answers 'stall_rate 0.35 (n = 210); clips are visible to title E members only'"
+  cost: M
+  depends_on: "publisher-2 cube; a title_id on every row"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no access model; this makes the benchmark viewable without the footage"
+
+- id: publisher-12
+  title: "REFUSED: a shared semantic cache of prior answers across publishers; the persona will not accept that a competitor's question 'why do players quit at the crafting step' could return a cached answer computed over this publisher's unreleased title"
+  level: L3
+  cell: {part: tenancy-access-control, tenancy-and-deployment: shared-multi-tenant, query-path: semantic-cache-similar-question, mechanism-type: reuse-or-cache-prior-work, user-segment: publisher-portfolio, latency-tier: sub-200ms-cached}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "JEV builds a cross-tenant semantic cache to make similar questions sub-200 ms; the cache key is the question embedding, not the tenant"
+  consequence: "Low willingness: the publisher's vendor-risk review fails on the first question about cache scoping, and the annual contract for 12 titles is not signed; the cache must be keyed by (tenant_id, question_embedding) and the benchmark pool must be opt-in with k >= 5 titles per bucket"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "B-perspectives studio-security-reviewer: 'shared cache is another risk'; B-perspectives publisher-portfolio-buyer: 'Buys annually and centrally'"
+  proposed: "Cache key = hash(tenant_id, schema_version, normalised question); cross-publisher benchmark only via an opt-in anonymised pool where each genre bucket has at least 5 titles from at least 3 publishers"
+  shallow: false
+  part: query
+  mechanism: "Semantic cache lookups include tenant_id in the key so no answer crosses a publisher boundary; an optional pool table holds genre-bucket percentiles computed only when k >= 5"
+  example: "Publisher X asks 'portfolio p50 stall at FIRST_FAIL for action-RPG'; the pool answers 0.24 from 7 titles across 4 publishers, with no title named"
+  cost: S
+  depends_on: "a tenant_id on every cache row"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is per game and leaks nothing; this keeps that property while allowing a cross-publisher benchmark by opt-in"
+
+- id: publisher-13
+  title: "Portfolio-wide eager backfill: when the publisher adds a 16th core metric, it is extracted over all 12 titles' full history (for example 5,100 sessions) in one overnight batch paid from the publisher's central budget, so the benchmark never has a title with the new column missing"
+  level: L4
+  cell: {part: cost-governance, schema-evolution: eager-backfill-all-history, extraction-trigger: on-new-field-added, scope: cross-game, user-segment: publisher-portfolio, latency-tier: overnight, mechanism-type: precompute-more}
+  object: "memo.md item 2: 'a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "The memo's backfill is triggered per studio question, so title A gets the new field and 11 titles do not; the portfolio comparison for that field has one row"
+  consequence: "The publisher-owned trigger runs the extraction over every title at once; the cube gains the column for all 12 titles by the next morning, with the cost recorded against the publisher budget line"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'batch extraction over all sessions'; spec.md: 'Ingestion time and cost are not a concern'"
+  proposed: "core_field_add job: input metric definition, output a per-session column for every session of every title in the publisher tenant; budget tag = publisher"
+  shallow: false
+  part: ingestion
+  mechanism: "A publisher-level field-add event enqueues extraction for all sessions across all titles in the tenant, not only the asking studio's sessions; completion is a cube refresh"
+  example: "Director adds 'tutorial_skip_offered_rate'; by 06:00 the cube has the column for 12 titles (5,100 sessions, 3 model-hours), and the Monday review ranks titles on it"
+  cost: M
+  depends_on: "publisher-3 core metric registry; a budget tag on extraction jobs"
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "The fixed table adds a question for one game at a time; this adds a column to all titles at once so the comparison is complete on day 1"
+
+- id: publisher-14
+  title: "Benchmark rows carry model_version and schema_version, comparisons are allowed only between rows with equal versions, and a model upgrade re-extracts the 15 core metrics over all titles before the cube switches versions, with the previous version kept for 90 days"
+  level: L4
+  cell: {part: evaluation, evidence-form: extraction-provenance-model-and-schema-version, extraction-trigger: on-model-upgrade, schema-evolution: model-upgrade-reextract, scope: cross-game, user-segment: publisher-portfolio, question-type: compare-versions}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "The extraction model changes in May; titles ingested before and after produce stall rates with different biases and the June ranking moves 4 titles"
+  consequence: "Either the ranking change is a model artifact or a real change, and nobody can tell; with version-pinned rows the dashboard shows both versions side by side for 90 days and the ranking uses one version only"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "B-perspectives eval-lead: 'regression on prompt change'; C-axes schema-evolution note: 'what happens to answers computed under the old schema or model'"
+  proposed: "cube columns model_version, schema_version; a comparison guard in the planner rejects cross-version comparisons; model_upgrade job re-extracts the 15 core metrics for all sessions and writes a second version"
+  shallow: false
+  part: evaluation
+  mechanism: "Every cube and answer row has two version columns; cross-title and pre/post queries filter to one version; a model upgrade is a full re-extraction of the core set across the tenant before the default version pointer moves"
+  example: "Director asks 'did title B's stall rate improve between April and June?'; the answer is '0.41 -> 0.27 under model v3 for both months; under v2 April read 0.38'"
+  cost: M
+  depends_on: "publisher-13 batch re-extraction; version columns on every row"
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no version; this makes every cross-title number traceable to the model that produced it"
+
+- id: publisher-15
+  title: "Warehouse share of the benchmark cube and the per-session core metrics (Snowflake or BigQuery share, 3 tables, keyed by canonical_phase and the publisher's title_id), so the publisher's BI joins tutorial metrics to its own revenue and retention KPIs"
+  level: L4
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, tenancy-and-deployment: federated-query-into-studio-warehouse, user-segment: publisher-portfolio, granularity: studio-portfolio, build-or-buy: managed-cloud-service, question-type: outside-game-target}
+  object: "spec.md step 4: 'A chatbot for the gaming studio'"
+  situation: "The director's existing portfolio deck is built in the publisher's BI tool from the publisher warehouse; a separate chatbot is a second place to look"
+  consequence: "With a 3-table share (benchmark_cube, session_core_metrics, vocab_map) the deck adds a 'tutorial health' column next to D1 retention and first-week revenue without an export step"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "B-perspectives studio-data-team-rejector: 'raw observations exported into their warehouse (Snowflake/BigQuery share, Parquet drop, API) keyed by their player IDs'"
+  proposed: "Share object with 3 tables, schema_version column, and a published contract (column list frozen per schema_version; additive changes only)"
+  shallow: false
+  part: ui
+  mechanism: "The cube and the per-session core metrics are published as a read-only warehouse share in the publisher's account; the vocab_map table lets their analysts translate canonical phases back to local step names"
+  example: "Publisher BI query: SELECT t.title, c.value AS first_fail_stall, k.d1_retention FROM share.benchmark_cube c JOIN kpi.d1 k USING (title_id) WHERE c.metric_id = 'stall_rate' AND c.canonical_phase = 'ONB.FIRST_FAIL'"
+  cost: S
+  depends_on: "publisher-2 cube"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is only reachable through a chatbot; the share makes it joinable to the publisher's KPIs in their own tool"
+
+- id: publisher-16
+  title: "Drill-down from any benchmark cell to a 5-clip montage: clicking 'title B, FIRST_FAIL, stall_rate 0.41' opens 5 clips of 20 s each, one per player, sampled from the sessions that satisfy the metric's SQL, with the quote and timestamp under each"
+  level: L4
+  cell: {part: chatbot-ui, query-path: clip-lookup, evidence-form: clip-montage-n-examples, delivery-surface: clip-reel, user-segment: publisher-portfolio, latency-tier: under-2s, granularity: variable-length-moment-or-episode}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "The director sees the number and needs to show the studio head what a stall looks like in a 10-minute meeting"
+  consequence: "The number alone starts an argument about definitions; 5 clips of the same canonical phase end it; the montage is served from precomputed clip boundaries so it opens in under 2 s"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'; B-perspectives ux-research-repository-vendor: 'clip-first evidence rather than numbers-first'"
+  proposed: "clip_index table: session_id, video_id, start_s, end_s, canonical_phase, metric_id, player_id; montage = 5 random rows for (title, phase, metric) with signed URLs"
+  shallow: false
+  part: ui
+  mechanism: "At ingestion each metric hit is stored with a clip boundary (start_s, end_s, video_id); the dashboard cell links to a montage endpoint that samples 5 rows and plays them with the quote overlay"
+  example: "Cell 'title B FIRST_FAIL stall 0.41' -> 5 clips: player 117 at video 3 of 9, 04:12-04:32, 'I don't get what it wants me to craft'; and 4 more"
+  cost: M
+  depends_on: "publisher-1 canonical phases; clip boundaries written at ingestion; per-title signed clip URLs"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table gives an answer per video; the montage gives 5 players' footage for the same canonical phase across a title in one click"
+
+- id: publisher-17
+  title: "Automatic cross-title contrast: for any title whose core metric is above the portfolio p75, the system diffs 12 attributes (platform, input method, phase length in seconds, prior-phase reward shown, text density on screen, voice-over present, skip offered, hint shown, number of UI elements, failure message shown, retry cost, phase position) against the 11 other titles and reports the 3 most divergent"
+  level: L4
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, mechanism-type: auto-discover-without-question, question-type: why, scope: cross-game, user-segment: publisher-portfolio, evidence-form: contrast-vs-baseline, latency-tier: under-30s}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "Title B's FIRST_FAIL stall is 0.41 vs p75 0.29 and the director's next question is always 'what is different about B'"
+  consequence: "Instead of a retrieval over 480 transcripts, the contrast reads 12 title-level attributes (captured at ingestion from frames and the onboarding form) and returns, for example, 'B: no failure message shown (11 of 11 others show one); phase length 94 s vs portfolio median 41 s; hint shown: no (9 of 11 yes)'"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "B-perspectives observability-log-analytics-builder: 'automatic contrast (BubbleUp: what attribute values differ between the slow/churned group and the baseline)'"
+  proposed: "title_phase_attributes table (title, phase, 12 attributes) filled at ingestion; contrast job ranks attributes by divergence from the other titles' distribution"
+  shallow: false
+  part: query
+  mechanism: "12 phase-level attributes per title are extracted once from frames and the onboarding form; a contrast query compares the outlier title's attribute vector with the others and ranks by divergence"
+  example: "Director asks 'why is B's step-3 stall so high?'; the answer in 8 s: 'B differs from the portfolio on 3 of 12 attributes: no failure message, phase length 94 s (p50 = 41 s), no hint; 5 clips attached'"
+  cost: M
+  depends_on: "publisher-2 cube; frame-derived phase attributes at ingestion"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table has nothing to compare against; this answers 'why' with a cross-title attribute diff instead of reading transcripts"
+
+- id: publisher-18
+  title: "Build-regression alert to the publisher UXR lead on Slack when a new build's tutorial_completion is more than 5 points below the title's prior build and below the portfolio p25, with n >= 30 on both builds"
+  level: L4
+  cell: {part: export-integration, delivery-surface: alert, latency-tier: push-no-query, moment-in-journey: new-build-version, mechanism-type: push-instead-of-pull, user-segment: publisher-portfolio, scope: build-version-pair, question-type: did-the-fix-work-pre-post}
+  object: "spec.md step 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Title C ships build 2.1 with a reworked tutorial; the director learns of a completion drop from the studio 3 weeks later"
+  consequence: "The alert fires the morning after the 30th player on build 2.1 is ingested: 'Title C tutorial_completion 71% -> 58% (n = 32), portfolio p25 = 63%; largest phase change CORE_VERB_INTRO exit +9 pts'"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "C-axes delivery-surface note: 'the cheapest ways to make answers fast are to precompute a standard report or push a digest'; spec.md: 'detecting churn in the tutorial'"
+  proposed: "alert rule table: metric_id, delta_threshold = 5, percentile_floor = p25, min_n = 30, channel = slack; evaluated after each cube refresh"
+  shallow: false
+  part: ui
+  mechanism: "After the nightly cube refresh a rule engine compares each title's latest build row with the previous build row and the portfolio percentile, and posts to Slack when both conditions hold"
+  example: "Slack message at 06:10: 'Title C build 2.1: tutorial_completion -13 pts vs 2.0 (n = 32 / 410), below portfolio p25; 5 clips; open scorecard'"
+  cost: S
+  depends_on: "publisher-2 cube with build_version rows; build_version metadata on every session"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table does not know a build changed; the alert compares builds and the portfolio without a question"
+
+- id: publisher-19
+  title: "Genre-bucketed benchmark percentiles: portfolio p25/p50/p75 are computed within the genre bucket from the onboarding genre tag (for example 4 action-RPG, 5 match-3, 3 city-builder titles) and the dashboard shows the within-genre percentile first and the all-portfolio percentile second"
+  level: L4
+  cell: {part: store, question-origin: genre-template-library, scope: cross-game, representation: olap-cube-materialized-views, user-segment: publisher-portfolio, reuse-scope-of-extraction: genre-shared, evidence-form: contrast-vs-baseline}
+  object: "memo.md item 3: 'pruned by the game target'"
+  situation: "A match-3 tutorial of 90 s is compared with an action-RPG tutorial of 25 min on median_seconds_to_exit and the match-3 title ranks best on every time metric"
+  consequence: "Within-genre percentiles make the ranking meaningful; a bucket with fewer than 3 titles falls back to the all-portfolio percentile with a label"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "B-perspectives conversation-analytics-vendor: 'tracker libraries shared across tenants in the same vertical, which here means the same game genre'"
+  proposed: "cube gets genre_bucket, genre_p25, genre_p50, genre_p75, genre_n_titles columns; bucket fallback rule when genre_n_titles < 3"
+  shallow: false
+  part: store
+  mechanism: "The cube writer groups titles by the genre tag before computing percentiles and writes both genre and portfolio percentiles on every row"
+  example: "Title B (action-RPG) FIRST_FAIL stall 0.41: genre p75 = 0.33 (4 titles), portfolio p75 = 0.29 (12 titles); dashboard prints the genre line first"
+  cost: S
+  depends_on: "publisher-2 cube; a genre tag per title"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table compares nothing; this compares within genre and labels the fallback"
+
+- id: publisher-20
+  title: "KPI-backward question generation for the portfolio: from the publisher's 3 tracked KPIs (D1 retention, tutorial completion, first-purchase rate) the generator instantiates, per canonical phase, the 4 question forms 'which phase precedes quit', 'which phase has the longest stall', 'which utterance class precedes quit', 'which phase precedes the first store visit', producing 24 questions identical across titles"
+  level: L4
+  cell: {part: question-generation, question-origin: kpi-backward-from-studio-metrics, scope: cross-game, user-segment: publisher-portfolio, reuse-scope-of-extraction: universal-primitives, subject-domain: economy-monetization, question-type: why}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes)'"
+  situation: "The ontology generates hundreds of questions per game; the director only cares about the ones that explain the 3 KPIs in the board deck"
+  consequence: "24 KPI-anchored questions are generated once and asked of every title; every answer is labelled with the KPI it explains, so the deck's 'why' column is filled from the same 24 questions for all 12 titles"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'entities x dimensions x outcomes'; C-axes question-origin value 'kpi-backward-from-studio-metrics'"
+  proposed: "kpi_questions.yaml: 3 KPIs x 4 forms x 6 phases, each with answer type (phase id, count, utterance class) and the cube column it reads"
+  shallow: false
+  part: question-generation
+  mechanism: "A generator template takes the KPI list and the canonical phases and emits closed-answer questions whose answers are computed from the funnel and observation tables; no per-game text"
+  example: "KPI tutorial completion, form 'which phase precedes quit', title B: 'FIRST_FAIL (38% of 182 quits), CORE_VERB_INTRO (24%), FIRST_INPUT (11%)'"
+  cost: S
+  depends_on: "publisher-6 funnel table; 3 KPI definitions from the publisher"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's questions are per game and unlinked to any KPI; these 24 are shared and each names the KPI it explains"
+
+- id: publisher-21
+  title: "Uniform player-affect fields from speech using a 5-item PXI-derived scale (frustration, confusion, enjoyment, boredom, mastery) scored per canonical phase for every title with the same prompt and the same 0-4 rubric, so affect is benchmarkable across the portfolio"
+  level: L4
+  cell: {part: ingestion-extraction, question-origin: established-gur-frameworks-heuristics-pxi-mda, subject-domain: player-affect, modality: speech-transcript, representation: time-series-signals-affect-pace-silence, scope: cross-game, user-segment: publisher-portfolio, extraction-trigger: at-ingestion}
+  object: "memo.md item 1: 'friction signal, sentiment'"
+  situation: "Each studio's sentiment question is worded differently ('was the player annoyed', 'did the player enjoy the step'), so a portfolio affect comparison is impossible"
+  consequence: "One 5-item rubric scored 0-4 per phase per player gives 5 comparable time-series per title; the portfolio chart shows median frustration by phase for 12 titles on one axis"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'friction signal, sentiment'; B-perspectives games-user-research-lead: 'PXI/GEQ/PENS experience inventories ... ready-made ontologies for question generation'"
+  proposed: "affect_scores table: player_id, title_id, canonical_phase, item (5 values), score 0-4, evidence_utterance_id; the same extraction prompt for every title"
+  shallow: false
+  part: ingestion
+  mechanism: "At ingestion the transcript of each phase is scored on 5 fixed items with a 0-4 rubric and one supporting utterance per score; the rubric text is versioned and shared"
+  example: "Director asks 'where is frustration highest across the portfolio?'; answer: 'FIRST_FAIL median frustration 2.6 of 4 across 12 titles; title B 3.4 (n = 480), portfolio p75 = 2.9'"
+  cost: M
+  depends_on: "publisher-1 canonical phases"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table's sentiment answers are game-specific option sets; this is one 5-item scale with the same rubric for all titles"
+
+- id: publisher-22
+  title: "'Find titles where' query form at studio-portfolio granularity: the planner accepts predicates over cube rows (for example 'titles where FIRST_FAIL stall > portfolio p75 AND help_seek_rate < p25') and returns a title list with the two values and n"
+  level: L4
+  cell: {part: query-path, question-type: find-players-who, granularity: studio-portfolio, query-path: sql-over-closed-fields, user-segment: publisher-portfolio, evidence-form: per-player-list, latency-tier: under-2s}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players'"
+  situation: "The memo's planner is built for 'find players who'; the director's question is 'find titles where', and the planner has no title-level target"
+  consequence: "Adding studio-portfolio as a planner target makes the cube queryable in the same chatbot: 'titles where players stall but do not ask for help' returns 'B, G (2 of 12)' with values"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "memo.md: 'aggregate queries over all players'; A-frame topic: 'across hundreds of players'"
+  proposed: "Planner grammar adds target = title with predicates over cube columns and percentile references; output = list of (title, values, n)"
+  shallow: false
+  part: query
+  mechanism: "The planner's cohort target gains a 'title' level that compiles to a WHERE clause over the benchmark cube and percentile columns"
+  example: "Director: 'which titles have a silent-stall problem?'; planner: SELECT title FROM cube WHERE stall_rate > portfolio_p75 AND help_seek_rate < portfolio_p25; answer 'B (0.41 / 0.08), G (0.33 / 0.09)'"
+  cost: S
+  depends_on: "publisher-2 cube"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is per game; this lets one question range over all titles and return the ones that match"
+
+- id: publisher-23
+  title: "Central extraction budget with per-title allocation: one annual budget in model-hours (for example 2,400) split by title with a floor (100) and a pooled reserve (20%), where studio-triggered backfills draw from the title's allocation and publisher core-field adds draw from the reserve, shown on a budget page"
+  level: L4
+  cell: {part: cost-governance, user-segment: publisher-portfolio, moment-in-journey: renewal-review, mechanism-type: defer-to-query-time, extraction-trigger: on-first-question, delivery-surface: dashboard-standard-report, effort: S-weeks}
+  object: "spec.md constraint: 'Ingestion time and cost are not a concern'"
+  situation: "The spec's statement holds per studio, but 12 titles each triggering memo-style backfills over their history makes the annual bill unpredictable for the central buyer"
+  consequence: "A budget page shows each title's used and remaining model-hours; a backfill request that exceeds the allocation is queued with a cost estimate and an approve button for the publisher admin"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern'; B-perspectives publisher-portfolio-buyer: 'Buys annually and centrally'"
+  proposed: "budget table: title_id, allocated_hours, used_hours; backfill jobs record estimated and actual hours; approval flow when estimate > remaining"
+  shallow: false
+  part: evaluation
+  mechanism: "Every extraction job carries a title and an estimated cost; the scheduler checks the title's remaining allocation and either runs, queues for approval, or draws from the reserve for publisher-owned jobs"
+  example: "Title B's analyst asks a question that needs a backfill over 480 sessions (estimated 6 model-hours, 11 remaining); it runs; the next one (estimated 14) waits for approval"
+  cost: S
+  depends_on: "a cost estimate per extraction job"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has a fixed cost per video; this keeps the growing question set inside an annual number the buyer signed"
+
+- id: publisher-24
+  title: "Session as the benchmark unit, not video: session_key = (title_id, build_id, player_id, session_date) is mandatory on every observation, and all 15 core metrics are defined over sessions, so a 2-hour session split into 8 videos counts once in every title regardless of how each studio splits video"
+  level: L4
+  cell: {part: session-stitching, granularity: session, user-segment: publisher-portfolio, scope: cross-game, schema-evolution: frozen-schema, modality: build-version-metadata, evidence-form: count-with-denominator}
+  object: "spec.md step 1: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos'; spec.md unspecified: 'how videos of one session are linked'"
+  situation: "Title A's studio records 45-minute sessions (3 videos) and title B's records 3-hour sessions (12 videos); a per-video answers table makes B's stall count 4x A's for the same player behaviour"
+  consequence: "Denominators differ by recording practice, not by game; with session as the unit, stall_rate is stalls per player-session for both and the benchmark is fair"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'one session is many videos'; spec.md: 'how videos of one session are linked' (unspecified)"
+  proposed: "Ingestion rejects a video without session_key; core metric SQL uses COUNT(DISTINCT session_key) as the denominator; the cube's n_players counts distinct player_id"
+  shallow: false
+  part: store
+  mechanism: "A required session_key on every video and observation row, with a stitching step that orders videos by sequence number inside the session before any per-session metric is computed"
+  example: "Title B player 117, 8 videos: the stall at FIRST_FAIL in video 3 counts as 1 stall for 1 session; the cube reads stall_rate = sessions with >= 1 stall / sessions, 197 / 480 = 0.41"
+  cost: S
+  depends_on: "studio upload tooling that supplies session_key and video sequence number"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is per video, so counts scale with video count; this makes every title's denominator a player-session"
+
+- id: publisher-25
+  title: "REFUSED: map-reduce over raw transcripts as the path for any benchmark number; the persona rejects a cross-title number that cannot be re-run to the same value, so the benchmark path must be SQL over closed fields and raw map-reduce is limited to studio-local exploratory answers tagged 'not reproducible'"
+  level: L3
+  cell: {part: query-path, query-path: map-reduce-over-raw, representation: raw-transcript-only, user-segment: publisher-portfolio, uncertainty-policy: always-answer, mechanism-type: defer-to-query-time, latency-tier: minutes}
+  object: "spec.md step 4: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists'"
+  situation: "A long-context path answers 'how many players stalled at step 3' by reading 480 transcripts; the same question tomorrow returns 193 instead of 197"
+  consequence: "Low willingness: two decks with two numbers for the same title end the benchmark's credibility; raw map-reduce stays available for exploration with a 'not reproducible, studio-local' label and is never written to the cube"
+  p_typical: 0.04
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow'; B-perspectives long-context-skeptic: 'map-reduce over players, cost curves'"
+  proposed: "Planner rule: answers produced by map-reduce-over-raw carry reproducible = false and are blocked from the cube and from cross-title comparisons"
+  shallow: false
+  part: query
+  mechanism: "An answer provenance flag; cube writers and cross-title planners only accept answers whose provenance is SQL over extracted closed fields with a schema_version"
+  example: "Director asks the chatbot 'how many of B's players stalled at step 3?'; the answer comes from the cube (197 of 480, v3); an exploratory 'what did they say while stalling' may run map-reduce and is labelled 'exploratory'"
+  cost: S
+  depends_on: "publisher-14 provenance columns"
+  ingest_cost: S
+  query_cost: L
+  better_than_fixed_table: "Same reproducibility as the fixed table, but with the exploratory path allowed beside it and labelled"
+
+- id: publisher-26
+  title: "Standard 3-page portfolio report with a fixed layout: page 1 ranking of 12 titles on 15 metrics with percentile colouring, page 2 the 6-phase funnel overlay, page 3 per-title scorecard tiles; the same layout every week"
+  level: L4
+  cell: {part: chatbot-ui, delivery-surface: dashboard-standard-report, user-segment: publisher-portfolio, moment-in-journey: steady-state-weekly, evidence-form: chart, scope: cross-game, latency-tier: sub-200ms-cached}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "The director's weekly review needs the same view every week; a chatbot forces the same 15 questions to be typed 12 times"
+  consequence: "The report is rendered from the cube at open time; the chatbot is reached from any cell for the follow-up, so typed questions start from a number rather than from a blank box"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "B-perspectives publisher-portfolio-buyer: 'wants standard reports plus drill-down'"
+  proposed: "report spec with 3 pages, each a fixed query over the cube; every cell carries a deep link to the chatbot pre-filled with the cell's title, phase and metric"
+  shallow: false
+  part: ui
+  mechanism: "A fixed report definition (3 pages, 1 cube query each) rendered on open; cell click opens the chatbot with a prefilled question string"
+  example: "Page 1 cell 'B / FIRST_FAIL / stall 0.41 (p75 band)'; click opens chatbot with 'Why is title B's FIRST_FAIL stall rate 0.41 (portfolio p75 0.29)?'"
+  cost: S
+  depends_on: "publisher-2 cube"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is reached only through typed questions; the report shows the 180 numbers the publisher asks for every week without typing"
+
+- id: publisher-27
+  title: "Answer ledger: every chatbot answer used in a report is stored with (question hash, tenant, schema_version, model_version, data_as_of, value, n) and re-asking the same question returns the ledger value with its as-of date, so a number quoted in March is retrievable and identical in June"
+  level: L4
+  cell: {part: query-path, query-path: cached-prior-answer, mechanism-type: reuse-or-cache-prior-work, user-segment: publisher-portfolio, evidence-form: extraction-provenance-model-and-schema-version, uncertainty-policy: answer-with-ci-and-n, latency-tier: sub-200ms-cached}
+  object: "memo.md item 2: 'cached as a new field'"
+  situation: "The director quoted 'B stall 41%' to the board in March; in June the chatbot says 38% because 40 more sessions were ingested, and the board asks which number is right"
+  consequence: "The ledger returns 'March answer: 0.41 (n = 480, as of 2026-03-02, v3); current: 0.38 (n = 520, as of 2026-06-01, v3)' so both are right and the difference is explained by n"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "B-perspectives ask-your-data-veteran: 'trust collapse after one wrong number'"
+  proposed: "answer_ledger table keyed by (tenant, question_hash, data_as_of); the planner checks for prior ledger rows and prints them beside the fresh answer"
+  shallow: false
+  part: query
+  mechanism: "Each answer is persisted with its provenance and data cut-off; a repeat question shows prior ledger entries next to the current value"
+  example: "Director re-asks the March question; the chatbot prints the two values with their n and as-of dates in under 200 ms"
+  cost: S
+  depends_on: "publisher-14 provenance columns"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has only the current value; the ledger keeps every quoted number with its date"
+
+- id: publisher-28
+  title: "Change control for core metric definitions: a definition change produces a new metric id (stall_rate_v2), both versions are computed for 90 days, the dashboard shows both with the publisher's chosen default, and v1 is retired only after the 12 titles have 30 players each on v2"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: deprecate-and-migrate, user-segment: publisher-portfolio, scope: cross-game, evidence-form: extraction-provenance-model-and-schema-version, moment-in-journey: steady-state-weekly, mechanism-type: human-in-the-loop}
+  object: "memo.md item 2: 'the question set grows from real use'"
+  situation: "The publisher's UXR council decides stall should be 60 s not 90 s; a silent redefinition breaks every pre/post comparison in flight"
+  consequence: "Dual-run for 90 days keeps every comparison valid under v1 while v2 accumulates; the switch date and the n condition are visible on the metric's definition page"
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "C-axes schema-evolution note: 'what happens to answers computed under the old schema or model, is a design space in its own right'"
+  proposed: "metric registry with status (active | dual-run | retired), retire_after date and retire_min_n = 30; cube computes every active and dual-run metric"
+  shallow: false
+  part: evaluation
+  mechanism: "Metric definitions are immutable records; a change creates a new id in dual-run status; a retirement job checks the n condition per title before flipping v1 to retired"
+  example: "stall_rate_v2 (60 s) enters dual-run on 2026-07-01; the cube shows both for B: v1 0.41, v2 0.47; v1 retires on 2026-10-01 once all 12 titles have 30 players on v2"
+  cost: S
+  depends_on: "publisher-3 metric registry"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table rewrites a question in place; this keeps the old number computable while the new one proves itself"
+
+- id: publisher-29
+  title: "Benchmark admission gate at onboarding: a title enters the portfolio cube only when at least 80% of its tutorial steps map to a canonical phase and the 6 phases are each mapped at least once; unmapped steps are listed on the onboarding page with a 'map' button"
+  level: L4
+  cell: {part: collection-protocol, extraction-trigger: on-new-game-onboarding, moment-in-journey: game-onboarding-day-0, user-segment: publisher-portfolio, representation: common-data-model-with-per-game-vocab-map, uncertainty-policy: abstain-below-coverage, mechanism-type: human-in-the-loop}
+  object: "spec.md unspecified: 'who at the studio asks and what they ask'"
+  situation: "A new title's producer skips the vocab map; its stall rate per phase is computed over 2 of 6 phases and ranks top of the portfolio"
+  consequence: "The gate keeps the title out of cross-title views (its studio-local views still work) until the map is complete; the onboarding page shows '7 of 11 steps mapped, phases missing: FIRST_REWARD, FREE_CHOICE'"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "B-perspectives clinical-data-abstraction-lead: 'each game''s local names mapped onto them'; B-perspectives product-owner-jev: 'time to onboard a new game'"
+  proposed: "benchmark_eligible flag per title computed from vocab_map coverage; cube writer skips ineligible titles; onboarding page lists unmapped steps"
+  shallow: false
+  part: evaluation
+  mechanism: "A coverage check over vocab_map (mapped steps / total steps >= 0.8 and all 6 phases present) sets a per-title eligibility flag read by the cube writer and the planner"
+  example: "Title H onboards with 11 steps, maps 7; the cube omits H; the director sees 'H: not benchmark-eligible (7/11 mapped)' in the ranking footer"
+  cost: S
+  depends_on: "publisher-1 vocab map"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no eligibility notion; this stops a half-mapped title from entering the ranking"
+
+- id: publisher-30
+  title: "Cross-title extraction agreement check: 20 sessions per title are extracted twice (two model seeds, or model and a human labeller) and a title's 15 core metrics are admitted to the benchmark only when per-metric agreement is at least 0.8 (Cohen's kappa for booleans, within 10% for counts), reported per title on the evaluation page"
+  level: L4
+  cell: {part: evaluation, user-segment: publisher-portfolio, scope: cross-game, evidence-form: confidence-score, extraction-trigger: on-low-confidence-or-disagreement, question-type: how-many, uncertainty-policy: abstain-below-coverage}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: "The extraction is reliable on title A's clear UI and unreliable on title G's text-heavy screens; the portfolio ranking treats both as equally accurate"
+  consequence: "The agreement page shows per-title kappa per metric; G's stall_rate (kappa 0.62) is greyed out in the ranking with 'extraction agreement below 0.8' until the extraction for G is fixed"
+  p_typical: 0.03
+  grounded: quote
+  evidence: "memo.md: 'accuracy against hand-labelled sessions'; B-perspectives clinical-data-abstraction-lead: 'inter-abstractor agreement as the quality metric'"
+  proposed: "agreement table: title_id, metric_id, kappa, n = 20, computed_at; cube rows for (title, metric) with kappa < 0.8 carry value = null and a reason"
+  shallow: false
+  part: evaluation
+  mechanism: "A per-title double-extraction of 20 sessions at onboarding and after each model upgrade; per-metric agreement gates the cube cell"
+  example: "Director asks 'rank titles on stall rate'; the answer lists 11 titles and notes 'G excluded: extraction agreement 0.62 on stall_rate (20 sessions)'"
+  cost: M
+  depends_on: "publisher-2 cube; a double-extraction job"
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table reports every answer with equal confidence; this reports per-title, per-metric agreement and withholds cells below 0.8"
+
+- id: publisher-31
+  title: "Mandatory build_version metadata per session (semver string plus build date, taken from the upload form or the title screen via OCR) with a 'version pair' selector on every benchmark view, so pre/post comparisons are available for all 12 titles in the same format"
+  level: L4
+  cell: {part: collection-protocol, modality: build-version-metadata, granularity: build-version, question-type: compare-versions, scope: build-version-pair, user-segment: publisher-portfolio, mechanism-type: change-data-at-source, extraction-trigger: on-game-update}
+  object: "spec.md unspecified: 'how videos of one session are linked' and no mention of a build identifier anywhere in the pipeline"
+  situation: "Title C reworked its tutorial, but sessions carry no build id, so the only pre/post split is by upload date, which mixes 2 builds in the same week"
+  consequence: "With build_version required at upload (and OCR of the title-screen version string as a fallback check), every cube row is per build and the compare selector offers 'build 2.0 vs 2.1' for any title"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "B-perspectives playtest-ops-protocol-designer: 'a session starts at recruitment, so the data has a history before ingestion'; C-axes granularity value 'build-version'"
+  proposed: "upload form field build_version (regex validated), OCR check of the title screen in video 1 of the session, mismatch flagged; cube keyed by build_id"
+  shallow: false
+  part: ingestion
+  mechanism: "Upload tooling requires a build string; a frame OCR pass on the first video confirms it; the observation log and cube carry build_id on every row"
+  example: "Director selects title C, builds 2.0 vs 2.1: tutorial_completion 71% (n = 410) vs 58% (n = 32), with a warning that 2.1 has fewer than 100 players"
+  cost: S
+  depends_on: "an upload form or SDK that studios use; OCR at ingestion"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table is per video with no build; this makes every number per build and makes 'did the fix work' a selector, not a question"
+
+- id: publisher-32
+  title: "REFUSED as the primary surface: a free-text chatbot for the portfolio director; the persona will use the chatbot only as the drill-down from a report cell and will not type portfolio questions, so the chatbot must accept a prefilled (title, phase, metric) context and open with the 3 most-asked follow-ups for that cell"
+  level: L3
+  cell: {part: chatbot-ui, delivery-surface: chatbot, user-segment: publisher-portfolio, question-origin: learned-from-studio-usage, mechanism-type: narrow-or-clarify-the-question, latency-tier: under-2s}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "The product opens on a blank chat box; the director, who buys for 12 titles, closes it and asks the UXR lead for a deck instead"
+  consequence: "Low willingness for chat-first: the director's usage drops to zero and the renewal is argued by studios alone; with a cell-context opener the chatbot shows 'Why is B's FIRST_FAIL stall 0.41?', 'Show 5 clips', 'Compare with build 1.4.1' as buttons, learned from the publisher tenant's query log"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'A chatbot for the gaming studio'; B-perspectives publisher-portfolio-buyer: 'wants standard reports plus drill-down'"
+  proposed: "Chatbot session starts with context = {title, phase, metric}; the 3 suggested questions are the top-3 templates by frequency in the publisher tenant's query_log for that metric"
+  shallow: false
+  part: ui
+  mechanism: "The chatbot accepts a context object from a report cell and ranks suggested follow-ups from the query log filtered to the same metric id"
+  example: "From cell 'B / FIRST_FAIL / stall 0.41' the chatbot opens with 3 buttons; the director clicks 'Show 5 clips' and never types"
+  cost: S
+  depends_on: "publisher-26 report; a query log"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's chatbot starts blank; this starts from a number and 3 learned follow-ups"
+
+- id: publisher-33
+  title: "Opt-in cross-publisher anonymised benchmark pool: genre-bucket percentiles for the 15 core metrics computed only when a bucket holds at least 5 titles from at least 3 publishers, returned without title names, with the pool's n_titles printed on every value"
+  level: L4
+  cell: {part: tenancy-access-control, scope: cross-studio-benchmark, tenancy-and-deployment: logically-isolated-per-studio, user-segment: publisher-portfolio, evidence-form: coverage-statement-n-of-m-players, reuse-scope-of-extraction: genre-shared, question-type: compare-versions}
+  object: "spec.md constraint: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  situation: "A publisher with 3 action-RPG titles cannot tell whether a 0.29 stall rate is good in the genre; its own portfolio is too small"
+  consequence: "The pool answers 'genre p50 = 0.24 (7 titles, 4 publishers)'; a bucket with fewer than 5 titles or fewer than 3 publishers returns 'pool not available' so no publisher can infer another's single title"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "B-perspectives platform-owner: 'aggregate benchmarks across the platform'; B-perspectives studio-security-reviewer: 'Cross-studio leakage'"
+  proposed: "pool table: genre_bucket, metric_id, p25, p50, p75, n_titles, n_publishers, computed_at; opt-in flag per publisher tenant; k thresholds 5 and 3"
+  shallow: false
+  part: store
+  mechanism: "A nightly job reads opted-in tenants' cube rows (aggregates only), groups by genre bucket, and writes percentiles when both k thresholds hold"
+  example: "Director asks 'is 0.29 FIRST_FAIL stall normal for action-RPG?'; answer: 'pool p50 = 0.24, p75 = 0.31 (7 titles, 4 publishers); yours is between p50 and p75'"
+  cost: M
+  depends_on: "publisher-2 cube; publisher-19 genre buckets; a per-tenant opt-in flag"
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table knows one game; this answers 'is this normal' across publishers without naming a title"

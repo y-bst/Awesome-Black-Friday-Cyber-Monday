@@ -1,0 +1,692 @@
+- id: datateam-1
+  title: "Deliver the observation log as a Snowflake secure share / BigQuery Analytics Hub listing: one table OBSERVATIONS keyed by studio_player_key, session_id, session_t_ms, refreshed within 1 h of ingestion, instead of a chatbot"
+  level: L4
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, tenancy-and-deployment: export-only-no-hosting, representation: timestamped-observation-log, user-segment: studio-data-engineer, granularity: utterance, build-or-buy: managed-cloud-service, effort: S-weeks}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions from that table'; memo.md item 1: 'session-level observation log'"
+  situation: "The studio already runs Snowflake with 40 dbt models over its telemetry and a Looker instance; the head of data will not add a second query surface"
+  consequence: "The studio joins OBSERVATIONS to its own PLAYER_RETENTION table in one SQL; JEV's extraction is used daily, the chatbot is never opened; JEV keeps the ingestion revenue and loses the UI argument"
+  p_typical: 0.25
+  grounded: quote
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.' The warehouse already holds the questions they do know."
+  proposed: "Share contains OBSERVATIONS (studio_player_key, session_id, video_idx, session_t_ms, wall_clock_utc, obs_type, step, screen_state, ui_element, action, utterance_text, ocr_text, sentiment, friction, confidence, extractor_version, schema_version, attrs VARIANT) plus SESSIONS and VIDEOS; grant per studio account; refresh every 60 min"
+  shallow: false
+  part: ui
+  mechanism: "JEV's store becomes a producer table; the share is a zero-copy grant on a per-studio database; the studio reads with its own compute and its own roles"
+  example: "'Which tutorial step do churners quit on?' -> studio SQL joins OBSERVATIONS obs_type='session_end' to its own D1_RETAINED flag: step 3 holds 61 of 118 non-retained players vs 22 of 382 retained; 1.2 s in Snowflake, no JEV call"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Every observation, not only the 30 answered questions, is joinable to telemetry and retention that JEV never sees"
+  depends_on: nothing
+
+- id: datateam-2
+  title: "Parquet drop to a studio-owned bucket with Hive partitions game_id=/build_version=/ingest_date=, a _manifest.json per partition listing file count, row count and schema_version, so dbt external tables load it without a JEV account"
+  level: L4
+  cell: {part: export-integration, delivery-surface: warehouse-share-or-export, tenancy-and-deployment: export-only-no-hosting, build-or-buy: open-source-component, user-segment: studio-data-engineer, effort: XS-days, schema-evolution: append-only-versioned-fields}
+  object: "spec.md step 3: 'The answers form a structured table per video'"
+  situation: "Studio is on Databricks or self-hosted ClickHouse, not Snowflake or BigQuery, so a native share is impossible"
+  consequence: "Files land in s3://studio-bucket/jev/game_id=g7/build_version=1.4.2/ingest_date=2026-10-27/part-000.parquet; a late or empty partition is detected by manifest row_count=0; the studio's orchestrator (Airflow, Dagster) polls the manifest rather than a JEV API"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "spec.md Unspecified: 'how videos of one session are linked'; the manifest makes that explicit per partition"
+  proposed: "Writer emits ZSTD Parquet with a fixed column order per schema_version; _manifest.json {schema_version, files:[{name, rows, bytes, sha256}], sessions:[...], written_at}; one partition per game/build/day"
+  shallow: false
+  part: ui
+  mechanism: "Same OBSERVATIONS rows as datateam-1 written as columnar files; partition keys chosen to match the studio's telemetry partitioning so joins prune by build_version"
+  example: "'How long do churners spend on tutorial step 2 versus completers?' -> studio reads the build_version=1.4.2 partition into Spark, groups by studio_player_key and step: churners median 4 m 50 s (n=118), completers 2 m 10 s (n=382)"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The per-video table becomes files the studio owns forever; no vendor query surface to depend on"
+  depends_on: nothing
+
+- id: datateam-3
+  title: "A published schema contract: semver on schema_version, columns are only ever added (nullable, with first_populated_at), never renamed, retyped or removed, and a dbt sources.yml with column descriptions is generated from the same registry on every release"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: append-only-versioned-fields, user-segment: studio-data-engineer, delivery-surface: warehouse-share-or-export, mechanism-type: change-data-at-source, effort: S-weeks, moment-in-journey: steady-state-weekly}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field, so the question set grows from real use'"
+  situation: "JEV adds a field every week from the backfill loop; the studio's dbt models select specific columns and tests on accepted_values; an untyped rename breaks a nightly run at 03:00"
+  consequence: "New field 'popup_dismiss_count' arrives as a new nullable column with first_populated_at=2026-11-03; schema_version goes 2.3.0 -> 2.4.0; dbt tests pass; a column removal would require a 3.0.0 bump, which is forbidden by the contract for 180 days after announcement"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'cached as a new field' with no statement of how downstream consumers learn of it"
+  proposed: "Registry table SCHEMA_FIELDS (field_name, type, enum_ref, added_in, deprecated_in, first_populated_at, description, extractor_prompt_hash); CI generates sources.yml and a CHANGELOG.md; a breaking change fails CI unless major bump + 180-day notice"
+  shallow: false
+  part: store
+  mechanism: "Every new extraction field is registered before it is written; the contract is enforced in JEV's CI, not documented in prose; the studio's dbt project can vendor the generated sources.yml"
+  example: "'Did players who quit the tutorial see the controls popup twice?' -> the new popup_dismiss_count column exists for sessions ingested after 2026-11-03 and is NULL before; the studio's query filters on first_populated_at and reports 44 of 97 churners vs 31 of 310 completers for the covered window"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fields can grow weekly without breaking a single downstream model; the fixed table had no versioning at all"
+  depends_on: datateam-1
+
+- id: datateam-4
+  title: "Studio-issued player keys: the recruitment form captures the studio's hashed player_id and JEV stores only that key, never its own player identity, so every exported row joins to telemetry on equality"
+  level: L4
+  cell: {part: collection-protocol, modality: player-profile-metadata, tenancy-and-deployment: logically-isolated-per-studio, user-segment: studio-data-engineer, moment-in-journey: game-onboarding-day-0, mechanism-type: change-data-at-source, effort: XS-days, scope: one-player}
+  object: "spec.md step 1: 'A player's gameplay session is captured as video'; spec.md Unspecified: 'who at the studio asks'"
+  situation: "JEV assigns player P-0421; the studio's telemetry has account_id 8f3a...; nobody can join the 500 video players to D7 retention"
+  consequence: "At recruitment the player logs into the build with a test account; the studio sends JEV a CSV (jev_session_code, sha256(account_id)); all exports carry studio_player_key = that hash; a join to the studio's events table hits 500 of 500 players rather than 0"
+  p_typical: 0.12
+  grounded: inferred
+  evidence: "spec.md: 'so that a question over, say, 500 players is fast' assumes the 500 are identifiable; nothing says how"
+  proposed: "SESSIONS.studio_player_key VARCHAR(64) NOT NULL; onboarding checklist item 1 is the key-exchange CSV; JEV refuses ingestion for a session without a key when the studio has opted into keyed export"
+  shallow: false
+  part: ingestion
+  mechanism: "The identity is minted by the studio and handed to JEV, not the reverse; JEV never learns the raw account_id"
+  example: "'Do players who churn at tutorial step 3 also fail to return on day 1?' -> studio joins OBSERVATIONS (step-3 session_end) to RETENTION on studio_player_key: 53 of 61 step-3 quitters are D1-churned vs 140 of 439 others"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Video observations become one more joinable fact table in the studio's warehouse rather than a sealed vendor dataset"
+  depends_on: nothing
+
+- id: datateam-5
+  title: "Every observation row carries wall_clock_utc plus a per-video clock_offset_ms estimated from on-screen timestamps or the first telemetry-matched event, so video observations join telemetry events within a 2 s window"
+  level: L4
+  cell: {part: session-stitching, modality: on-screen-text-ocr, granularity: video, question-type: timeline, user-segment: studio-data-engineer, mechanism-type: change-data-at-source, effort: S-weeks, evidence-form: quote-with-timestamp}
+  object: "spec.md step 1: 'each video is capped at 15 minutes, so one session is many videos'"
+  situation: "Studio wants to know what the player said in the 10 s before the telemetry event tutorial_step_3_fail, but video timestamps are relative to each 15-minute file and telemetry is UTC"
+  consequence: "Each VIDEOS row stores recording_start_utc (from the capture client) and clock_offset_ms (median difference between OCR'd in-game clock or a known HUD event and telemetry); observations get wall_clock_utc = recording_start_utc + video_t_ms + clock_offset_ms; the join ABS(diff) < 2000 ms matches 94 of 100 sampled events"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md Known problems: 'Long multi-video sessions'; spec.md Unspecified: 'whether game telemetry is joined'"
+  proposed: "VIDEOS (session_id, video_idx, recording_start_utc, duration_ms, clock_offset_ms, offset_method ENUM('capture_clock','ocr_hud','telemetry_anchor'), offset_confidence)"
+  shallow: false
+  part: ingestion
+  mechanism: "Capture client stamps UTC at record start; ingestion computes a per-video offset and confidence; the studio's dbt model does an ASOF join on wall_clock_utc"
+  example: "'What did tutorial churners say in the 10 s before their third failed jump?' -> ASOF join of telemetry jump_fail to OBSERVATIONS utterance rows within 10 s: 38 of 61 churners have an utterance, 29 of those are negative sentiment, with quotes and timestamps"
+  cost: M
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Questions that combine telemetry and speech become a time join instead of a question nobody wrote"
+  depends_on: datateam-4
+
+- id: datateam-6
+  title: "REFUSED: the JEV chatbot as the studio's query surface; the head of data will not adopt a second NL-to-answer tool outside the warehouse and BI the studio already governs"
+  level: L3
+  cell: {part: chatbot-ui, delivery-surface: chatbot, user-segment: studio-data-engineer, query-path: retrieval-then-llm, uncertainty-policy: always-answer, latency-tier: under-30s, moment-in-journey: first-studio-question}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "A producer gets a number from the JEV chatbot that disagrees with the Looker dashboard by 11 points because the chatbot counts videos and the dashboard counts players"
+  consequence: "Low willingness: the data team is accountable for every number in the building and will not own a surface they cannot test, log or version; they ask that chatbot usage be disabled for their tenant and that the same data be delivered per datateam-1; the chatbot becomes an optional add-on, not the product"
+  p_typical: 0.3
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow and too much data, which is why the fixed-question table exists.'"
+  proposed: "Tenant flag chatbot_enabled=false; every answer the chatbot would give must be reproducible as a SQL statement the studio can copy (see datateam-10)"
+  shallow: false
+  part: ui
+  mechanism: "Option is removed for this segment; its value is captured instead by shipping the planner's SQL and the data, not the conversation"
+  example: "'How many players churned in the tutorial?' -> the data team answers from their own dashboard: 118 of 500 sessions ended before tutorial_complete, defined in their dbt model with a tested denominator"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Nothing for this segment; the fixed table in their warehouse would already beat a chatbot over it"
+  depends_on: nothing
+
+- id: datateam-7
+  title: "REFUSED: a shared semantic cache or shared question bank across studios; the data team forbids any query path where another tenant's question text or answer shape can influence theirs"
+  level: L3
+  cell: {part: tenancy-access-control, query-path: semantic-cache-similar-question, tenancy-and-deployment: shared-multi-tenant, reuse-scope-of-extraction: genre-shared, user-segment: studio-data-engineer, mechanism-type: reuse-or-cache-prior-work, latency-tier: sub-200ms-cached}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction ... cached as a new field'"
+  situation: "JEV proposes to speed answers by matching a studio question against cached answers from other studios in the same genre"
+  consequence: "Low willingness: a cached answer shape from another tenant is an uncontrolled input into the studio's numbers and a disclosure channel for what competitors ask; the studio requires cache_scope=tenant and a contractual clause; JEV loses the cross-studio speed-up for this segment"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "memo.md item 3 proposes one ontology; nothing in spec.md or memo.md states tenant isolation of derived artifacts"
+  proposed: "Per-tenant cache namespace; question-bank entries carry origin_tenant and are never served cross-tenant unless the studio opts into a genre pool"
+  shallow: false
+  part: query
+  mechanism: "Cache keys include studio_id; the genre pool is opt-in and read-only"
+  example: "'Why do players quit the tutorial?' -> the cached contrast answer from another studio's platformer is not reused; the studio's own fields are queried fresh, 1.5 s instead of 150 ms"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Not better, slower; the refusal buys auditability of every number"
+  depends_on: nothing
+
+- id: datateam-8
+  title: "REFUSED as paid product: an export of raw transcripts only; the data team will take transcripts free as a by-product but will not pay for them, because they can run speech-to-text themselves for under 1 USD per hour of video"
+  level: L3
+  cell: {part: export-integration, representation: raw-transcript-only, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, build-or-buy: studio-owned-stack, modality: speech-transcript, effort: XS-days}
+  object: "spec.md step 2: 'Each video is converted to a transcript. The owner's view: the transcript alone is not enough'"
+  situation: "JEV's first proposed deliverable to the warehouse is the TRANSCRIPTS table (session_id, video_idx, t_ms, speaker, text)"
+  consequence: "Low willingness to pay: the studio prices a managed ASR at 0.4-1.0 USD per hour and a 500-player, 3-hour study at under 1,500 USD; JEV's value must be the observation fields and the frame-derived screen state, which the studio cannot produce without building the extractor"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "spec.md: 'Transcript loses visual information.'"
+  proposed: "Ship TRANSCRIPTS as an unpriced companion table; price on OBSERVATIONS rows and frame-derived columns (screen_state, ui_element, ocr_text)"
+  shallow: false
+  part: ui
+  mechanism: "Pricing and packaging decision; the transcript becomes evidence attached to observations rather than the product"
+  example: "'What do players say when they churn in the tutorial?' -> the studio could grep its own transcripts, but 'which step were they on and what was on screen' needs OBSERVATIONS.step and screen_state, which is what they pay for"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Makes the fixed table's successor, not the transcript, the billable unit"
+  depends_on: nothing
+
+- id: datateam-9
+  title: "Moat test the studio will run before renewal: re-extract 50 sessions with the studio's own LLM and a 1-page prompt, compare per-field agreement with JEV's rows; JEV must beat in-house by at least 10 F1 points on step, screen_state and friction or the contract is not renewed"
+  level: L4
+  cell: {part: evaluation, evidence-form: extraction-provenance-model-and-schema-version, user-segment: studio-data-engineer, moment-in-journey: renewal-review, build-or-buy: studio-owned-stack, question-type: compare-versions, effort: S-weeks}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "Annual renewal; the head of data argues the team can run a long-context model over the videos themselves"
+  consequence: "The studio hand-labels 50 sessions x 20 steps; JEV scores F1 0.91 on step, 0.84 on screen_state, 0.72 on friction; the in-house prompt scores 0.88, 0.61, 0.55; JEV keeps the contract on screen_state and friction, and the studio's exec sees a number not a demo"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'accuracy against hand-labelled sessions'"
+  proposed: "JEV publishes a per-field EXTRACTION_QUALITY table (field, extractor_version, golden_set_id, precision, recall, f1, n) and a labelling kit (50 sessions, label guide, scoring script) the studio can run on its own model"
+  shallow: false
+  part: evaluation
+  mechanism: "The evaluation artifacts become part of the product so the buyer's own bake-off is cheap and comparable"
+  example: "'Which tutorial step do churners stall on?' answered by JEV rows vs in-house rows on the same 50 sessions: JEV names step 3 for 29 players, in-house for 21, golden labels say 31"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table had no accuracy number; this gives the buyer one per field and per version"
+  depends_on: nothing
+
+- id: datateam-10
+  title: "JEV ships a dbt package (jev_core) with staging models over the share, 1 test per enum column, and a metrics layer (step_completion_rate, step_median_duration_s, churn_step) so the studio's analysts and the JEV planner compute the same number"
+  level: L4
+  cell: {part: export-integration, query-path: text-to-semantic-layer-metrics, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, build-or-buy: open-source-component, effort: S-weeks, question-type: how-many, evidence-form: count-with-denominator}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "The planner's aggregate for 'churn at step 3' and the studio's own SQL disagree because one counts sessions and the other counts players with more than one session"
+  consequence: "Both read metric churn_step from jev_core; the definition (first session per player, session_end before tutorial_complete, step at session_end) lives in one SQL file with a test; disagreement rate drops to 0 for closed-field questions"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "spec.md: 'Answering a studio's question must be fast.' The studio's version of fast is a materialised metric in its own warehouse"
+  proposed: "dbt package: stg_jev__observations, stg_jev__sessions, fct_step_funnel (player x step), metrics.yml with 12 metrics; tests accepted_values generated from ENUM_REGISTRY (datateam-11)"
+  shallow: false
+  part: query
+  mechanism: "Metric definitions are shipped as code and versioned with schema_version; the JEV planner, if used, emits the same metric names"
+  example: "'What share of players churn in the tutorial and at which step?' -> SELECT step, churn_rate FROM metrics WHERE build_version='1.4.2': step 3 0.122 (61/500), step 5 0.054 (27/500)"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Questions become tested metrics with a denominator rather than a column someone eyeballs"
+  depends_on: datateam-1
+
+- id: datateam-11
+  title: "Closed enum fields get a versioned ENUM_REGISTRY table (field, value, added_in_schema_version, deprecated_in, description); new values append, dbt accepted_values tests are generated from it, and a value seen in data but absent from the registry fails JEV's own publish gate"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: append-only-versioned-fields, representation: fixed-mcq-answers, user-segment: studio-data-engineer, mechanism-type: change-data-at-source, effort: XS-days, delivery-surface: warehouse-share-or-export}
+  object: "memo.md item 1: 'closed enum fields and short open fields'; spec.md step 3: 'fixed set of questions with options'"
+  situation: "The extraction prompt gains a new friction value 'camera_fight' and the studio's accepted_values test on friction fails at 03:00"
+  consequence: "The value is registered first with added_in=2.5.0; the studio's test is regenerated from the registry during its weekly package bump; nothing fails outside a version bump the studio chose"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'fixed set of questions with options, written per game target'"
+  proposed: "ENUM_REGISTRY as a shared table; JEV CI rejects a publish where SELECT DISTINCT friction has a value not in the registry"
+  shallow: false
+  part: store
+  mechanism: "The options of every multiple-choice question become data, not prompt text; a change to options is a data change with a version"
+  example: "'How many tutorial churners hit a camera problem?' -> after 2.5.0 the studio counts friction='camera_fight': 19 of 118 churners; before 2.5.0 the registry says the value did not exist, so the chart starts at that version rather than showing a false zero"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's option lists were invisible; now they are queryable, versioned and testable"
+  depends_on: datateam-3
+
+- id: datateam-12
+  title: "Federated deployment: JEV's query planner runs as a Snowflake Native App / BigQuery stored procedure inside the studio's account, so observation data never leaves the studio and JEV's planner SQL is auditable in the query history"
+  level: L4
+  cell: {part: tenancy-access-control, tenancy-and-deployment: federated-query-into-studio-warehouse, query-path: sql-over-closed-fields, user-segment: studio-data-engineer, build-or-buy: managed-cloud-service, effort: M-one-quarter, delivery-surface: api-sdk, latency-tier: under-2s}
+  object: "memo.md item 2: 'The chatbot runs a query planner'"
+  situation: "Security and data teams both refuse to let JEV host the data, but the designer still wants the planner's contrast and clip features"
+  consequence: "Planner ships as an app installed in the studio account; every planner query appears in the studio's QUERY_HISTORY with the generated SQL; JEV's frame-derived fields are written by JEV's ingestion into the studio's own tables via the app's writer role"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md Constraints: 'Answering a studio's question must be fast' is satisfied by warehouse compute the studio already pays for"
+  proposed: "App exposes PROC jev.ask(question STRING) RETURNS TABLE(answer, sql_text, n, denominator, clip_urls); planner weights downloaded on install; no outbound network from the app"
+  shallow: false
+  part: query
+  mechanism: "The planner is distributed as code into the tenant rather than operated by JEV; data gravity stays with the studio"
+  example: "'Why do players quit at tutorial step 3?' -> CALL jev.ask(...) runs the contrast query in the studio's warehouse: popup_count>=2 lift 5.6x (n 61 vs 439); the SQL is visible to the data team"
+  cost: L
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The planner's open-ended questions become available to a studio that would otherwise only accept a flat export"
+  depends_on: datateam-1
+
+- id: datateam-13
+  title: "Backfill-as-API: POST /fields {name, definition_text, answer_type, enum_values} starts a one-time extraction over all history; the result lands as a new column in the share with a schema_version bump and a job table row with per-session status"
+  level: L4
+  cell: {part: feedback-loop-from-query-log, extraction-trigger: on-new-field-added, query-path: lazy-backfill-extraction, delivery-surface: api-sdk, schema-evolution: eager-backfill-all-history, user-segment: studio-data-engineer, latency-tier: overnight, question-origin: studio-written-at-runtime}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction over all sessions whose result is cached as a new field'"
+  situation: "The studio's analyst wants 'did the player read the controls popup' as a column; without an API the request goes through a sales contact and takes two weeks"
+  consequence: "Analyst calls the API at 17:00; FIELD_JOBS shows 500 sessions queued, 500 done by 06:00; column read_controls_popup BOOLEAN appears at schema 2.6.0 with first_populated_at; the studio's dbt run at 07:00 sees it"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "memo.md: 'so the question set grows from real use'"
+  proposed: "FIELD_JOBS (job_id, field_name, requested_by, definition_text, sessions_total, sessions_done, sessions_failed, started_at, finished_at, cost_usd); 1 job per field; a failed session leaves NULL plus a reason in attrs"
+  shallow: false
+  part: ingestion
+  mechanism: "The memo's backfill is triggered by an API call from the studio's own tooling rather than by the chatbot planner; the output contract is the same new column"
+  example: "'How many tutorial churners never opened the controls popup?' -> after the overnight job: 71 of 118 churners have read_controls_popup=false vs 96 of 382 completers"
+  cost: M
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "The question set grows by studio request with a visible job and cost, not by a JEV prompt engineer's release"
+  depends_on: datateam-3
+
+- id: datateam-14
+  title: "Bring-your-own-model for query-time reading: the studio registers its own model endpoint (Azure OpenAI, Bedrock, self-hosted) and JEV's retrieval-then-read path sends matched observation rows there, never to a JEV-chosen vendor"
+  level: L4
+  cell: {part: query-path, query-path: retrieval-then-llm, build-or-buy: studio-owned-stack, tenancy-and-deployment: logically-isolated-per-studio, user-segment: studio-data-engineer, mechanism-type: defer-to-query-time, effort: S-weeks, latency-tier: under-30s}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players and the model reads only those'"
+  situation: "The studio's model contract has a no-training clause and a committed spend; routing reads through JEV's vendor doubles the bill and breaks the clause"
+  consequence: "Tenant config model_endpoint, model_name, max_tokens; JEV sends at most 2,000 rows (about 60k tokens) per read; the studio's own spend dashboard shows the cost per question; JEV's ingestion model remains JEV's choice unless datateam-30 applies"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'the model reads only those'"
+  proposed: "Planner step 'read' is an adapter with the OpenAI-compatible chat interface; the prompt template is published so the studio can review it"
+  shallow: false
+  part: query
+  mechanism: "Query-time inference is moved to studio-owned compute; JEV keeps retrieval and the prompt"
+  example: "'What confuses churners in the tutorial, in their own words?' -> 340 negative-sentiment utterance rows from 118 churners are read by the studio's endpoint; 3 themes with 12 quotes each; 9 s; cost shown as 0.18 USD on the studio's bill"
+  cost: S
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "Open-field reading becomes possible for a studio that would otherwise refuse any LLM call outside its contract"
+  depends_on: datateam-1
+
+- id: datateam-15
+  title: "Materialised STEP_FUNNEL table: one row per studio_player_key x build_version x tutorial step with entered_at, completed_at, duration_s, attempts, exit_here BOOLEAN, so the studio joins D1/D7 retention and revenue to tutorial progress without parsing observations"
+  level: L4
+  cell: {part: store, representation: step-funnel-state-machine-per-player, granularity: tutorial-step, question-origin: kpi-backward-from-studio-metrics, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, subject-domain: onboarding-tutorial, scope: build-version-pair}
+  object: "spec.md step 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Studio's KPI is D7 retention; they want tutorial progress as a feature in their own retention model, not a chatbot answer"
+  consequence: "STEP_FUNNEL has 500 players x 12 steps = 6,000 rows per build; a logistic model on duration_s and attempts for steps 1-5 explains D7 with AUC 0.71 vs 0.58 for telemetry-only; the studio's data scientist did this in a notebook on day 1"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'detecting churn in the tutorial and just after it'"
+  proposed: "STEP_FUNNEL built at ingestion from OBSERVATIONS step transitions; column exit_here is true for the last step with entered_at before session_end; refreshed with the share"
+  shallow: false
+  part: store
+  mechanism: "A fixed, universal derived table for the one subject every studio shares; built from the observation log, not from question answers"
+  example: "'Which tutorial step predicts churn?' -> step 3 duration_s > 240 has 2.9x D7-churn odds (n=500, 95% CI 1.8-4.7) in the studio's own model"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table is player x step rather than video x question, so it joins to the studio's player-grain KPIs directly"
+  depends_on: datateam-4
+
+- id: datateam-16
+  title: "Overlap audit at onboarding: JEV lists its 60 observation types against the studio's telemetry event catalogue and marks each as telemetry-already, video-only, or both, so the studio pays for the video-only delta and drops duplicated fields"
+  level: L4
+  cell: {part: cost-governance, modality: game-telemetry, moment-in-journey: game-onboarding-day-0, user-segment: studio-data-engineer, mechanism-type: narrow-or-clarify-the-question, effort: XS-days, evidence-form: coverage-statement-n-of-m-players}
+  object: "spec.md Unspecified: 'whether game telemetry is joined'"
+  situation: "The studio already logs step_enter, step_complete, death and purchase; JEV's extraction also infers step from screen, duplicating 18 of 60 fields"
+  consequence: "OVERLAP_AUDIT (obs_type, telemetry_event, overlap ENUM('telemetry_only','video_only','both'), agreement_rate_on_sample); 18 fields marked both with 0.96 agreement are kept only as a cross-check; the studio's price covers 42 video-only fields (utterances, confusion, on-screen hints, menu wandering)"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'The question set is small, so most of what is in the video and transcript is never captured' cuts both ways; some of the question set is already in telemetry"
+  proposed: "Onboarding step 2: studio uploads its event schema; JEV auto-maps by name and a 20-session sample agreement test; audit table in the share"
+  shallow: false
+  part: evaluation
+  mechanism: "Field-level comparison between two sources on the same sessions, published once per build"
+  example: "'Where do players churn in the tutorial?' -> step from telemetry (both) and 'what they said and saw there' from video-only fields; the studio stops paying JEV to re-derive step, and uses it only as a 4% disagreement alarm"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "States which questions video is needed for; the fixed table answered some questions telemetry already answered"
+  depends_on: datateam-5
+
+- id: datateam-17
+  title: "Each observation row carries clip_ref = (session_id, t_start_ms, t_end_ms) and the share exposes a UDF jev_clip_url(clip_ref) that returns a signed URL valid 15 minutes, so a Looker tile or a Jupyter cell can show the moment behind any number"
+  level: L4
+  cell: {part: export-integration, evidence-form: clip, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, query-path: clip-lookup, latency-tier: under-2s, effort: S-weeks, tenancy-and-deployment: logically-isolated-per-studio}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "A number in the studio's dashboard says 61 players quit at step 3; the designer asks to see five of them and the data team has no path from a row to a video"
+  consequence: "Dashboard column 'watch' calls the UDF; 5 clips of 20 s each open in the browser; the URL expires after 15 min so a shared screenshot does not leak footage; audit log records who resolved which clip_ref"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "OBSERVATIONS.clip_ref STRUCT; external function jev_clip_url over HTTPS to JEV's media gateway with the studio's token; expiry 900 s; 20 s default padding"
+  shallow: false
+  part: ui
+  mechanism: "Evidence stays as a reference in the row; media stays with JEV; the warehouse resolves on demand"
+  example: "'Show me tutorial churners at step 3' -> SELECT studio_player_key, jev_clip_url(clip_ref) FROM observations WHERE step=3 AND obs_type='session_end' LIMIT 5"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A row in the warehouse can be watched; the fixed table's answers had no path back to the video"
+  depends_on: datateam-1
+
+- id: datateam-18
+  title: "Re-extraction on model upgrade writes new rows with a new extractor_version and keeps the old rows; OBSERVATIONS carries _ingested_at, _updated_at and is_current, so the studio's incremental dbt models pick up changes and can pin a version for a published report"
+  level: L4
+  cell: {part: schema-evolution, schema-evolution: model-upgrade-reextract, extraction-trigger: on-model-upgrade, evidence-form: extraction-provenance-model-and-schema-version, user-segment: studio-data-engineer, delivery-surface: warehouse-share-or-export, effort: S-weeks, moment-in-journey: steady-state-weekly}
+  object: "memo.md item 2: 'cached as a new field'; spec.md step 3: 'The answers form a structured table per video'"
+  situation: "JEV upgrades its extraction model; the step-3 churn count in the studio's quarterly report changes from 61 to 55 overnight with no trace"
+  consequence: "Old rows stay with extractor_version=v7, is_current=false; new rows v8, is_current=true; the quarterly report pins v7 by WHERE extractor_version='v7'; the data team's diff query shows 6 players reassigned from step 3 to step 2 with their clip_refs"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md item 1 lists fields but no version column; spec.md gives none"
+  proposed: "Primary key (session_id, obs_seq, extractor_version); is_current maintained by JEV; _updated_at drives the studio's incremental model; a VERSION_DIFF view counts changed rows per field"
+  shallow: false
+  part: store
+  mechanism: "Immutable rows per extractor version with a current flag; consumers choose latest or pinned"
+  example: "'Did the step-3 churn number change because the game changed or because JEV's model changed?' -> VERSION_DIFF for build 1.4.2: v7 vs v8 moves 6 players; the game did not change"
+  cost: S
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Every number can be reproduced under the version that produced it; the fixed table was overwritten in place"
+  depends_on: datateam-3
+
+- id: datateam-19
+  title: "REFUSED: deprecate-and-migrate schema changes on JEV's schedule; the data team requires 90 days of dual-publish (old and new column both populated) and a migration SQL shipped by JEV before any column is retired"
+  level: L3
+  cell: {part: schema-evolution, schema-evolution: deprecate-and-migrate, user-segment: studio-data-engineer, delivery-surface: warehouse-share-or-export, moment-in-journey: steady-state-weekly, effort: S-weeks, mechanism-type: change-data-at-source}
+  object: "memo.md item 1: 'closed enum fields and short open fields'"
+  situation: "JEV wants to split friction into friction_type and friction_severity and drop the old column in the next release"
+  consequence: "Low willingness: 14 of the studio's dbt models reference friction; the studio blocks the release until both columns are published for 90 days and JEV ships MIGRATION_2_7.sql that rewrites the old expression into the new columns; a vendor that cannot commit to this is replaced"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "memo.md: 'so the question set grows' describes additions only; removals are unaddressed"
+  proposed: "Contract clause plus CI rule: deprecated_in requires a removal date at least 90 days later and a migration file in the release"
+  shallow: false
+  part: store
+  mechanism: "Deprecation becomes a staged, documented process rather than a release note"
+  example: "'How many tutorial churners had a severe friction event?' -> during dual-publish the studio runs both friction='stuck' and friction_severity>=3 and reconciles the 61 vs 58 difference before switching"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table had no deprecation path; questions were simply dropped"
+  depends_on: datateam-3
+
+- id: datateam-20
+  title: "Pre-publish data contract tests run by JEV on every share refresh (row count within 3x of last refresh, 0 NULL studio_player_key, enums in registry, no duplicate (session_id, obs_seq, extractor_version)) with a webhook to the studio's Slack and a CHANGELOG row per refresh"
+  level: L4
+  cell: {part: evaluation, delivery-surface: slack-jira-integration, user-segment: studio-data-engineer, schema-evolution: append-only-versioned-fields, effort: XS-days, mechanism-type: push-instead-of-pull, latency-tier: push-no-query, build-or-buy: open-source-component}
+  object: "spec.md step 3: 'The answers form a structured table per video'"
+  situation: "A refresh lands with 0 rows for build 1.4.3 because the capture client renamed a folder; the studio's dashboard shows 0% churn and the producer celebrates"
+  consequence: "The refresh is held, not published; Slack message in #data-alerts: 'JEV refresh 2026-11-04 held: row count 0 vs expected 48,000 (build 1.4.3)'; REFRESH_LOG gets status='held'; the dashboard keeps yesterday's rows"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md Constraints: 'Answering a studio's question must be fast' without 'correct' is what the data team will reject"
+  proposed: "Great Expectations or dbt tests in JEV's publish job; REFRESH_LOG (refresh_id, rows_added, rows_updated, schema_version, tests_passed, status); webhook payload includes failing test names"
+  shallow: false
+  part: evaluation
+  mechanism: "Publishing is gated on tests the studio can read and extend; failures are pushed, not discovered"
+  example: "'Tutorial churn this week' is never computed on a half-loaded refresh; the Slack alert says which build and how many rows were expected"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table had no load-quality signal; a bad load looked like good news"
+  depends_on: datateam-1
+
+- id: datateam-21
+  title: "Export utterance and observation embeddings (1,024-dim, model named in the row) as a VECTOR column in the share so the studio runs its own semantic search with Snowflake Cortex or BigQuery VECTOR_SEARCH, with no JEV retrieval service"
+  level: L4
+  cell: {part: store, representation: transcript-chunks-with-embeddings, query-path: full-text-keyword-search, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, build-or-buy: managed-cloud-service, effort: S-weeks, question-type: find-players-who}
+  object: "memo.md item 2: 'open-field questions retrieve matching observation rows across players'"
+  situation: "The studio wants 'players who said something like I do not know where to go' without calling JEV at query time"
+  consequence: "OBSERVATIONS.utterance_emb VECTOR(FLOAT, 1024) with emb_model='bge-m3-2026-06'; the studio's SQL does VECTOR_COSINE_SIMILARITY > 0.78 over 240,000 utterance rows in 1.8 s; JEV's retrieval service is unused for this tenant; storage grows by about 1 GB per 250,000 rows"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'retrieve matching observation rows across players and the model reads only those'"
+  proposed: "Embeddings computed at ingestion with a pinned model; emb_model column; re-embedding is a versioned backfill per datateam-18"
+  shallow: false
+  part: store
+  mechanism: "Retrieval index moves from JEV's service into the warehouse's native vector type"
+  example: "'How many tutorial churners said they were lost?' -> studio query embeds 'I am lost, where do I go' and counts players with any utterance above 0.78 similarity in steps 1-5: 47 of 118 churners vs 38 of 382 completers"
+  cost: S
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Semantic 'who said something like' questions run in the studio's own SQL; the fixed table could not express them at all"
+  depends_on: datateam-1
+
+- id: datateam-22
+  title: "Studio-defined trackers as a trackers.yml in the studio's own git repo (name, description, 5 example utterances, optional regex) that JEV pulls nightly and applies to the full history, producing one BOOLEAN column per tracker in the share"
+  level: L4
+  cell: {part: question-generation, representation: customer-defined-trackers-over-universal-primitives, extraction-trigger: on-studio-tracker-defined, question-origin: few-shot-tracker-from-examples, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, latency-tier: overnight, reuse-scope-of-extraction: customer-defined-on-top-of-universal}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "The studio's tutorial has a game-specific mechanic (grapple) that no genre ontology names; the designer wants 'player misunderstands grapple' as a column"
+  consequence: "trackers.yml gets 'grapple_confusion' with 5 examples; nightly job scores all 240,000 utterances; column tracker_grapple_confusion appears with first_populated_at; the definition is code-reviewed in the studio's repo, not typed into a chatbot"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "memo.md: 'pruned by the game target'; the studio wants to add, not only prune"
+  proposed: "Tracker spec schema (name, description, examples[], regex?, min_similarity); JEV scores via embedding similarity + regex; per-tracker precision on 50 sampled hits reported in EXTRACTION_QUALITY"
+  shallow: false
+  part: question-generation
+  mechanism: "Question definitions are owned and versioned by the studio; JEV owns the scoring and the backfill"
+  example: "'How many tutorial churners misunderstood the grapple?' -> tracker_grapple_confusion true for 52 of 118 churners vs 41 of 382 completers; 50-hit precision check 0.86"
+  cost: M
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The question set is extended by the studio in its own repo rather than by JEV per game target"
+  depends_on: datateam-13
+
+- id: datateam-23
+  title: "REFUSED: reverse-ETL of the studio's telemetry and retention into JEV so JEV can compute churn contrasts; the data team will not copy first-party KPI data into a vendor and insists the join happens in their warehouse"
+  level: L3
+  cell: {part: export-integration, modality: game-telemetry, tenancy-and-deployment: shared-multi-tenant, user-segment: studio-data-engineer, query-path: automatic-contrast-cohort-diff, mechanism-type: auto-discover-without-question, effort: S-weeks}
+  object: "spec.md Unspecified: 'whether game telemetry is joined'"
+  situation: "JEV's contrast feature needs a churn label; JEV asks the studio to push D7 retention per player into JEV's store"
+  consequence: "Low willingness: retention and revenue per player are governed data under the studio's privacy policy; the studio offers instead to run the contrast in-warehouse (datateam-12) or to send only a churn BOOLEAN keyed by studio_player_key after legal review, which takes 6 weeks"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios' who hold the retention truth; nothing in the memo places the join"
+  proposed: "Contrast feature accepts a label from a studio-side view via federated query rather than a copy; fallback label is session_end before tutorial_complete, computed by JEV from video alone"
+  shallow: false
+  part: query
+  mechanism: "Direction of data flow is fixed: JEV data flows to the studio, never the reverse"
+  example: "'Why do D7 churners quit the tutorial?' -> computed in the studio's warehouse joining STEP_FUNNEL to RETENTION; JEV's own contrast only uses in-session quit as the label"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Not better; the refusal defines where the join is allowed to happen"
+  depends_on: nothing
+
+- id: datateam-24
+  title: "Metered cost table in the share: USAGE (game_id, build_version, session_id, video_minutes, extraction_tokens, backfill_jobs, cost_usd) so the studio's finance team allocates JEV spend per title and per build, and the data team can cap backfills at a monthly budget"
+  level: L4
+  cell: {part: cost-governance, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, granularity: build-version, effort: XS-days, moment-in-journey: renewal-review, mechanism-type: change-data-at-source}
+  object: "spec.md Constraints: 'Ingestion time and cost are not a concern.'"
+  situation: "Ingestion cost is not JEV's concern, but it is the studio's invoice; a backfill triggered by an analyst's question (datateam-13) costs 900 USD and nobody approved it"
+  consequence: "USAGE rows per session and per backfill job; a tenant budget backfill_monthly_cap_usd=2,000 rejects a job above the cap with a Slack message; finance allocates 14,200 USD across 3 titles by build"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'Ingestion time and cost are not a concern' is the vendor's view; the buyer meters it"
+  proposed: "USAGE table in the share; FIELD_JOBS.cost_estimate_usd computed before run from sessions x avg tokens; cap check before enqueue"
+  shallow: false
+  part: store
+  mechanism: "Cost becomes a column the studio can query rather than a line on an invoice"
+  example: "'What did it cost to answer the controls-popup question?' -> FIELD_JOBS join USAGE: 500 sessions, 1.1M tokens, 184 USD"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Every new question has a visible price; the fixed table's cost was invisible and flat"
+  depends_on: datateam-13
+
+- id: datateam-25
+  title: "Python SDK jev-sdk: jev.sessions(game, build).observations(step=3, obs_type='utterance').to_arrow() returns Arrow tables with the same schema_version as the share, for data scientists who work in notebooks not BI"
+  level: L4
+  cell: {part: export-integration, delivery-surface: notebook, user-segment: studio-data-engineer, build-or-buy: open-source-component, effort: S-weeks, latency-tier: under-30s, representation: timestamped-observation-log}
+  object: "spec.md step 4: 'a question over, say, 500 players'"
+  situation: "The studio's data scientist wants to fit a model on step durations and utterance sentiment, and the share is fine but a pandas DataFrame is faster to iterate on"
+  consequence: "pip install jev-sdk; 500 players x step 3 utterances = 18,000 rows in 3 s as Arrow; the SDK validates schema_version against the installed package and warns on mismatch"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow'; 18,000 rows of structured observations is not"
+  proposed: "SDK wraps the share (or the Parquet drop) with filters pushed down; also jev.clip(clip_ref).download() under the same token"
+  shallow: false
+  part: ui
+  mechanism: "A code surface over the same tables, versioned with the schema"
+  example: "'Does sentiment at step 2 predict tutorial churn?' -> notebook: df = jev.sessions('g7','1.4.2').observations(step=2).to_pandas(); logistic fit AUC 0.66 on 500 players"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Observations are a dataset a scientist can model; the fixed table was an answer sheet"
+  depends_on: datateam-1
+
+- id: datateam-26
+  title: "REFUSED unless opt-in with k>=5: contributing the studio's observation data to a cross-studio benchmark (step-3 stall rate vs 12 other titles); the data team will share only aggregated step-funnel rates, never rows, and only when at least 5 studios contribute to each cell"
+  level: L3
+  cell: {part: tenancy-access-control, scope: cross-studio-benchmark, user-segment: studio-data-engineer, tenancy-and-deployment: logically-isolated-per-studio, evidence-form: contrast-vs-baseline, question-type: compare-versions, effort: S-weeks}
+  object: "spec.md Constraints: 'Buyers are gaming studios'"
+  situation: "A publisher asks JEV for a cross-title tutorial benchmark; JEV's shared ontology makes it possible"
+  consequence: "Low willingness: the studio's contract adds 'no derived cross-tenant aggregates without written opt-in'; if opted in, JEV publishes only BENCHMARK (genre, step_index, median_duration_s, stall_rate, n_studios) with n_studios>=5 and no title names"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "memo.md item 3 proposes one ontology across games, which is what makes a benchmark possible and what the studio fears"
+  proposed: "Tenant flag benchmark_opt_in; aggregation job suppresses cells with fewer than 5 studios or fewer than 200 players"
+  shallow: false
+  part: store
+  mechanism: "Cross-tenant reuse is gated on consent and minimum cell size"
+  example: "'Is our step-3 tutorial churn (12.2%) bad?' -> BENCHMARK for genre='platformer', step_index=3: median stall_rate 7.8% across 6 studios; the studio sees it only because it opted in"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Gives a comparison the fixed per-game table could never offer, under terms the data team accepts"
+  depends_on: datateam-7
+
+- id: datateam-27
+  title: "Export the question bank itself as a table QUESTIONS (question_id, text, answer_type, field_name, enum_ref, evidence_rule, ontology_path, coverage_rate) so the studio's own BI semantic layer or own LLM can map natural-language questions to columns; the moat is the bank plus the fields, not the chatbot"
+  level: L4
+  cell: {part: question-generation, representation: question-answer-bank-precomputed, question-origin: ontology-generated, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, build-or-buy: studio-owned-stack, effort: XS-days, query-path: text-to-semantic-layer-metrics}
+  object: "memo.md item 3: 'each with an answer type and an evidence requirement'"
+  situation: "The studio builds its own text-to-SQL agent over the warehouse and needs to know which column answers 'did the player skip the tutorial dialogue'"
+  consequence: "QUESTIONS has 240 rows; the studio's agent loads them as its tool descriptions; 'skipped dialogue' maps to field dialogue_skip_count with answer_type INT and evidence_rule 'ocr_text contains skip prompt'; the studio's agent answers in its own chat with JEV's columns"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'Questions are generated from an ontology ... each with an answer type and an evidence requirement'"
+  proposed: "QUESTIONS table in the share, regenerated per schema_version; coverage_rate = share of sessions with a non-NULL field value"
+  shallow: false
+  part: question-generation
+  mechanism: "The ontology's output is published as metadata the studio's tools consume"
+  example: "'How many churners skipped the tutorial dialogue?' -> studio's agent reads QUESTIONS, picks dialogue_skip_count, runs SUM over churners: 88 of 118 skipped at least one vs 201 of 382"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed questions were prompt text nobody could read; now they are a queryable catalogue with coverage"
+  depends_on: datateam-3
+
+- id: datateam-28
+  title: "Per-field agreement published as data: EXTRACTION_QUALITY (field, extractor_version, kappa_vs_human, n_labelled, kappa_vs_second_model) so the studio's dbt tests exclude fields with kappa below 0.6 from executive dashboards automatically"
+  level: L4
+  cell: {part: evaluation, evidence-form: confidence-score, uncertainty-policy: abstain-below-coverage, user-segment: studio-data-engineer, delivery-surface: dashboard-standard-report, effort: S-weeks, mechanism-type: human-in-the-loop, schema-evolution: append-only-versioned-fields}
+  object: "memo.md item 3: 'accuracy against hand-labelled sessions'"
+  situation: "The friction field has kappa 0.48 against human labels; a producer's deck still quotes 'friction up 30%' from it"
+  consequence: "dbt macro jev_trusted_fields() reads EXTRACTION_QUALITY and the exec mart only selects fields with kappa>=0.6; friction is shown on the analyst dashboard with a 'low agreement' badge and excluded from the exec one; the field is re-admitted when v9 reaches 0.71"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  proposed: "EXTRACTION_QUALITY refreshed per extractor_version with at least 200 labelled rows per field; kappa thresholds configurable per tenant"
+  shallow: false
+  part: evaluation
+  mechanism: "Quality metrics are rows the consumer's pipeline can condition on, not a PDF"
+  example: "'Tutorial churn by step' uses step (kappa 0.91) in the exec deck; 'churn by friction type' (kappa 0.48) is withheld until the next model version"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table gave every answer equal standing; this lets the studio trust fields selectively"
+  depends_on: datateam-9
+
+- id: datateam-29
+  title: "Session-grain export only: a SESSIONS table (session_id, studio_player_key, n_videos, total_duration_ms, gap_ms_between_videos[], tutorial_complete BOOLEAN, last_step) with a VIDEOS child; per-video answer tables are not published because a 3-hour session as 12 unlinked rows breaks every player-grain join"
+  level: L4
+  cell: {part: session-stitching, granularity: session, representation: per-session-summary, user-segment: studio-data-engineer, delivery-surface: warehouse-share-or-export, effort: XS-days, question-type: how-long, evidence-form: coverage-statement-n-of-m-players}
+  object: "spec.md step 3: 'The answers form a structured table per video'; spec.md step 1: 'one session is many videos'"
+  situation: "The current per-video table has 12 rows for one 3-hour session; 'did the player finish the tutorial' is answered yes by video 2 and the churn question is counted against video 1"
+  consequence: "SESSIONS is the grain of truth, VIDEOS carries the manifest (video_idx, start_offset_ms, gap_ms); the data team's test asserts SUM(VIDEOS.duration_ms) + SUM(gap_ms) = SESSIONS.total_duration_ms within 1 s for 100% of sessions, and flags 3 of 500 sessions with a missing middle video"
+  p_typical: 0.1
+  grounded: quote
+  evidence: "spec.md Known problems: 'Long multi-video sessions'"
+  proposed: "Drop the per-video answers table from the export; publish SESSIONS and VIDEOS; all OBSERVATIONS carry session_t_ms relative to session start"
+  shallow: false
+  part: store
+  mechanism: "Stitching is done once by JEV and exposed as a manifest the studio can audit"
+  example: "'How long until tutorial churners quit?' -> SESSIONS.total_duration_ms for 118 churners: median 23 min across 2 videos; the 3 sessions with a missing video are excluded with a coverage note (115 of 118)"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The unit is the player's session, not the 15-minute file, so counts are counts of players"
+  depends_on: nothing
+
+- id: datateam-30
+  title: "In-VPC extraction container: JEV licenses the extraction prompts, schema registry and frame pipeline as a container the studio runs in its own cloud with its own model keys; JEV never receives video, and bills per licensed schema_version"
+  level: L4
+  cell: {part: ingestion-extraction, tenancy-and-deployment: studio-vpc-or-on-prem, build-or-buy: studio-owned-stack, user-segment: studio-data-engineer, effort: L-multi-quarter, reuse-scope-of-extraction: universal-primitives, mechanism-type: transfer-across-games, modality: frame-embeddings}
+  object: "spec.md step 2: 'Each video is converted to a transcript'; memo.md item 1: 'Video frames add screen state and on-screen text'"
+  situation: "Pre-release footage cannot leave the studio's cloud under its NDA policy; the studio has the engineers to run a container but not the 18 months to design the extraction"
+  consequence: "docker pull jev/extractor:2.6.0 runs in the studio's VPC against its bucket; writes OBSERVATIONS into the studio's warehouse; JEV's revenue is a per-version licence; JEV's moat is reduced to prompts, schema and frame models, which the studio could copy, so the licence includes quarterly schema and model updates"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'Video frames add screen state and on-screen text, because speech alone cannot answer where did they click'"
+  proposed: "Container with pluggable model endpoint, pinned prompts, ENUM_REGISTRY, frame sampler at 1 fps, and a conformance test set the studio runs on install"
+  shallow: false
+  part: ingestion
+  mechanism: "The extraction pipeline is distributed software, not a hosted service"
+  example: "'Where did tutorial churners click before quitting?' -> the container's screen_state and ui_element fields exist in the studio's warehouse although JEV never saw a frame: 34 of 61 step-3 quitters opened the settings menu in the last 60 s"
+  cost: L
+  ingest_cost: L
+  query_cost: S
+  better_than_fixed_table: "Frame-derived fields for a studio that would otherwise send JEV nothing"
+  depends_on: datateam-11
+
+- id: datateam-31
+  title: "Day-0 vocabulary map: the studio uploads its telemetry step and screen names, and JEV's extraction enums for step and screen_state are mapped onto them (VOCAB_MAP: jev_concept, studio_value, build_version) so exported rows use the studio's names and join without renaming"
+  level: L4
+  cell: {part: ingestion-extraction, representation: common-data-model-with-per-game-vocab-map, moment-in-journey: game-onboarding-day-0, question-origin: onboarding-interview-with-studio, user-segment: studio-data-engineer, effort: XS-days, reuse-scope-of-extraction: universal-primitives, extraction-trigger: on-new-game-onboarding}
+  object: "memo.md item 3: 'pruned by the game target'"
+  situation: "JEV calls the step 'tutorial_jump_intro' and telemetry calls it 'T01_JUMP'; every dbt model needs a CASE statement and the first join finds 0 matches"
+  consequence: "Onboarding form takes the studio's 12 step names and 30 screen names; VOCAB_MAP is filled by name similarity plus 20 reviewed sessions; OBSERVATIONS.step emits studio_value; a new build with 2 renamed steps adds 2 rows to VOCAB_MAP without touching the extractor"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'written per game target' implies per-game names already exist in the prompts"
+  proposed: "VOCAB_MAP table owned jointly; extraction prompt is parameterised with studio_value labels; unmapped values go to attrs.unmapped_step for review"
+  shallow: false
+  part: ingestion
+  mechanism: "A common concept model with a per-game vocabulary map, published as a table rather than hidden in prompts"
+  example: "'Churn at T01_JUMP vs T02_DASH?' -> OBSERVATIONS.step already uses T01_JUMP; join to telemetry step_enter hits 500 of 500 players on day 1"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Per-game naming is a mapping table, not a rewrite of the question set"
+  depends_on: datateam-4
+
+- id: datateam-32
+  title: "Long-format SIGNALS table at 10 s buckets (session_id, bucket_start_ms, affect_score, speech_rate_wpm, silence_share, input_rate_per_s, screen_change_count) so the studio's BI draws pace and affect curves and its own anomaly detection runs on them"
+  level: L4
+  cell: {part: store, representation: time-series-signals-affect-pace-silence, modality: silence-or-absence-of-speech, granularity: variable-length-moment-or-episode, delivery-surface: warehouse-share-or-export, user-segment: studio-data-engineer, effort: S-weeks, question-type: how-felt}
+  object: "memo.md item 1: 'friction signal, sentiment'"
+  situation: "A third of players are silent for most of the tutorial; utterance-based fields are NULL for them and the data team wants a signal that exists for every player"
+  consequence: "A 3-hour session is 1,080 rows; 500 players is 540,000 rows; silent players still have input_rate and screen_change_count; the studio's own change-point detector flags 71 of 118 churners with an input_rate drop to under 0.2 per s in the 60 s before quitting"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'friction signal, sentiment, quote with timestamp'"
+  proposed: "SIGNALS built at ingestion from transcript timing, input events and frame diffs; bucket size 10 s; NULL only when the modality is absent"
+  shallow: false
+  part: store
+  mechanism: "Universal numeric primitives per time bucket, independent of any question"
+  example: "'What does the last minute before tutorial churn look like?' -> average of 6 buckets before session_end for churners: silence_share 0.91, input_rate 0.15 per s, 2 screen changes; completers at the same step: 0.62, 0.9, 5"
+  cost: S
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Silent players get a representation; a question-only table has nothing for them"
+  depends_on: datateam-5
+
+- id: datateam-33
+  title: "REFUSED: JEV-originated alerts to the studio's Slack about tutorial anomalies; the data team routes all alerting through its own warehouse monitors (dbt tests, Monte Carlo) over the exported tables, and only accepts JEV alerts about data delivery (datateam-20)"
+  level: L3
+  cell: {part: feedback-loop-from-query-log, delivery-surface: alert, query-path: push-alert-no-query, mechanism-type: push-instead-of-pull, user-segment: studio-data-engineer, latency-tier: push-no-query, effort: XS-days}
+  object: "spec.md Constraints: 'Their questions are not known in advance'"
+  situation: "JEV proposes 'push an alert when step-3 quit rate rises above 15% in a new build' so the studio never has to ask"
+  consequence: "Low willingness: a second alerting system with its own thresholds and on-call is rejected; the studio writes the same rule as a dbt test over STEP_FUNNEL (step=3 exit share > 0.15, min 100 players) and gets the Slack message from its own monitor; JEV's value is that the row exists by 06:00, not the alert"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md: 'A chatbot for the gaming studio' is the only surface named; alerts are a new surface the studio already has"
+  proposed: "JEV ships example monitor definitions (5 dbt tests on STEP_FUNNEL and SIGNALS) in the jev_core package rather than running alerts"
+  shallow: false
+  part: ui
+  mechanism: "Push behaviour is delegated to the studio's monitoring over JEV's tables"
+  example: "'Tell me when tutorial churn jumps' -> dbt test fails on build 1.4.3 (step-3 exit share 0.19, n=212) and posts to the studio's #live-ops channel through its existing hook"
+  cost: S
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The alert rule is a tested query over a player-grain table instead of a vendor feature"
+  depends_on: datateam-15

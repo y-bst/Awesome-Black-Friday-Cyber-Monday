@@ -1,0 +1,671 @@
+- id: gur-1
+  title: "Replace the per-video answers table as the producer-facing unit with an issue table: one row per (game, build, tutorial_step, issue_id) carrying severity 1-4, frequency n_affected/n_reached, 3 clip ids and a one-line fix note"
+  level: L3
+  cell: {part: store, representation: issue-list-with-severity-frequency, question-type: what-to-fix-first-prioritised, evidence-form: severity-frequency-matrix, user-segment: producer-exec, delivery-surface: dashboard-standard-report, mechanism-type: precompute-more}
+  object: "spec.md step 3: 'The answers form a structured table per video'; spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "A producer opens the tool the Monday after 500 tutorial sessions were ingested and wants to know what to put in this sprint, not to type questions"
+  consequence: "The first screen is a ranked list of at most 20 issues, each with severity, frequency and clips; the chatbot becomes the drill-down, not the entry point"
+  p_typical: 0.3
+  grounded: quote
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'; memo.md item 1 produces observations but no issue aggregation step"
+  proposed: "Nightly job clusters friction observations by (step, action_pattern, heuristic) into issue rows; issue(game_id, build, step, issue_id, label, severity, n_affected, n_reached, clip_ids[3], fix_note, first_seen, last_seen)"
+  shallow: false
+  mechanism: "Ingestion keeps the observation log; a clustering pass over friction and stall observations (same step, same on-screen state, same action pattern) writes issue rows; severity from gur-2 rubric; frequency from gur-3 denominators; the dashboard reads issue rows sorted by severity*frequency"
+  example: "Issue row 'Step 3 (crafting): 142 of 410 players who reached step 3 opened the wrong menu 2+ times; severity 3; 61 of them quit within 5 min' sits at rank 1 before anyone asks a question"
+  cost: M
+  depends_on: "observation log with step and friction fields (memo item 1)"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table answers 'did X happen' per video; the issue table answers 'what should we fix first' across players, which is the artefact GUR actually hands to producers"
+
+- id: gur-2
+  title: "Severity as a closed 4-level enum computed from observable criteria at ingestion: 4 = quit within 300s or no step progress for 120s; 3 = 3+ failed attempts at the same action; 2 = wrong action recovered within 30s; 1 = verbal complaint with no behavioural trace"
+  level: L4
+  cell: {part: ingestion-extraction, representation: timestamped-observation-log, granularity: variable-length-moment-or-episode, modality: screen-state-classifier, extraction-trigger: at-ingestion, question-type: what-to-fix-first-prioritised}
+  object: "memo.md item 1: 'friction signal, sentiment, quote with timestamp as evidence'"
+  situation: "Two friction observations on step 3 look identical in the log, but one player quit 40 seconds later and the other shrugged and moved on"
+  consequence: "Severity is not an LLM opinion word ('seems frustrated') but a reproducible level from timing and attempt counts, so two builds can be compared on it"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "memo.md names 'friction signal' with no scale; spec.md step 3 has 'questions with options' but no severity"
+  proposed: "Column friction.severity int 1-4 plus friction.severity_basis enum {quit_300s, stall_120s, attempts_3, recovered_30s, verbal_only}"
+  shallow: false
+  mechanism: "After the observation log exists, a deterministic pass per friction episode reads the next 300s of screen-state rows: exit event, step-progress absence, repeated action rows, recovery; assigns the highest matching level and records which rule fired"
+  example: "'Which tutorial issues are critical?' -> 'Severity 4 on step 3: 61 players (stall 120s then quit); severity 3: 81 players (3+ wrong-menu attempts)'"
+  cost: S
+  depends_on: "screen-state classifier rows with step and action fields; session exit timestamp from session stitching"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table can say 'player struggled: yes/no'; this says how badly on a scale that maps to a sprint priority"
+
+- id: gur-3
+  title: "Every frequency on a tutorial step uses the funnel denominator n_reached(step), not n_players; the chatbot footer prints both numbers and refuses a percentage when n_reached < 20"
+  level: L4
+  cell: {part: query-path, representation: step-funnel-state-machine-per-player, question-type: how-many, evidence-form: count-with-denominator, uncertainty-policy: abstain-below-coverage, granularity: tutorial-step, query-path: sql-over-closed-fields}
+  object: "spec.md step 4: 'a question over, say, 500 players is fast'"
+  situation: "Studio asks 'what percent of players fail the boss tutorial at step 8?' and only 95 of 500 players reached step 8 because 405 churned earlier"
+  consequence: "Answer reads '38% (36 of 95 who reached step 8; 500 started)' instead of '7%', which would have hidden a severe late-tutorial issue"
+  p_typical: 0.15
+  grounded: inferred
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'; a churn funnel makes n_reached shrink by step"
+  proposed: "Materialised table funnel(game_id, build, step, n_reached, n_completed, median_s, p75_s); planner rewrites any per-step ratio to use funnel.n_reached"
+  shallow: false
+  mechanism: "Per player a state machine over screen-state rows yields reached[step], completed[step], t_enter, t_exit; aggregated nightly into funnel; the SQL template for how-many on a step joins funnel for the denominator and emits both counts"
+  example: "'How many players quit at step 3?' -> '142 of 410 who reached step 3 (35%); 90 players never reached step 3'"
+  cost: S
+  depends_on: "step detection from screen state per video and session stitching so the funnel spans videos"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table rows are per video, so a step rate is divided by videos or by all players; neither is the funnel-correct denominator"
+
+- id: gur-4
+  title: "Seed the question ontology from the Desurvire PLAY / Pinelle game usability heuristics: each of the ~40 heuristics becomes a tracker with a written observable violation signature (utterance pattern + screen-state pattern), stored as trackers before any game-specific question exists"
+  level: L3
+  cell: {part: question-generation, question-origin: established-gur-frameworks-heuristics-pxi-mda, reuse-scope-of-extraction: universal-primitives, moment-in-journey: game-onboarding-day-0, representation: customer-defined-trackers-over-universal-primitives, effort: S-weeks}
+  object: "memo.md item 3: 'Questions are generated from an ontology (entities x dimensions x outcomes), pruned by the game target'"
+  situation: "A new game is onboarded on day 0 with no usage log and no studio questions; the ontology needs a non-empty starting set that is not hand-written per game"
+  consequence: "Day-0 extraction already carries ~40 named heuristic trackers (e.g. 'goals are clear', 'feedback on actions is immediate', 'controls are learnable') that transfer across every game"
+  p_typical: 0.2
+  grounded: quote
+  evidence: "memo.md: 'entities x dimensions x outcomes'; B-perspectives: 'ready-made ontologies for question generation'"
+  proposed: "Table heuristic_tracker(heuristic_id, name, source, violation_signature_text, utterance_regex_examples[], screen_state_pattern, answer_type) with 40 rows shipped with the product"
+  shallow: false
+  mechanism: "Each heuristic is rewritten as a violation an extractor can detect in a 15-min video: 'Provide clear goals' -> utterance expresses goal uncertainty ('what am I supposed to do') AND no objective marker on screen for 20s; the extractor emits heuristic_violation(heuristic_id, t, quote, confidence)"
+  example: "'Why do players churn in the tutorial?' -> 'Top heuristic violations among churners: goals unclear (58 of 140), feedback on failed action missing (44 of 140), control mapping not shown (31 of 140)'"
+  cost: M
+  depends_on: "nothing"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "Fixed questions are written per game target; heuristics are game-independent and come with 20 years of validation of which violations predict quitting"
+
+- id: gur-5
+  title: "Tag every observation with an MDA layer (mechanic / dynamic / aesthetic) and link rows M->D->A within a 60s window, so 'why' questions return a causal chain instead of a sentiment count"
+  level: L3
+  cell: {part: store, representation: entity-relation-graph, question-type: why, question-origin: established-gur-frameworks-heuristics-pxi-mda, granularity: variable-length-moment-or-episode, evidence-form: quote-with-timestamp}
+  object: "memo.md item 1: 'timestamped atomic observations ... (step on screen, action, utterance, friction signal, sentiment, quote with timestamp as evidence)'"
+  situation: "Studio asks 'why do players dislike the crafting step?' and the log has 300 negative-sentiment rows with no stated cause"
+  consequence: "The answer names the mechanic (3-slot inventory), the dynamic it produced (player discards the quest item), and the aesthetic outcome (frustration utterance), with counts per link"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "memo.md item 1 has sentiment as a flat field; no causal linking is specified"
+  proposed: "Column obs.mda enum {M, D, A} plus edge table obs_link(from_obs, to_obs, relation in {produces, evokes}) written by the extractor for rows within 60s of each other"
+  shallow: false
+  mechanism: "The extractor prompt asks for each friction/sentiment row the preceding game rule (M) and emergent behaviour (D); rows and edges are written to the store; 'why' queries walk A<-D<-M and group by the M node"
+  example: "'Why do players quit at crafting?' -> 'Chain in 47 of 61 quitters: inventory limit 3 (M) -> quest item discarded (D) -> \"this is pointless\" type utterance (A), median 90s before exit'"
+  cost: M
+  depends_on: "observation log; extractor prompt revision"
+  part: store
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table stores 'frustrated: yes'; the chain stores what rule caused it, which is what a designer can change"
+
+- id: gur-6
+  title: "Tag friction and sentiment observations with one of the 10 PXI constructs (ease of control, progress feedback, audiovisual appeal, goals and rules, challenge, meaning, mastery, immersion, autonomy, curiosity) as a closed field; never emit a PXI score"
+  level: L3
+  cell: {part: ingestion-extraction, question-origin: established-gur-frameworks-heuristics-pxi-mda, representation: timestamped-observation-log, question-type: how-felt, granularity: utterance, reuse-scope-of-extraction: universal-primitives}
+  object: "memo.md item 1: 'closed enum fields and short open fields'"
+  situation: "A designer asks 'is the tutorial problem a control problem or a clarity problem?' and the log only has free-text friction descriptions"
+  consequence: "Every friction row has a construct enum, so the answer is a 10-bucket histogram over 500 players rather than an LLM summary of 300 strings"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md item 1 names 'friction signal' with no taxonomy; spec.md 'Unspecified: ... answer types'"
+  proposed: "Column friction.pxi_construct enum of 10 values plus 'none'; extractor instructed with one example utterance per construct"
+  shallow: false
+  mechanism: "At ingestion, the extractor assigns the construct from the utterance and screen context; the chatbot planner treats how-felt questions as GROUP BY pxi_construct over friction rows with n_reached denominators"
+  example: "'What is the tutorial experience like?' -> 'Friction by construct among 410 players reaching step 3: goals and rules 38%, ease of control 22%, progress feedback 17%, challenge 9%, other 14%'"
+  cost: S
+  depends_on: "friction observation rows"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed table has one 'frustration' question; the construct field splits it into the 10 dimensions the PXI literature shows are actionable separately"
+
+- id: gur-7
+  title: "REFUSED: synthesising PXI, GEQ or PENS scale scores from speech and screen; instead inject a 10-item PXI prompt in-game at session end and join the self-report rows to the observation log by player_id"
+  level: L3
+  cell: {part: collection-protocol, modality: survey-or-in-game-prompt-response, mechanism-type: change-data-at-source, question-type: how-felt, question-origin: established-gur-frameworks-heuristics-pxi-mda, evidence-form: contrast-vs-baseline}
+  object: "memo.md item 1: 'sentiment' as an extracted observation field"
+  situation: "A producer asks 'what is our immersion score?' and the chatbot would be tempted to average inferred sentiment"
+  consequence: "The GUR lead's refusal: inferred affect reported as a validated-scale score will be read as one by the studio and is wrong at the construct level; the answer must come from the 10-item self-report, with observation rows as explanation"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md 'Unspecified: What a transcript contains (speech only ...)'; no self-report channel exists in spec.md or memo.md"
+  proposed: "Session-end prompt with 10 PXI items (1-7) written to pxi_response(player_id, session_id, construct, score); planner answers scale questions only from this table and refuses otherwise"
+  shallow: false
+  mechanism: "Studio SDK or capture client shows the 10 items at session end (median 90s to answer); rows join to the observation log; how-felt questions over constructs read self-report first and attach the top observation rows for that construct as explanation"
+  example: "'Is the tutorial fun?' -> 'PXI curiosity 4.9/7, mastery 3.1/7 (n=287 of 500 answered); low mastery coincides with 3+ failed attempts at step 3 in 112 of those 287'"
+  cost: M
+  depends_on: "studio willingness to add a session-end prompt to the build"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table cannot report a validated experience measure at all; this adds one without pretending inference is measurement"
+
+- id: gur-8
+  title: "Design-intent map per game: at onboarding the designer enters the intended tutorial step sequence with expected duration and expected action per step; extraction computes per-player deviation (skipped, reordered, 2x over expected time, wrong action) against it"
+  level: L3
+  cell: {part: question-generation, question-origin: onboarding-interview-with-studio, representation: step-funnel-state-machine-per-player, question-type: compare-steps, granularity: tutorial-step, moment-in-journey: game-onboarding-day-0, mechanism-type: narrow-or-clarify-the-question}
+  object: "spec.md step 3: 'a fixed set of questions with options, written per game target'"
+  situation: "A game has 12 tutorial steps; the designer expects step 5 to take 45s and the player to open the map; nobody has told the extractor this"
+  consequence: "Deviation rows exist per player per step from day 1 and the question 'where does the tutorial not go as designed?' is answerable without any studio question"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "spec.md: 'written per game target'; memo.md: 'pruned by the game target'"
+  proposed: "Table intent_step(game_id, step_idx, name, expected_action, expected_s, screen_marker); extractor emits deviation(player_id, step_idx, kind in {skipped, reordered, slow_2x, wrong_action}, t)"
+  shallow: false
+  mechanism: "A 30-minute onboarding form captures the designer's intended path; the step detector uses screen_marker to find steps; a per-player pass compares observed path and time to intent and writes deviation rows"
+  example: "'Where does the tutorial break?' -> 'Step 5: 212 of 380 players took >90s (expected 45s); 97 opened inventory instead of map; step 9 skipped by 140'"
+  cost: S
+  depends_on: "step detection from frames; onboarding form in the studio UI"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed questions ask 'did the player struggle'; the intent map asks 'did the player do what the designer meant', which is the GUR definition of a usability issue"
+
+- id: gur-9
+  title: "Research-question kickoff: a 45-minute structured interview with the design lead yields 5-10 worry statements ('we think players miss the dodge prompt'), each stored as a hypothesis with a named observable and a pass/fail threshold, and tracked as a first-class row"
+  level: L3
+  cell: {part: question-generation, question-origin: onboarding-interview-with-studio, moment-in-journey: game-onboarding-day-0, user-segment: game-designer, mechanism-type: narrow-or-clarify-the-question, evidence-form: count-with-denominator}
+  object: "spec.md Constraints: 'Their questions are not known in advance'"
+  situation: "Day 0 of a new studio; the ontology can generate 300 questions but nobody knows which 10 the team will actually act on"
+  consequence: "The first report answers the team's own worries by name, which is how a GUR lab earns trust before the long tail"
+  p_typical: 0.15
+  grounded: quote
+  evidence: "spec.md: 'Buyers are gaming studios. Their questions are not known in advance.'"
+  proposed: "Table hypothesis(game_id, text, observable_field, threshold, owner, status); the digest opens with hypothesis rows marked confirmed / refuted / insufficient-n"
+  shallow: false
+  mechanism: "Interview script with 6 prompts (what worries you, where do you expect drop-off, what did the last playtest find, what changed in this build, who is the target player, what would make you cut a feature); each answer is mapped to an existing or new tracker"
+  example: "Hypothesis 'players miss the dodge prompt at step 4' -> observable 'dodge not used within 20s of prompt' -> result '63% of 440 (confirmed, threshold 30%)'"
+  cost: XS
+  depends_on: "nothing"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's questions were written by JEV guessing the target; the hypotheses are written by the people who will act on them"
+
+- id: gur-10
+  title: "REFUSED: webcam face and posture as an affect modality for frustration counts; permitted only as a per-player timeline overlay labelled 'unvalidated', never aggregated into a number"
+  level: L3
+  cell: {part: ingestion-extraction, modality: webcam-face-and-posture, question-type: how-felt, uncertainty-policy: abstain-below-coverage, mechanism-type: human-in-the-loop, evidence-form: none}
+  object: "spec.md step 2: 'what is on screen is largely lost'; the pipeline extends to new modalities"
+  situation: "Someone proposes adding webcam-based emotion classification to answer 'how many players were frustrated'"
+  consequence: "A biometrics lab veteran refuses: facial affect classifiers in play contexts have shown weak agreement with self-report, players sit still and expressionless while furious; an aggregated 'frustrated 34%' from faces would be the first wrong number that collapses trust"
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "spec.md 'Unspecified' lists no webcam; the refusal is a design constraint the GUR lead would add"
+  proposed: "If webcam exists, store face_event rows with confidence and show them only on the gur-11 storyboard; planner excludes modality=webcam from any COUNT"
+  shallow: false
+  mechanism: "Modality allow-list in the planner: aggregate queries may read speech, screen-state, input and self-report rows; webcam rows are display-only"
+  example: "'How many players were frustrated at step 3?' -> answered from behavioural severity (gur-2) and PXI self-report (gur-7): '81 of 410 had 3+ failed attempts; 112 of 287 self-reported mastery <= 3'; face rows do not appear"
+  cost: XS
+  depends_on: "nothing"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Prevents a modality the fixed table never had from producing a confidently wrong aggregate"
+
+- id: gur-11
+  title: "Per-player session storyboard in the UI: a horizontal timeline across all videos of a session with step bands, friction markers by severity, speech-density and pace lanes, and clickable quotes, modelled on biometric storyboards"
+  level: L3
+  cell: {part: chatbot-ui, representation: time-series-signals-affect-pace-silence, granularity: session, question-type: timeline, delivery-surface: dashboard-standard-report, user-segment: ux-researcher, scope: one-player}
+  object: "spec.md step 1: 'A session can be n hours; each video is capped at 15 minutes, so one session is many videos'"
+  situation: "A researcher wants to see one churner's whole 2h10m session (9 videos) without watching it"
+  consequence: "One screen shows where the 9 videos join, where the player stalled, and what they said, at 1 pixel per 5 seconds; a click opens the clip"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "spec.md: 'Long multi-video sessions' listed under known problems"
+  proposed: "Storyboard component reading observation rows ordered by session_t (video_idx*900 + t_in_video) plus per-minute lanes speech_utterances, actions_per_min, step_id"
+  shallow: false
+  mechanism: "Session stitching provides a monotone session clock; a per-minute rollup table lane(session_id, minute, utterances, actions, step_id, max_severity) feeds the drawing; markers link to observation rows and clips"
+  example: "Storyboard of player P042: step 3 band spans minutes 14-29 (expected 3), 4 severity-3 markers, speech lane drops to 0 at minute 24, exit at minute 29"
+  cost: M
+  depends_on: "session stitching with a session clock; per-minute rollup"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table per video cannot show a 2-hour arc; the storyboard is how a GUR lab reads one participant"
+
+- id: gur-12
+  title: "Think-aloud compliance per player: utterances per minute computed at ingestion; players below 2 per minute are flagged speech-sparse and excluded from what-said and why denominators, and every such answer states 'n=312 of 500 talked enough'"
+  level: L4
+  cell: {part: evaluation, modality: silence-or-absence-of-speech, uncertainty-policy: answer-with-ci-and-n, evidence-form: coverage-statement-n-of-m-players, question-type: what-said, granularity: player}
+  object: "spec.md step 2: 'Each video is converted to a transcript'"
+  situation: "Studio asks 'what do players say about the crafting step?' and 188 of 500 players said fewer than 10 words in the whole session"
+  consequence: "Silent players are not counted as 'said nothing negative'; the answer carries the real speaking population"
+  p_typical: 0.08
+  grounded: inferred
+  evidence: "spec.md: 'The owner's view: the transcript alone is not enough'; no speech-density measure is specified"
+  proposed: "Column player_session.utterances_per_min and flag speech_sparse (threshold 2.0); planner adds WHERE NOT speech_sparse for speech-derived questions and emits the coverage footer"
+  shallow: false
+  mechanism: "Transcript rows per video are counted per minute and averaged per session; the planner has a list of speech-derived fields and applies the filter and footer to any query on them"
+  example: "'Why do players quit at step 3?' -> 'Among 93 of 142 step-3 quitters who talked (>= 2 utterances/min): 58 mention not knowing the goal; 49 quitters were silent and are not characterised'"
+  cost: XS
+  depends_on: "nothing"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table answers 'no' for silent players, which inflates 'no complaint' rates; this makes silence a coverage statement"
+
+- id: gur-13
+  title: "Cued retrospective recall added to the collection protocol: at session end the client auto-selects the 3 highest-severity friction clips and asks the player to narrate each for 60s; recall utterances are stored with a link to the original clip timestamp"
+  level: L3
+  cell: {part: collection-protocol, mechanism-type: change-data-at-source, modality: speech-transcript, question-type: why, extraction-trigger: continuous-during-live-session, evidence-form: quote-with-timestamp}
+  object: "memo.md item 1: 'utterance, friction signal ... quote with timestamp as evidence'"
+  situation: "The highest-severity stall at step 3 happened in silence; there is no utterance to explain it"
+  consequence: "For 60-70% of severity-3+ episodes there is a first-person explanation recorded minutes later, attached to the exact clip"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md 'Unspecified' includes what a transcript contains; no post-session protocol exists in spec.md or memo.md"
+  proposed: "Client-side hook at session end reads friction rows from the live extractor, plays 3 clips, records answers; rows recall(player_id, clip_id, transcript, t_recorded)"
+  shallow: false
+  mechanism: "Requires near-live extraction of severity (gur-2) during the session; the capture client shows the clip and a record button; recall rows are a second utterance source the planner reads for 'why' on that episode"
+  example: "'Why did players stall at step 3?' -> '41 recall narrations on step-3 clips: 29 say the crafting button looked disabled, 7 say they were reading the quest text'"
+  cost: M
+  depends_on: "live or near-live severity scoring; capture client change"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table only sees what was said during play; cued recall is the standard GUR fix for silent participants"
+
+- id: gur-14
+  title: "Stable issue fingerprint (step_id + heuristic_id + action_pattern hash) so the same issue keeps its row across builds; the pre/post view shows frequency per build and flags any issue whose frequency did not drop by at least 10 points after a fix was logged"
+  level: L4
+  cell: {part: store, question-type: did-the-fix-work-pre-post, scope: build-version-pair, moment-in-journey: new-build-version, representation: issue-list-with-severity-frequency, evidence-form: contrast-vs-baseline, modality: build-version-metadata}
+  object: "memo.md item 2: 'genuinely new questions trigger a one-time batch extraction'; spec.md 'Unspecified: ... how videos of one session are linked' (no build linkage either)"
+  situation: "Build 1.2 shipped a fix for the step-3 crafting issue; the studio asks whether it worked and the issue list was regenerated from scratch with new ids"
+  consequence: "Issue #17 shows 35% (build 1.1, n_reached 410) vs 31% (build 1.2, n_reached 388) and is flagged 'fix did not land'"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md has no build dimension; spec.md names 'churn in the tutorial' which is exactly what RITE cycles iterate on"
+  proposed: "issue.fingerprint = sha(step_id, heuristic_id, action_pattern); issue_build(fingerprint, build, n_affected, n_reached); fix_log(fingerprint, build_fixed, note)"
+  shallow: false
+  mechanism: "Clustering (gur-1) assigns clusters to existing fingerprints when 80% of member observations match the pattern; the studio marks a fix in the UI; the digest compares the two most recent builds and alerts on < 10-point drop"
+  example: "'Did the 1.2 patch fix step 3?' -> 'Issue #17 wrong-menu at step 3: 35% -> 31%, not fixed (threshold 10 pts); issue #22 missed dodge prompt: 63% -> 18%, fixed'"
+  cost: S
+  depends_on: "issue table (gur-1); build version captured per session"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Fixed-table answers per video cannot be lined up by issue across builds; RITE needs the issue to be the unit of comparison"
+
+- id: gur-15
+  title: "Issue admission rule: an issue reaches the producer list only when seen in >= 5 players and >= 5% of n_reached; below that it sits on a watch list that is re-evaluated when the cohort grows by 50 players"
+  level: L4
+  cell: {part: cost-governance, uncertainty-policy: abstain-below-coverage, extraction-trigger: on-cohort-size-threshold, question-type: what-to-fix-first-prioritised, representation: issue-list-with-severity-frequency, user-segment: producer-exec}
+  object: "spec.md step 4: 'a question over, say, 500 players'"
+  situation: "After 60 sessions the clustering produces 140 issue rows, 110 of them seen by 1-2 players"
+  consequence: "The producer sees 14 issues, not 140; the watch list keeps the long tail from being lost and promotes items automatically"
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "memo.md item 2 has no cohort-size rule; GUR practice reports issues observed in multiple participants"
+  proposed: "issue.status in {watch, listed}; promotion job runs on cohort growth of 50 sessions"
+  shallow: false
+  mechanism: "Admission computed from issue_build rows; status transitions logged; the digest and the dashboard filter on status=listed and show the watch count"
+  example: "'What should we fix in the tutorial?' -> '14 listed issues (>= 5 players and >= 5%); 96 on watch; top: step 3 wrong-menu 142 of 410'"
+  cost: XS
+  depends_on: "issue table (gur-1)"
+  part: evaluation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no notion of an issue being 'real enough to report'; this encodes the lab's minimum-participants rule"
+
+- id: gur-16
+  title: "Researcher triage gate: the top 20 auto-generated issues per build are reviewed by one researcher (JEV or studio) with 3 clips each, who merges, splits, renames or rejects in a 30-minute pass before the list is visible to producers; auto-publishing is refused"
+  level: L3
+  cell: {part: evaluation, mechanism-type: human-in-the-loop, user-segment: ux-researcher, delivery-surface: dashboard-standard-report, uncertainty-policy: escalate-to-human-analyst, moment-in-journey: steady-state-weekly}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions from that table'"
+  situation: "The nightly clustering merged 'cannot find craft button' and 'craft button looks disabled' into one issue and split 'missed dodge prompt' into three"
+  consequence: "Producers never see a mis-clustered list; triage decisions are stored and reused as clustering constraints next build"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "memo.md item 2 describes an automated planner only; no review step exists"
+  proposed: "Triage UI with actions merge/split/rename/reject writing triage_action(fingerprint, action, by, at); clustering reads must-link / cannot-link constraints from it"
+  shallow: false
+  mechanism: "Issue rows start as status=pending; a researcher works a queue of 20 with clips; on submit the status becomes listed; constraints persist so the next build's clustering respects prior merges"
+  example: "Build 1.2 triage: 20 candidate tutorial issues -> 2 merged, 1 split, 3 rejected as extractor noise, 15 listed; producers see 15 with the researcher's wording"
+  cost: S
+  depends_on: "issue table (gur-1)"
+  part: evaluation
+  ingest_cost: S
+  query_cost: M
+  better_than_fixed_table: "The fixed table was reviewed once when written; this reviews the output each build, which is where the wrong-number risk actually sits"
+
+- id: gur-17
+  title: "Every listed issue carries 3 example clips and 1 counter-example clip (a player who passed the same step cleanly), each 20-40s, chosen by severity and speech presence; the chatbot answers 'show me' with the montage"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: clip-montage-n-examples, delivery-surface: clip-reel, query-path: clip-lookup, question-type: what-happened, granularity: variable-length-moment-or-episode}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "A producer disputes that step 3 is confusing; the researcher needs to show it in a 5-minute meeting"
+  consequence: "Four clips, 2 minutes total, with the contrast player, settle the argument; the clips are prepared at ingestion so the chatbot returns them in under 2s"
+  p_typical: 0.06
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'; A-frame assumptions: 'original videos remain available for re-processing, including frames'"
+  proposed: "issue.clip_ids[3] + issue.contrast_clip_id selected by (severity desc, utterances in window desc); clip(start_s, end_s, video_id) cut and cached at ingestion"
+  shallow: false
+  mechanism: "After clustering, a selector picks member episodes with the most speech and the highest severity, pads 10s each side, and one non-member player at the same step with completion under expected time; clips rendered to storage"
+  example: "'Show me the step-3 problem' -> montage of P042, P117, P305 opening inventory three times each, then P210 opening the map in 6s"
+  cost: S
+  depends_on: "issue table; clip cutting job"
+  part: ui
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The table gives a yes/no; a GUR report without clips does not change a producer's mind"
+
+- id: gur-18
+  title: "Tutorial funnel as the precomputed standard report: per step reach %, completion %, median and p75 time, drop-off count, listed-issue count; refreshed nightly and served from cache"
+  level: L4
+  cell: {part: query-path, query-path: precomputed-aggregate, latency-tier: sub-200ms-cached, delivery-surface: dashboard-standard-report, representation: olap-cube-materialized-views, granularity: tutorial-step, question-type: how-many}
+  object: "spec.md step 3: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  situation: "Every studio's first question is some form of 'where do players drop out of the tutorial'"
+  consequence: "That question is never typed; the funnel is the landing page, and the chatbot links each step to its issues"
+  p_typical: 0.3
+  grounded: quote
+  evidence: "spec.md: 'Reading 500 transcripts per question was too slow'; a funnel is the universal first GUR progression view"
+  proposed: "Materialised view funnel (gur-3) plus funnel_step_issue(step, n_listed_issues) rendered as a bar chart with per-step drill-down"
+  shallow: false
+  mechanism: "Nightly job over per-player step state machines; cache keyed by (game_id, build); dashboard reads cache"
+  example: "Funnel for build 1.1: step 1 100% (500), step 2 96%, step 3 82% (410) -> step 4 54% (270); step 3 median 11m vs expected 3m; 6 listed issues"
+  cost: S
+  depends_on: "step detection; session stitching"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table needs a question per step; the funnel is one view of all steps with time distributions the table cannot express"
+
+- id: gur-19
+  title: "Stall definition from the intent map: a stall is >2x the designer's expected step duration with zero step-progress screen events; replaces LLM-judged 'confused' with a timing rule and reports stall rate per step"
+  level: L4
+  cell: {part: ingestion-extraction, modality: screen-state-classifier, granularity: tutorial-step, question-type: how-long, representation: step-funnel-state-machine-per-player, extraction-trigger: at-ingestion}
+  object: "spec.md step 2: 'what is on screen is largely lost'"
+  situation: "The transcript-only extractor marks 'confused' on 9% of videos; the lab's own observers mark stalls on 31% of the same sessions"
+  consequence: "Stall rate becomes a frame-derived, reproducible number per step, independent of whether the player talks"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'Transcript loses visual information'"
+  proposed: "stall(player_id, step_idx, t_start, duration_s, expected_s) emitted when duration > 2*expected_s and no progress marker; stall_rate per step in the funnel view"
+  shallow: false
+  mechanism: "Frame classifier yields step_id and progress markers per 1s; a per-player pass measures time in step; threshold from intent_step.expected_s (gur-8)"
+  example: "'How long do players spend on step 3?' -> 'median 11m, p75 19m, expected 3m; 212 of 410 stalled (>6m with no progress)'"
+  cost: S
+  depends_on: "frame classifier; intent map (gur-8)"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed question 'did the player seem confused' is unanswerable from transcript for silent players; stalls are visible for all 500"
+
+- id: gur-20
+  title: "Behavioural play-style segments from observable primitives only (reads tutorial text >= 3s vs skips, tries before reading, explores off-path) with n per segment; churn and issue rates are reported per segment; personality or demographic inference is refused"
+  level: L3
+  cell: {part: query-path, representation: behaviour-archetype-clusters, question-type: who-are-the-churners-segment-discovery, granularity: player-segment-cluster, query-path: automatic-contrast-cohort-diff, mechanism-type: auto-discover-without-question}
+  object: "spec.md step 4: 'a question over, say, 500 players'"
+  situation: "Studio asks 'who are the players who churn at the tutorial?' and expects a persona"
+  consequence: "The answer is 'skippers (n=160): 48% churn at step 3; readers (n=240): 12%; explorers (n=100): 20%' with the three defining behaviours, not an invented persona"
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "spec.md 'Unspecified: ... who at the studio asks and what they ask'; segment questions are routine in GUR reports"
+  proposed: "Per-player features from screen-state and input rows: prompt_read_s, actions_before_prompt_dismiss, off_path_s; k=3 clustering refit per game; segment table with feature medians"
+  shallow: false
+  mechanism: "Features computed at ingestion; clustering refit nightly; the planner answers find-players-who and segment questions by joining segment to issue_build and funnel"
+  example: "'Who quits at step 3?' -> 'Skippers (dismiss prompts in < 1s, n=160) account for 98 of 142 step-3 quitters'"
+  cost: M
+  depends_on: "screen-state and input event rows"
+  part: query
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no per-player features to segment on; this gives producers a defensible 'who' built from what players did"
+
+- id: gur-21
+  title: "Expert heuristic walkthrough as hypotheses: a 2-hour expert pass over the tutorial produces predicted violations (step, heuristic, text); extraction counts players who hit each; predictions with < 3% hit rate are flagged 'expert false positive' and observed issues with no prediction are flagged 'missed by expert'"
+  level: L3
+  cell: {part: question-generation, question-origin: established-gur-frameworks-heuristics-pxi-mda, mechanism-type: human-in-the-loop, moment-in-journey: game-onboarding-day-0, evidence-form: contrast-vs-baseline, user-segment: ux-researcher}
+  object: "memo.md item 3: 'judged by two tests: coverage of real studio questions and accuracy against hand-labelled sessions'"
+  situation: "Before any sessions exist, the studio wants something to look at; after 200 sessions, nobody knows whether the heuristic evaluation was right"
+  consequence: "Day-0 output is a predicted issue list; by cohort 1 each prediction has a hit count, which calibrates both the expert and the extractor"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'coverage of real studio questions'"
+  proposed: "predicted_issue(game_id, step, heuristic_id, text, expert_id); join to issue_build by (step, heuristic_id) to produce hit rate and the two flags"
+  shallow: false
+  mechanism: "Walkthrough recorded in a form; rows seed the tracker set (gur-4) with game-specific text; the digest shows a confusion-matrix style table predicted x observed"
+  example: "Expert predicted 11 tutorial violations; 7 observed at >= 5%; 4 false positives; 3 issues observed (step-3 wrong-menu 35%) were not predicted"
+  cost: S
+  depends_on: "heuristic trackers (gur-4); issue table (gur-1)"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's questions are never scored against outcomes; this scores the human question-writers too"
+
+- id: gur-22
+  title: "Genre heuristic packs as question templates: mobile-touch (target size, thumb reach), 3D-camera (camera fights, lost orientation), strategy (unit selection errors), each pack 8-15 trackers, selected at onboarding by genre tag"
+  level: L3
+  cell: {part: question-generation, question-origin: genre-template-library, reuse-scope-of-extraction: genre-shared, mechanism-type: transfer-across-games, moment-in-journey: game-onboarding-day-0, subject-domain: ui-navigation}
+  object: "spec.md step 3: 'written per game target'"
+  situation: "The fifth mobile puzzle studio onboards and the same 12 touch-usability questions are hand-written for the fifth time"
+  consequence: "Onboarding picks 'mobile-puzzle' and inherits 12 trackers with their violation signatures; studio adds at most 5 game-specific ones"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "A-frame assumptions: 'studios are many and each game differs, so per-game hand-written questions do not scale'"
+  proposed: "genre_pack(genre, heuristic_id, signature); onboarding form field genre[]; trackers materialised per game from the union of packs"
+  shallow: false
+  mechanism: "Packs curated by JEV from published genre heuristics; a tracker is a row in heuristic_tracker (gur-4) tagged with genre; extractor prompt is assembled from the selected packs"
+  example: "Mobile pack tracker 'mis-tap on small target' -> 'step 2 (drag tile): 96 of 480 players mis-tapped 3+ times; 24 of those quit within 2 min'"
+  cost: M
+  depends_on: "heuristic tracker table (gur-4)"
+  part: question-generation
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Per-game questions start from zero; packs start a mobile game with 12 validated questions on day 0"
+
+- id: gur-23
+  title: "Open-coding pass on the first cohort: all short open-field observations are clustered into emergent topics, a researcher names the top 15 clusters in a 1-hour affinity session, and each named cluster becomes a closed tracker backfilled over the cohort"
+  level: L3
+  cell: {part: question-generation, question-origin: emergent-topic-clustering-of-player-speech, question-type: what-surprised-unknown-unknowns, moment-in-journey: first-cohort-ingested, mechanism-type: auto-discover-without-question, schema-evolution: append-only-versioned-fields}
+  object: "memo.md item 1: 'closed enum fields and short open fields'"
+  situation: "After 120 sessions, 4,300 open-field friction notes exist and nobody has read them"
+  consequence: "The unknown unknowns become 15 named trackers within a week of the first cohort; the studio sees 'things we did not ask about' as a report section"
+  p_typical: 0.12
+  grounded: quote
+  evidence: "memo.md: 'short open fields'; spec.md: 'most of what is in the video and transcript is never captured'"
+  proposed: "Embedding clustering of open-field rows; cluster review UI with 10 sample rows and 3 clips per cluster; on naming, a tracker row is created and backfill is queued"
+  shallow: false
+  mechanism: "Open fields embedded at ingestion; HDBSCAN-style clustering nightly; researcher names clusters; named clusters are converted to closed fields with version stamps and backfilled over existing sessions"
+  example: "Cluster 'cannot tell which items are craftable' (312 rows, 140 players) was not in the fixed question set; named and backfilled, it ranks 2nd among step-3 issues"
+  cost: M
+  depends_on: "open-field observations with embeddings; backfill job (memo item 2)"
+  part: question-generation
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed table captures only pre-written questions; this is the standard GUR method for finding what nobody asked"
+
+- id: gur-24
+  title: "Weekly one-page producer digest pushed to Slack: top 10 tutorial issues with severity, frequency, delta vs last week, one clip link each and a fix note; questions are never typed for this content"
+  level: L3
+  cell: {part: export-integration, delivery-surface: scheduled-digest, mechanism-type: push-instead-of-pull, user-segment: producer-exec, question-type: what-to-fix-first-prioritised, latency-tier: push-no-query, moment-in-journey: steady-state-weekly}
+  object: "spec.md step 4: 'A chatbot for the gaming studio answers the studio's questions'"
+  situation: "The producer does not open the chatbot; the researcher pastes answers into a slide every Monday"
+  consequence: "The Monday artefact is generated, with the same format a GUR lab's weekly playtest summary uses"
+  p_typical: 0.09
+  grounded: inferred
+  evidence: "spec.md: 'Answering a studio's question must be fast'; the fastest answer is one that arrives before the question"
+  proposed: "Scheduled job renders issue rows (status=listed, top 10 by severity*frequency) into a fixed template and posts to a studio Slack channel or email"
+  shallow: false
+  mechanism: "Reads issue_build for the latest build and the previous week, computes deltas, picks clip 1 of each issue, renders template, posts"
+  example: "Digest line 1: 'Step 3 wrong-menu, sev 3, 35% of 410 (-2 pts vs last week), clip, suggested: grey out non-craftable items'"
+  cost: S
+  depends_on: "issue table (gur-1); Slack or email integration"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table answers questions; the digest removes the question step for the most-asked content"
+
+- id: gur-25
+  title: "REFUSED: cross-studio benchmark lines ('your step-3 drop-off is worse than 70% of games'); allowed only as opt-in, genre-normalised, with >= 20 contributing games and no per-game identification"
+  level: L3
+  cell: {part: tenancy-access-control, scope: cross-studio-benchmark, tenancy-and-deployment: logically-isolated-per-studio, question-type: compare-versions, user-segment: publisher-portfolio, uncertainty-policy: abstain-below-coverage}
+  object: "spec.md Constraints: 'Buyers are gaming studios'"
+  situation: "A sales deck proposes 'benchmarks across our 40 games' as a differentiator"
+  consequence: "A large-studio GUR lead will not allow their playtest data into a pool, and does not trust a benchmark that mixes a 3-step mobile tutorial with a 40-minute RPG tutorial; the refusal is a tenancy default, with the opt-in path specified so publishers can use it"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md: 'Buyers are gaming studios' and 'Their questions are not known in advance'; no cross-studio use is specified"
+  proposed: "benchmark_optin(studio_id, genre, consented_at); benchmark views materialised only when count(games) >= 20 in the genre; chatbot refuses benchmark questions otherwise"
+  shallow: false
+  mechanism: "Default tenancy flag excludes a studio's rows from any cross-studio aggregate; opt-in enables contribution to a genre pool; percentile answers computed only over pools meeting the size rule"
+  example: "'How does our tutorial drop-off compare?' -> 'Not available: your studio has not opted into the benchmark pool' or, with opt-in, 'step-3 drop-off 35% vs genre median 22% (n=23 action-RPG tutorials)'"
+  cost: S
+  depends_on: "per-studio tenancy flag"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "Not a capability gain; it prevents a comparison the fixed table never offered from being offered wrongly"
+
+- id: gur-26
+  title: "Participant profile join: 5 screener fields per player (genre hours per week, platform, prior titles in genre count, age band, input device) captured at recruitment so every question can be split new-to-genre vs veteran"
+  level: L3
+  cell: {part: collection-protocol, modality: player-profile-metadata, scope: query-time-defined-cohort, question-type: find-players-who, granularity: player, mechanism-type: change-data-at-source}
+  object: "spec.md 'Unspecified: ... who at the studio asks and what they ask'; no player metadata is named"
+  situation: "Studio asks 'is the tutorial too hard for newcomers?' and the log cannot tell a newcomer from a veteran"
+  consequence: "Every aggregate accepts a profile filter; the answer reads 'newcomers (0 prior titles, n=140): 52% quit at step 3; veterans (3+, n=210): 14%'"
+  p_typical: 0.09
+  grounded: quote
+  evidence: "spec.md: 'Unspecified ... who at the studio asks'; GUR recruitment always captures a screener"
+  proposed: "Table participant(player_id, genre_hours_wk, platform, prior_titles, age_band, input_device); planner exposes WHERE on these for any query"
+  shallow: false
+  mechanism: "Screener collected by the recruiter or at capture-client sign-up; rows joined by player_id; the planner's cohort grammar accepts the 5 fields"
+  example: "'Who quits at step 3?' -> 'Newcomers 73 of 140 (52%); veterans 29 of 210 (14%); mixed 40 of 150'"
+  cost: XS
+  depends_on: "recruitment or capture client collects the fields"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table has no player attributes; this makes every count splittable by the one variable GUR knows matters most for tutorials"
+
+- id: gur-27
+  title: "Quotes delivered to the studio are attributed to participant codes (P042) with the session timestamp, never a name or face; the chatbot renders a quote only together with its clip id and the P-code"
+  level: L4
+  cell: {part: chatbot-ui, evidence-form: quote-with-timestamp, tenancy-and-deployment: logically-isolated-per-studio, user-segment: ux-researcher, question-type: what-said, delivery-surface: chatbot}
+  object: "memo.md item 1: 'quote with timestamp as evidence'"
+  situation: "A producer forwards a chatbot answer containing a player's quote to the whole team"
+  consequence: "The quote reads 'P042 at 00:24:10 (video 2): \"I have no idea what crafting does\"' and is traceable to a clip without identifying the person"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "memo.md: 'quote with timestamp as evidence'"
+  proposed: "Quote rendering template with P-code, session_t, video_idx, clip link; player_id to P-code map held per studio"
+  shallow: false
+  mechanism: "Every quote row joins to a per-game P-code table; the renderer refuses to show a quote without a clip id so every quote is verifiable"
+  example: "'What do players say at step 3?' -> three quotes, each 'P-code, mm:ss, video n, clip'"
+  cost: XS
+  depends_on: "nothing"
+  part: ui
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table carries no quotes; adding them with the lab's attribution convention makes them usable in a studio without a consent review per quote"
+
+- id: gur-28
+  title: "Align the extractor's observation codes with the lab observer coding sheet (12 codes: stuck, wrong action, missed prompt, reads text, asks for help, expresses confusion, expresses delight, dies, retries, quits, idle, menu-browsing) so lab notes and JEV rows merge into one table"
+  level: L3
+  cell: {part: export-integration, representation: common-data-model-with-per-game-vocab-map, user-segment: ux-researcher, delivery-surface: warehouse-share-or-export, reuse-scope-of-extraction: universal-primitives, build-or-buy: studio-owned-stack}
+  object: "memo.md item 1: 'closed enum fields and short open fields'"
+  situation: "The studio's lab already has 400 observed sessions coded by hand in a spreadsheet; JEV adds 500 remote sessions with a different vocabulary"
+  consequence: "One union table of 900 sessions with a shared code column; lab-coded sessions double as a golden set for the extractor"
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "spec.md 'Unspecified: ... answer types'; large-studio labs have an existing coding scheme"
+  proposed: "observation.code enum of 12 universal codes plus vocab_map(studio_id, studio_code, jev_code); CSV/Parquet export with the shared column"
+  shallow: false
+  mechanism: "Extractor outputs the 12 codes as the closed field; a per-studio map translates the lab's own labels; export job writes the union; accuracy job compares on overlapping sessions"
+  example: "'How many players got stuck at step 3?' -> '212 of 410 (JEV remote) and 31 of 60 (lab observed), code=stuck, combined 243 of 470'"
+  cost: S
+  depends_on: "observation log closed fields"
+  part: store
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table cannot be merged with a lab's existing data; a shared code set lets the studio keep one history"
+
+- id: gur-29
+  title: "Three closed problem kinds on every friction row: usability (did not know how), challenge (knew how, could not do it), preference (did not want to); 'why' answers report the three counts because producers route each to a different team"
+  level: L4
+  cell: {part: ingestion-extraction, question-type: why, representation: timestamped-observation-log, granularity: variable-length-moment-or-episode, user-segment: game-designer, extraction-trigger: at-ingestion}
+  object: "memo.md item 1: 'friction signal'"
+  situation: "Step 3 has 142 friction episodes; the UX team thinks it is a clarity problem, the design team thinks it is tuning"
+  consequence: "'Step 3: usability 88, challenge 31, preference 23' ends the argument and assigns the ticket"
+  p_typical: 0.1
+  grounded: inferred
+  evidence: "memo.md names a single 'friction signal'; GUR reports separate usability from balance problems"
+  proposed: "Column friction.kind enum {usability, challenge, preference} with kind_basis (utterance, retries after correct action, explicit refusal)"
+  shallow: false
+  mechanism: "Extractor rule: wrong action or goal-uncertainty utterance -> usability; correct action with repeated failure -> challenge; explicit 'don't want to' or skip -> preference; the planner groups why-questions by kind"
+  example: "'Why do players struggle at step 3?' -> 'usability 88 of 142 (wrong menu), challenge 31 (timed drag fails), preference 23 (skip crafting)'"
+  cost: S
+  depends_on: "friction rows with action context"
+  part: ingestion
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The fixed table's 'struggled: yes' sends every problem to the same team; three kinds route them"
+
+- id: gur-30
+  title: "Issues-preceding-exit ranking: for each churned player the last 3 listed issues before exit, weighted by severity and recency; reported next to overall issue frequency so 'what makes them leave' differs from 'what is most common'"
+  level: L4
+  cell: {part: query-path, query-path: automatic-contrast-cohort-diff, question-type: why, scope: cohort, representation: issue-list-with-severity-frequency, evidence-form: contrast-vs-baseline}
+  object: "spec.md step 3: 'detecting churn in the tutorial and just after it'"
+  situation: "The most frequent tutorial issue (small text, 60% of players) is not what precedes exits; a rarer issue (step-3 wrong-menu, 35%) precedes 61 of 142 exits"
+  consequence: "The producer list has two columns, 'most common' and 'precedes exit', and the sprint picks from the second"
+  p_typical: 0.08
+  grounded: quote
+  evidence: "spec.md: 'The targets are mostly detecting churn in the tutorial and just after it'"
+  proposed: "exit_context(player_id, issue_fingerprint, rank_before_exit 1-3, seconds_before_exit); aggregate exit_share per issue; lift = exit_share / overall_share"
+  shallow: false
+  mechanism: "Nightly join of issue membership to session exit timestamps; the chatbot's 'why churn' template reads lift and shows both columns"
+  example: "'Why do players churn in the tutorial?' -> 'Precedes exit: step-3 wrong-menu (43% of exits, lift 1.9); missed dodge prompt (22%, lift 2.4); small text (12%, lift 0.3)'"
+  cost: S
+  depends_on: "issue table (gur-1); session exit from stitching"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "The table can count issues; it cannot say which ones sit next to the exit, which is the churn question itself"
+
+- id: gur-31
+  title: "Missed-prompt detection without eye tracking: on-screen prompt text present for >= 1.5s (OCR) and the player's next action contradicts it within 10s is coded 'prompt missed'; reported per prompt as a rate"
+  level: L4
+  cell: {part: frame-pipeline, modality: on-screen-text-ocr, granularity: frame, question-type: how-many, representation: timestamped-observation-log, subject-domain: onboarding-tutorial}
+  object: "spec.md step 2: 'what is on screen is largely lost'"
+  situation: "The lab would use gaze to know whether players saw the dodge prompt; remote capture has no gaze"
+  consequence: "Each tutorial prompt gets a missed rate from 500 players, the closest remote proxy to a gaze result"
+  p_typical: 0.05
+  grounded: quote
+  evidence: "spec.md: 'Transcript loses visual information'; memo.md item 1: 'on-screen text'"
+  proposed: "prompt_event(player_id, prompt_text_hash, t_shown, duration_s, next_action, contradicts bool); rate per prompt_text_hash"
+  shallow: false
+  mechanism: "OCR per 1s frame finds prompt text; the input or screen-state row within 10s is compared to the action the prompt names (from the intent map, gur-8); contradiction writes contradicts=true"
+  example: "'Do players see the dodge prompt?' -> 'Shown to 440 players, median 2.1s; 277 (63%) acted contrary within 10s'"
+  cost: M
+  depends_on: "OCR in the frame pipeline; intent map with expected action per prompt"
+  part: ingestion
+  ingest_cost: M
+  query_cost: S
+  better_than_fixed_table: "The fixed question 'did the player understand the prompt' is guessed from speech; this measures the behaviour that a gaze study would"
+
+- id: gur-32
+  title: "Duration answers use median and IQR with n, never mean; the how-long template also returns the share over 2x expected, because tutorial time distributions are long-tailed and a mean hides stallers"
+  level: L4
+  cell: {part: query-path, question-type: how-long, evidence-form: chart, uncertainty-policy: answer-with-ci-and-n, query-path: sql-over-closed-fields, granularity: tutorial-step}
+  object: "memo.md item 2: 'closed-field questions become aggregate queries over all players (instant)'"
+  situation: "Step 3 has 198 players at 2-4 min and 212 at 8-25 min; a mean of 9.4 min describes nobody"
+  consequence: "Answer: 'median 7m, IQR 3m-16m, n=410, 52% over 2x expected' with a histogram"
+  p_typical: 0.07
+  grounded: quote
+  evidence: "memo.md: 'aggregate queries over all players (instant)' with no statistic specified"
+  proposed: "how-long SQL template computes percentile_cont(0.25, 0.5, 0.75), n, share_over_2x_expected; renderer draws a 20-bin histogram"
+  shallow: false
+  mechanism: "Planner routes how-long questions to a fixed template over per-player step durations from the state machine; mean is omitted from the rendering"
+  example: "'How long does step 3 take?' -> 'median 7m (IQR 3-16m, n=410); 52% took over 6m (2x expected); histogram attached'"
+  cost: XS
+  depends_on: "per-player step durations"
+  part: query
+  ingest_cost: S
+  query_cost: S
+  better_than_fixed_table: "A per-video answer table has no durations; and when a duration is added, this prevents the lab-known mistake of reporting a mean"
