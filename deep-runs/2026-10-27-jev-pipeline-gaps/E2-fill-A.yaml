@@ -1,0 +1,868 @@
+- id: fillA-1
+  title: Forced client hotfix at video 4 of an 8-video session (build 1.4.2 to 1.4.3) leaves build_id tagged once at session start, so compare-two-versions credits videos 5-8 to 1.4.2
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: build-id
+    time-and-change: game-update-changes-tutorial
+    correctness-failure: mixed-version-aggregation
+  object: Session-level build_id tag; Step 1 'one session is many videos'
+  situation: "A store-forced update lands at 00:47 of a 2-hour session; the player restarts the client, the recorder keeps the same session id, and videos 5-8 run on 1.4.3, whose post-tutorial first quest was rewritten. build_id was read once at record start and written to the session row; no video row says 1.4.3."
+  consequence: In a 300-session cohort where 40 sessions straddle the patch, about 160 post-patch videos are counted under 1.4.2. 'Did churn just after the tutorial drop in 1.4.3?' compares a 1.4.2 arm that already contains 1.4.3 behaviour, shrinking the measured difference.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "\"A session can be n hours; each video is capped at 15 minutes, so one session is many videos.\" -- a multi-hour session can span a game update, and no per-video build field is described."
+  already_specified: false
+  proposed: Read build_id from the client at the start of every video and after every client restart, store it on the video row, and set build_straddle=true on sessions with more than one value.
+  shallow: false
+- id: fillA-2
+  title: Remote-config flips the tutorial A/B arm from 'arrow hint' to 'voice hint' between video 2 and video 3 of a 6-video session under the same build_id; no field records the arm per video
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: game-version
+    time-and-change: game-update-changes-tutorial
+    correctness-failure: mixed-version-aggregation
+  object: build-and-metadata-tagging stage; answers table per video (Step 3)
+  situation: "The studio runs a 50/50 server-side experiment on tutorial hint style; at 14:00 UTC it reallocates 20% of arm A to arm B, and 25 in-progress sessions switch arms between videos 2 and 3. build_id is identical for both arms and no experiment-arm or remote-config hash is captured."
+  consequence: "'Compare hint variant A vs B' has no column to group by: the bot either says it cannot split by variant or groups by build_id and returns one bucket of 400 players. Any split it derives from transcript remarks ('oh, now it talks to me') covers only players who commented on the change."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"The answers form a structured table per video.\" -- the per-video row has no field for a server-side variant that changes between videos."
+  already_specified: false
+  proposed: Capture experiment arm and remote-config hash from the client per video; expose them as a compare dimension and flag the 25 arm-switching sessions.
+  shallow: false
+- id: fillA-3
+  title: "Live-ops server config lowers step-5 enemy health by 30% at 14:00 UTC while 30 sessions are mid-tutorial; no server-config version or change time is joined to the videos"
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: timestamp
+    time-and-change: game-update-changes-tutorial
+    correctness-failure: mixed-version-aggregation
+  object: Session-level build_id; per-video answers table (Step 3)
+  situation: "The studio's balance team pushes a server-side change with no client build change; 30 sessions in progress have videos before and after 14:00 UTC. The table holds no wall-clock start per video and no server-config version, so videos on both configs are pooled under one build."
+  consequence: Studio asks 'compare step-5 deaths before and after Tuesday's tuning'; the bot can only split by session start date, so the 30 straddling sessions land wholly in 'before' and dilute the drop. A step-4 copy change shipped the same week takes the credit in the bot's cohort-why answer.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"The answers form a structured table per video.\" -- a server-side change inside one session is invisible when the only version marker is a session-level build."
+  already_specified: false
+  proposed: Store wall-clock start time per video and join a studio-supplied config change log (config_version, effective_at) so each video row gets the config in force.
+  shallow: false
+- id: fillA-4
+  title: Session rollup for a session whose videos 1-3 ran 1.4.2 and videos 4-8 ran 1.4.3 has no rule for which build the 'completed tutorial' answer belongs to
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: session
+    question-shape: answer-spans-videos
+    correctness-failure: mixed-version-aggregation
+  object: Session-level aggregation of per-video answers; Step 1 'one session is many videos'
+  situation: Player starts the tutorial on 1.4.2 in videos 1-2, the patch applies at a client restart, and the player finishes the tutorial in video 4 on 1.4.3. The session row takes its build from video 1 or from the last video; the code path that picks one is not specified.
+  consequence: The tutorial completion is credited to 1.4.2 although the steps completed were 1.4.3 steps. In a cohort where 12% of sessions straddle, compare-two-versions completion rates move by up to 12 points depending on which rule the code happens to apply.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"A session can be n hours; each video is capped at 15 minutes, so one session is many videos.\" -- session rollup across videos needs a build attribution rule the spec does not give."
+  already_specified: false
+  proposed: "Rule: tutorial-scoped answers take the build of the video where the event occurred; straddling sessions are excluded from version comparisons by default and reported as a footnote ('40 sessions spanned both builds, excluded')."
+  shallow: false
+- id: fillA-5
+  title: After build_id moves to the video row, a GROUP BY build over player_id counts the 40 straddling players in both arms, so a 300-player compare-two-versions reports arms totalling 340
+  level: L4
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: player
+    correctness-failure: duplicate-counted
+    fast-path-dependency: text-to-sql-generated-correctly
+  object: Answers table per video (Step 3); chatbot query over it (Step 4)
+  situation: The fix for session-level build tagging is shipped; the text-to-SQL planner writes COUNT(DISTINCT player_id) ... GROUP BY build_id over video rows, and each straddling player appears once under 1.4.2 and once under 1.4.3.
+  consequence: Arm sizes sum to 340 for 300 players; a player who quit after the patch counts as a 1.4.2 non-quitter and a 1.4.3 quitter at once. The churn rate for each arm uses the wrong denominator.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast.\" -- a per-player comparison over per-video rows needs a one-arm-per-player rule."
+  already_specified: false
+  proposed: Assign each player to one arm per question by the build of the video where the measured event occurred, or report straddlers as a third arm; assert that the sum of arm n equals distinct players.
+  shallow: false
+- id: fillA-6
+  title: A CDN content patch (tutorial text bundle v12 to v13) downloads at video 5 with no client restart; build_id stays 1.4.3 and no content_version field exists
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: build-id
+    time-and-change: game-update-changes-tutorial
+    question-shape: answer-needs-visuals
+  object: build-and-metadata-tagging stage; Step 2 'what is on screen is largely lost'
+  situation: "The studio rewrites a confusing step-2 instruction and pushes text bundle v13 at 11:20; sessions in progress load it on the next scene change in video 5. The binary build is unchanged, so session and any per-video build field read 1.4.3 for both texts, and the transcript does not show the on-screen text."
+  consequence: Studio asks 'did the new step-2 text cut confusion?'; there is no field to split on, so the bot compares by session date and the 15 sessions that loaded v13 mid-session are pooled on the old side.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"the transcript alone is not enough; what is on screen is largely lost.\" -- an on-screen text change shipped as content, not as a new build, has no trace in the transcript or the build tag."
+  already_specified: false
+  proposed: Record content bundle version per video from the client alongside build_id and expose it as a compare dimension.
+  shallow: false
+- id: fillA-7
+  title: "'Compare quit reasons between 1.4.2 and 1.4.3' lists 'hint pop-up blocks the screen' at 9% for 1.4.2, a pop-up that exists only in 1.4.3, because quits in post-patch videos of straddling sessions are filed under the session's 1.4.2 tag"
+  level: L4
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: build-id
+    question-shape: answer-is-a-why
+    correctness-failure: mixed-version-aggregation
+  object: Session-level build_id; per-video answer to the quit-reason question
+  situation: 18 sessions tagged 1.4.2 were hot-patched to 1.4.3 at video 4 and the player quit in video 6 or 7, saying 'this new pop-up keeps blocking the screen'. The per-video quit-reason answer is correct; the build attached to it is the session's.
+  consequence: The designer reads that the pop-up complaint 'also happens on 1.4.2' and concludes the pop-up did not cause the 1.4.3 churn increase, so it ships unchanged.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"A session can be n hours; each video is capped at 15 minutes, so one session is many videos.\" -- a quit late in a long session can occur after a mid-session update."
+  already_specified: false
+  proposed: Attach the per-video build to every answer row; reasons whose build differs from the session's first build are shown under the build in which they were spoken.
+  shallow: false
+- id: fillA-8
+  title: Within-player comparison of videos 1-4 vs 5-8 after a mid-session patch shows 'stuck' answers dropping from 3 to 0, and with no build-change marker the analyst reads it as the player learning
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: build-id
+    time-and-change: game-update-changes-tutorial
+    correctness-failure: inconsistent-across-videos
+  object: Per-video answers table (Step 3); studio UI timeline of one player
+  situation: A UX researcher compares one player's behaviour before and after the 1.4.3 soft-lock fix inside one 8-video session; the timeline lists 8 rows with the same build and no event at the client restart between videos 4 and 5.
+  consequence: The drop in 'stuck at step 5' is written up as a learning curve rather than as evidence that the 1.4.3 fix worked; the studio loses the cleanest within-player version comparison it has.
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "\"The answers form a structured table per video.\" -- rows per video carry no marker for a build change between two of them."
+  already_specified: false
+  proposed: Show a build-change marker on per-player timelines wherever per-video build_id changes, with both build ids.
+  shallow: false
+- id: fillA-9
+  title: Moderator records store version '1.4' while the studio's changelog names internal builds 10234 and 10240 (both shipped as store 1.4, 10240 mid-week), so 'compare build 10234 vs 10240' matches no stored value
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: build-id
+    time-and-change: game-update-changes-tutorial
+    chatbot-response-behaviour: says-no-data-correctly
+  object: build-and-metadata-tagging stage; moderator-entered build tag
+  situation: The soft-lock hotfix 10240 ships under the same store version on Wednesday; 22 sessions that week straddle it. The table holds only '1.4', typed by the moderator, and no mapping from store version to internal build.
+  consequence: The bot replies 'no data for build 10240' or maps both to '1.4' and returns one pooled number, so the hotfix that fixed the step-3 soft-lock cannot be evaluated by the studio that paid for the test.
+  p_typical: 0.04
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Store the internal build number read from the client per video, keep the store version as a second field, and accept a studio build-to-store-version map at onboarding.
+  shallow: false
+- id: fillA-10
+  title: A session straddling a patch that renames tutorial step 'Crafting' to 'Forge' at video 4 is extracted with the question-set fork chosen by the session's first build, so videos 4-8 are answered against step names that no longer exist
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: question-set-version
+    question-set-version-state: per-game-version-fork
+    correctness-failure: mixed-version-aggregation
+  object: Step 3 'a fixed set of questions with options, written per game target'; per-game-version question fork
+  situation: Per-build question forks exist (1.4.2 options list 'Crafting', 1.4.3 options list 'Forge'); the fork is selected once per session from the session's build tag, so the 1.4.2 fork runs on the 1.4.3 videos of the session.
+  consequence: Post-patch quits at the renamed step go to 'Other' or to the nearest old step name in exactly the sessions that cross the update; compare-two-versions shows 'Other' rising in 1.4.2, a build in which the step was never renamed.
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "\"The transcript is run through a fixed set of questions with options, written per game target.\" -- a fork chosen once per session cannot follow a build that changes between videos."
+  already_specified: false
+  proposed: Select the question-set fork per video from the per-video build_id; record question_set_version on every answer row.
+  shallow: false
+- id: fillA-11
+  title: After per-video build_id is added, a year of earlier sessions keeps only the session-level build, so a 12-month compare-two-versions query mixes per-video and per-session attribution with no flag
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: build-id
+    time-and-change: a-year-of-data
+    correctness-failure: mixed-version-aggregation
+  object: Answers table per video (Step 3); build-and-metadata-tagging schema
+  situation: The schema change ships in month 9; rows before it have build copied from the session, rows after it have the build read per video. Straddling sessions before month 9 cannot be detected.
+  consequence: A 'before vs after 1.3' comparison from March runs on the old attribution and 'before vs after 1.4' from October on the new one; the two deltas are presented side by side as comparable, and the bot cannot say which rows carry per-video precision.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Add build_source (session_tag | video_capture | backfilled) per row; backfill per-video build from capture-file metadata where it exists and mark the rest session_tag.
+  shallow: false
+- id: fillA-12
+  title: "Cross-device session: player moves from an Android phone on 1.4.2 (staggered rollout) to an iPad on 1.4.3 at video 5 via cloud save, and the session row carries one device and one build"
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    session-shape: 5-20-videos
+    studio-question-type: compare-two-versions
+    data-element: device-platform
+    time-and-change: game-update-changes-tutorial
+    correctness-failure: mixed-version-aggregation
+  object: Step 1 'one session is many videos'; session-level device and build tags
+  situation: The studio staggers 1.4.3 (iOS Tuesday, Android Thursday); a player switches device mid-session to continue on a tablet, the recorder keeps one session id, and videos 5-8 are on another device, OS and build.
+  consequence: Compare-two-versions and segment-by-device both file the whole session under Android 1.4.2; touch-target complaints spoken on the iPad count against the Android build.
+  p_typical: 0.01
+  grounded: inferred
+  evidence: "\"how videos of one session are linked\" -- videos of one session can come from two devices and two builds when the session is linked only by id."
+  already_specified: false
+  proposed: Read device and build per video; when either changes within a session, keep the session id but split device-scoped and build-scoped rollups at the change.
+  shallow: false
+- id: fillA-13
+  title: No human reference transcripts exist for any language, so a measured 78% accuracy on 'expressed frustration' cannot be split into ASR error and extraction error
+  level: L3
+  cell:
+    stage: transcription
+    data-element: transcript
+    correctness-failure: transcription-hallucination-propagated
+    scale: 500-players
+    studio-question-type: cohort-count
+  object: Step 2 'Each video is converted to a transcript.'
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. If gold labels exist they are made by people watching the video; the table's answers come from ASR text. With no reference transcript for the same 200 gold videos, the 22-point error has no decomposition.
+  consequence: The team spends a sprint rewriting the extraction prompt; if 15 of the 22 points are ASR misses ('I'm out' heard as 'I'm good'), the prompt work can move accuracy by at most 7 points, and nobody can tell before shipping.
+  p_typical: 0.07
+  grounded: inferred
+  evidence: "\"Each video is converted to a transcript.\" -- no stage measures how accurate that transcript is."
+  already_specified: false
+  proposed: Human-transcribe the 200 gold videos (~50 audio hours); run extraction on reference and ASR transcripts and report accuracy(ASR) vs accuracy(reference) per question.
+  shallow: false
+- id: fillA-14
+  title: Japanese, Korean and Chinese transcripts have no word boundaries, no character error rate (CER) is defined, and the vendor's English WER of 6% is quoted for the Tokyo cohort
+  level: L3
+  cell:
+    stage: transcription
+    data-element: transcript
+    speech-shape: non-english
+    studio-question-type: segment-by-metadata (device, country, build)
+    correctness-failure: transcription-hallucination-propagated
+  object: Step 2 transcript; Unspecified 'languages'
+  situation: "No transcript-quality-measurement step (reference transcripts, WER per segment) exists. A studio with JP and EN cohorts asks for 'expressed frustration' by country: 11% JP vs 24% EN. The only accuracy figure on hand is the vendor's English WER."
+  consequence: The 13-point gap is presented as a cultural difference; a CER of 15% or more on 30 reference minutes of JP play would explain much of it, and no number exists to rule that in or out.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"latency and cost limits per query, languages\" -- languages are unspecified, so no per-language error metric is chosen."
+  already_specified: false
+  proposed: Define CER for ja/ko/zh and WER for space-delimited languages; transcribe 30 reference minutes per language per game; print the per-language figure next to any cross-country comparison.
+  shallow: false
+- id: fillA-15
+  title: Phone built-in mic at arm's length vs headset mic gives different ASR error, and with no reference set per capture device the mobile-vs-PC 'expressed frustration' gap (14% vs 26%) mixes mic quality with tutorial UX
+  level: L3
+  cell:
+    stage: transcription
+    data-element: transcript
+    studio-question-type: segment-by-metadata (device, country, build)
+    capture-integrity: audio-and-video-ok
+    speech-shape: continuous-think-aloud
+  object: Step 2 transcript; device-platform segmentation
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. 500-player cohort, 220 on phones with the built-in mic, 280 on PC with headsets; the studio segments frustration by device.
+  consequence: The studio concludes the mobile tutorial frustrates less and moves design time to PC; if phone WER is 20% vs headset 8%, most of the gap is missed words. Nothing in the pipeline can show which.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"Each video is converted to a transcript.\" -- transcript error depends on the capture mic and is not measured per device."
+  already_specified: false
+  proposed: Tag mic type per session at capture; keep 20 reference minutes per mic type per game; report WER per mic type with every device segmentation.
+  shallow: false
+- id: fillA-16
+  title: A rhythm game with constant music and a puzzle game with near-silence are compared on 'confused by tutorial' (9% vs 21%) with no WER measured per game-audio level
+  level: L3
+  cell:
+    stage: transcription
+    data-element: transcript
+    speech-shape: game-audio-dominates
+    studio-question-type: cross-game-or-cross-studio-benchmark
+    tenancy: one-studio-many-games
+    transcription-subsystem: low-confidence-segments-dropped-silently
+  object: Step 2 transcript; Step 4 chatbot answer across a studio's games
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. One studio with two games asks which tutorial confuses more. Speech-to-game-audio ratio differs by about 15 dB between the games, and ASR drops low-confidence speech under music.
+  consequence: The rhythm game's tutorial is declared clearer; the gap may be ASR deletions under music rather than player experience, and the studio cuts the puzzle game's tutorial budget on that basis.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"Each video is converted to a transcript.\" -- game audio level changes ASR error and no per-game error figure exists."
+  already_specified: false
+  proposed: Bin reference minutes by speech-to-game-audio ratio (<5 dB, 5-15 dB, >15 dB); report WER per bin per game; suppress cross-game comparisons where per-game WER differs by more than 10 points.
+  shallow: false
+- id: fillA-17
+  title: Overall WER of 7% hides a 25-30% error on the ~40 words the questions depend on ('quit', 'stuck', 'skip', boss and item names), because no keyword error rate over a question lexicon is measured
+  level: L4
+  cell:
+    stage: transcription
+    data-element: transcript
+    question-shape: fits-an-option
+    time-and-change: first-game-onboarded
+    correctness-failure: transcription-hallucination-propagated
+  object: Step 2 transcript; Step 3 options written per game target
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. A new game is onboarded; the vendor or an internal check reports 7% WER on general speech. The tutorial-churn options hinge on a short lexicon of churn verbs and game nouns, which ASR misses at a higher rate.
+  consequence: The pipeline is cleared as 'transcription is fine' while the words that decide 'expressed quit intent' and 'confused by the Warden' are wrong in about 1 of 4 mentions.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"The transcript is run through a fixed set of questions with options, written per game target.\" -- the words those questions depend on are a small lexicon whose transcription accuracy is not measured on its own."
+  already_specified: false
+  proposed: Build a per-game lexicon from the question and option text (~40 terms); report keyword recall and precision on reference minutes as a separate gate from WER.
+  shallow: false
+- id: fillA-18
+  title: Transcription model upgrade is accepted on an English-only WER check (6% to 5%) while Portuguese moves from 11% to 17%, because no per-language reference set gates the switch
+  level: L4
+  cell:
+    stage: transcription
+    data-element: transcript
+    time-and-change: transcription-model-upgraded
+    speech-shape: non-english
+    recovery-action: backfill-after-model-upgrade
+    transcription-subsystem: transcription-model-version-differs-across-videos
+  object: Step 2 transcript; transcription-model-version
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. The team swaps ASR versions after a check on 2 hours of English audio and backfills 50,000 videos. Brazilian sessions are 20% of the table.
+  consequence: Portuguese cohort answers degrade after the backfill and the year-over-year Brazil frustration rate drops 6 points; the drop is reported as a product effect.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"latency and cost limits per query, languages\" -- languages are unspecified, so no per-language check exists before an ASR change."
+  already_specified: false
+  proposed: Gate any ASR change on per-language reference sets (minimum 30 minutes each); block the backfill for a language whose WER rises by more than 2 points.
+  shallow: false
+- id: fillA-19
+  title: Two human transcribers of the same 30 reference minutes disagree by ~6% WER on fillers, profanity, game names and '[laughs]' tags because no transcription style guide exists
+  level: L3
+  cell:
+    stage: transcription
+    data-element: transcript
+    speech-shape: emotional-nonverbal-only (sighs, laughs, swearing-masked)
+    transcription-subsystem: profanity-masked-by-vendor
+    correctness-failure: transcription-hallucination-propagated
+  object: Step 2 transcript; Unspecified 'What a transcript contains'
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. When reference transcripts are first commissioned, transcriber A writes 'f***' and '[sigh]', transcriber B writes the full word and omits the sigh; neither has a rule for 'Xal'tharok'.
+  consequence: Human-to-human disagreement sets a floor of about 6% WER, so an ASR vendor at 5% vs 8% cannot be ranked, and nonverbal tags that the frustration questions depend on are scored inconsistently.
+  p_typical: 0.02
+  grounded: quote
+  evidence: What a transcript contains (speech only, on-screen text, events)
+  already_specified: false
+  proposed: Write a reference style guide (profanity verbatim, nonverbal tag list, glossary spelling); double-transcribe 10% and report inter-transcriber WER as the floor.
+  shallow: false
+- id: fillA-20
+  title: The same ASR output scores 9% or 14% WER depending on whether fillers ('um', 'uh'), casing, punctuation and numerals ('three' vs '3') are normalised, and no scoring normalisation is fixed
+  level: L4
+  cell:
+    stage: transcription
+    data-element: transcript
+    time-and-change: transcription-model-upgraded
+    transcription-subsystem: transcription-model-version-differs-across-videos
+    speech-shape: continuous-think-aloud
+  object: Step 2 transcript; WER scorer
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. Two engineers compute WER for the same vendor on the same 2 hours with different text normalisers.
+  consequence: A vendor comparison picks whichever vendor happens to match the normaliser; a WER trend over a year shifts the day someone edits the scorer, with no change in transcripts.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Fix and version one normaliser (fillers kept, case and punctuation stripped, numerals expanded); store normaliser_version with every WER figure.
+  shallow: false
+- id: fillA-21
+  title: WER is undefined on a reference with 0 words, so the ASR's invented text on silent or music-only minutes (about 30% of sampled videos) is never counted; no insertions-per-silent-minute metric exists
+  level: L4
+  cell:
+    stage: transcription
+    data-element: transcript
+    speech-shape: silent-player
+    transcription-subsystem: hallucinated-text-on-silence-or-music
+    correctness-failure: transcription-hallucination-propagated
+  object: Step 2 transcript; silent-player videos
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. A reference sample includes silent and music-only minutes; WER divides by reference word count, so those minutes are excluded or score 0/0.
+  consequence: The figure that would show 'Thanks for watching'-style inventions on silence, the text that becomes confident answers for silent players, is the one the metric cannot see.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"Each video is converted to a transcript.\" -- a transcript of a silent minute should be empty and no metric checks that it is."
+  already_specified: false
+  proposed: Report insertions per silent or music-only minute as a separate metric with a threshold (for example under 1 word per 10 minutes).
+  shallow: false
+- id: fillA-22
+  title: WER computed only over segments the vendor returned excludes the low-confidence segments it dropped, so a whispering player's 40 dropped seconds count as 0 errors
+  level: L4
+  cell:
+    stage: transcription
+    data-element: transcript
+    speech-shape: whispering
+    transcription-subsystem: low-confidence-segments-dropped-silently
+    correctness-failure: transcription-hallucination-propagated
+  object: Step 2 transcript; vendor segment output
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. An engineer aligns ASR segments to reference segments by timestamp and scores matched pairs only; reference speech with no ASR segment is left out of the denominator.
+  consequence: Deletion errors, the dominant error for whispering and quiet players, vanish from the measured WER, so the error is reported lowest for the players whose speech is most often lost.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Score WER over the full reference timeline, counting reference words with no ASR output as deletions; report deletion rate separately.
+  shallow: false
+- id: fillA-23
+  title: "No study maps transcript error to answer error per question: 'completed the tutorial' may hold at 25% WER while 'said the word boring' flips at 10%, so there is no per-question WER threshold for nulling answers"
+  level: L4
+  cell:
+    stage: transcription
+    data-element: transcript
+    question-shape: fits-an-option
+    correctness-failure: confident-no-evidence
+    recovery-action: skip-and-mark-unknown
+  object: Step 3 fixed question set; Step 2 transcript
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. Videos arrive with different transcript quality; every question is extracted regardless of estimated error.
+  consequence: Answers from a 30%-WER video are stored with the same weight as from a 5% video for every question, including the lexical questions that break first.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"The transcript is run through a fixed set of questions with options, written per game target.\" -- each question tolerates a different transcript error and none has a stated tolerance."
+  already_specified: false
+  proposed: Inject synthetic word errors at 5/10/20/30% into reference transcripts, re-extract, and record per question the WER at which accuracy drops 10 points; null that question above its threshold.
+  shallow: false
+- id: fillA-24
+  title: "ASR error is measured per whole video, so the higher error in the first and last 20 seconds of each 15-minute video (context reset, words cut at 15:00) is averaged away"
+  level: L4
+  cell:
+    stage: transcription
+    data-element: transcript
+    transcription-subsystem: sentence-cut-at-15min-boundary
+    session-shape: 5-20-videos
+    question-shape: answer-spans-videos
+  object: Step 1 15-minute cap; Step 2 transcript
+  situation: No transcript-quality-measurement step (reference transcripts, WER per segment) exists. A 10-video session has 20 boundary windows of 20 s each (about 7 minutes of 150); ASR restarts without prior context at each one.
+  consequence: A 7% video-level WER can hide 20%+ at boundaries, where quit statements at the end of a video often fall; position-in-video error is never reported.
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "\"A session can be n hours; each video is capped at 15 minutes, so one session is many videos.\" -- every cut is a point where ASR restarts and its error there is not measured separately."
+  already_specified: false
+  proposed: Report WER by position in video (first 20 s, middle, last 20 s) on reference sessions with at least 5 videos.
+  shallow: false
+- id: fillA-25
+  title: Rows with extractor confidence under 0.6 (about 8% of 4,000 rows for a 500-player cohort) are written as 'complete' and queryable at once; no review queue holds them
+  level: L3
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    data-element: answer-confidence
+    correctness-failure: confident-no-evidence
+    latency: ingest-to-queryable (hours or days after session)
+  object: Step 3 'The answers form a structured table per video.'
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. Extraction emits about 320 low-confidence rows for a 500-player cohort; they enter the table at the same moment as the high-confidence rows.
+  consequence: The chatbot's first cohort answer, usually the one a studio pastes into a deck, includes every uncertain row; a 0.55 'quit because controls' counts like a 0.95 one.
+  p_typical: 0.06
+  grounded: inferred
+  evidence: "\"The answers form a structured table per video.\" -- rows go straight from extraction into the table with no review state."
+  already_specified: false
+  proposed: Route rows under a confidence threshold to a review queue; keep them out of cohort answers (or count them in an 'unreviewed' line) until reviewed or 72 h pass.
+  shallow: false
+- id: fillA-26
+  title: "'Other' answers (up to 30-40% of rows on a new game) reach the chatbot with no human sample read to name the hidden causes, so the option list is never revised from them"
+  level: L3
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    data-element: option
+    correctness-failure: other-option-overused
+    question-shape: fits-no-option
+  object: Step 3 'fixed set of questions with options'; 'Other' option
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. On a new game, 'Why did the player leave the tutorial?' returns Other for 140 of 400 videos; no person reads 20 of them to find that 60 are the same soft-lock at the map screen.
+  consequence: The studio's top quit reason sits inside 'Other' for weeks; the question author has no input for a new option except studio complaints.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "\"The question set is small, so most of what is in the video and transcript is never captured.\" -- the rows that fall outside the options are where the uncaptured content shows up, and nobody reads them."
+  already_specified: false
+  proposed: Review a weekly sample of 20 'Other' rows per question per game; propose new options when 5 or more share a cause.
+  shallow: false
+- id: fillA-27
+  title: A spoken self-harm statement in a transcript the extraction vendor refused is never seen by a human, so a genuine disclosure (vs a tutorial joke) has no escalation path
+  level: L3
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    speech-shape: profanity-or-slang
+    data-element: utterance
+  object: Step 2 transcript; extraction-prompt vendor refusal
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. A player says 'honestly I want to die, not because of the game' in video 3; the vendor refuses the transcript, the row is mapped to Other or failed, and no person reads it.
+  consequence: A possible safeguarding case among recruited playtesters (possibly a minor) is left to a model filter; there is no owner, contact rule or response time.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Send vendor-refused transcripts to a trained human reviewer within 24 h with a written escalation rule (contact moderator, provide helpline info) separate from answer coding.
+  shallow: false
+- id: fillA-28
+  title: Rows where the parser repaired 'B or C' to B, or mapped option text back to a letter, carry no repaired flag, so the 3-5% of guessed rows are never sampled for review and look identical to clean picks
+  level: L4
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    data-element: answer
+    correctness-failure: hallucinated-answer
+    question-shape: fits-two-options
+  object: Answers table per video (Step 3); extraction output parser
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. The parser applies fallback rules (first letter wins, fuzzy text match) to about 150 of 4,000 outputs; the stored row holds only the final option id.
+  consequence: A reviewer, if one existed, could not find the rows most likely to be wrong; cohort counts include guessed picks with no way to exclude them.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"The answers form a structured table per video.\" -- the stored row has no field for how the answer was parsed."
+  already_specified: false
+  proposed: Store parse_status (clean | repaired | fallback) per row; review 100% of repaired rows for the first 2 weeks of a game, then 10%.
+  shallow: false
+- id: fillA-29
+  title: No sampling rate is defined for human checks; a flat 2% sample of 4,000 rows (80 rows) contains on average 0-1 rows of a 1%-prevalence option such as 'soft-locked at step 4'
+  level: L4
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    data-element: answer
+    scale: 500-players
+    correctness-failure: hallucinated-answer
+  object: Answers table per video (Step 3)
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. If a uniform spot-check is added, rare options get almost no reviewed rows; the 40 rows labelled 'soft-locked' are all unchecked.
+  consequence: The rare options that drive tutorial fixes are the least verified; a 50% false-positive rate on 'soft-locked' would pass a 95%-agreement spot-check.
+  p_typical: 0.03
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: "Stratify the sample by option: at least 10 reviewed rows per option per game per month, plus 2% uniform."
+  shallow: false
+- id: fillA-30
+  title: No reviewer role is named, and JEV ops reads English only, so Japanese and Portuguese rows (e.g. 120 of 500 sessions) would publish unreviewed even if a 2% check existed
+  level: L3
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    speech-shape: non-english
+    data-element: answer
+    correctness-failure: hallucinated-answer
+  object: Unspecified 'languages'; answers table per video (Step 3)
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. A studio with JP and BR cohorts goes live; the people who could do a spot-check read English only, and nobody is assigned for other languages.
+  consequence: Non-English rows, where ASR and option mapping fail most, get the least checking; the per-country comparison has no reviewed rows on one side.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"latency and cost limits per query, languages\" -- languages are unspecified, so reviewer language coverage is not planned."
+  already_specified: false
+  proposed: Name the reviewer per game and per language before go-live (studio UX researcher or contracted native reviewer); block publication of a language with no reviewer.
+  shallow: false
+- id: fillA-31
+  title: Nothing blocks publication when spot-check disagreement on one question jumps after a game update (e.g. 'stuck at step 3' from 10% to 35% in week 12); rows keep flowing to the chatbot
+  level: L4
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: skip-and-mark-unknown
+    time-and-change: game-update-changes-tutorial
+    data-element: question
+    correctness-failure: stale-after-prompt-change
+  object: Step 3 fixed question set per game target; answers table
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. The game patch reorders tutorial steps; the question still names 'step 3'; a reviewer, if present, would see the disagreement rise but has no power to hide the question.
+  consequence: For the weeks until someone notices, every 'stuck at step 3' cohort answer describes a different step; the studio acts on it.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"The transcript is run through a fixed set of questions with options, written per game target.\" -- per-game questions can go out of date and no gate stops their answers."
+  already_specified: false
+  proposed: Per question per game, compute weekly reviewer disagreement; above 25%, set the question to 'held' and have the chatbot answer 'held for review since <date>'.
+  shallow: false
+- id: fillA-32
+  title: Answer rows carry no review_state (unreviewed, sampled-agreed, corrected), so the chatbot quotes an unreviewed 0.55-confidence row as evidence in the same voice as a human-confirmed one
+  level: L3
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    data-element: answer
+    studio-question-type: quote-me-evidence
+    chatbot-response-behaviour: answers-correctly
+  object: Step 4 chatbot answering from the table
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. Studio asks 'show me players who quit because of the controls'; 12 rows match, 3 of them reviewed and agreed, 9 never seen by a person.
+  consequence: The studio cannot tell which quotes a person has checked; a disputed row cannot be marked corrected and the dispute repeats on re-ask.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "\"A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast.\" -- the table has no field saying which rows a person has checked."
+  already_specified: false
+  proposed: Add review_state and reviewed_at per row; the chatbot prints '3 of 12 human-checked' on any evidence list.
+  shallow: false
+- id: fillA-33
+  title: If a review hold is added, a studio asking 2 hours after a playtest sees only the 60% of rows already reviewed, and no rule says whether the bot answers on reviewed rows, all rows, or waits
+  level: L3
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: skip-and-mark-unknown
+    latency: ingest-to-queryable (hours or days after session)
+    studio-question-type: cohort-count
+    fast-path-dependency: precomputed-aggregate-exists
+  object: Constraints 'Answering a studio's question must be fast.'
+  situation: "No human-spot-check-before-queryable step exists between extraction and the answers table. 200 sessions played at 14:00; extraction finishes by 15:30; reviewers clear 60% by 16:00 when the producer asks for the tutorial quit rate."
+  consequence: Answering on reviewed rows biases toward easy, high-confidence rows; answering on all rows makes the review hold cosmetic; waiting breaks the 'fast' constraint. Each choice gives a different number.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"Answering a studio's question must be fast.\" -- a human step before publication adds hours that the constraint does not budget."
+  already_specified: false
+  proposed: "State the rule: answer on all rows with a line '120 of 200 reviewed; reviewed-only rate = X%', and store which rule produced each answer."
+  shallow: false
+- id: fillA-34
+  title: A reviewer shown the model's option before watching agrees ~90% of the time vs ~70% blind, so a spot-check that displays the answer reports inflated accuracy
+  level: L4
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    data-element: answer
+    correctness-failure: confident-no-evidence
+  object: Answers table per video (Step 3); review UI
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. When a spot-check tool is built, the quickest design shows the transcript with the model's pick highlighted and an 'agree / change' button.
+  consequence: Anchoring lifts measured agreement by about 20 points; the go/no-go threshold is passed on agreement that is partly the reviewer copying the model.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Review blind on 50% of the sample (reviewer picks first, then sees the model); report blind agreement as the accuracy figure.
+  shallow: false
+- id: fillA-35
+  title: A reviewer's correction of 12 rows on Tuesday does not recompute the session rollup or the cached tutorial-churn aggregate, so the chatbot keeps citing the pre-review number
+  level: L3
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    fast-path-dependency: precomputed-aggregate-exists
+    data-element: cached-aggregate
+    correctness-failure: stale-after-prompt-change
+  object: Step 4 fast answer path; precomputed aggregates
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. Once corrections exist, they update per-video rows only; session-level answers and cached cohort aggregates were computed at ingest and have no dependency on review edits.
+  consequence: The studio sees '23% quit at step 2' before and after the review that moved 12 rows; the reviewer's work changes nothing the studio reads.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast.\" -- fast answers come from precomputed state that a row edit does not refresh."
+  already_specified: false
+  proposed: Treat a review correction as a row write that invalidates the session rollup and every cached aggregate containing that row.
+  shallow: false
+- id: fillA-36
+  title: Consent text covers automated processing and a studio chatbot but not JEV staff or a labelling vendor watching player video, so a human spot-check step needs re-consent for 500 players
+  level: L3
+  cell:
+    stage: answers-table
+    processing-status: complete
+    recovery-action: manual-override-answer
+    data-element: consent-record
+  object: Step 1 'A player's gameplay session is captured as video.'; consent record
+  situation: No human-spot-check-before-queryable step exists between extraction and the answers table. Adding human review means people outside the studio watch face, voice and home background; the consent form names only automated analysis.
+  consequence: Review of past sessions is blocked or done without consent; a vendor reviewer in another country adds a cross-border transfer the player never agreed to.
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Add human review (named roles, region) to the consent text before the review step ships; mark sessions without it as automated-only.
+  shallow: false
+- id: fillA-37
+  title: Post-session answer 'Would you keep playing? (1-5)' sits in playtest ops' survey export and is never joined, so 'how many would not continue?' is answered from transcript quit-intent alone (12%) while 31% answered 1-2
+  level: L4
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: player
+    correctness-failure: confident-no-evidence
+    scale: 500-players
+  object: Step 4 chatbot answers 'from that table'; session row
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. The studio asks to segment tutorial confusion by players who said they would not continue; the table has no self-report field, so the bot uses 'expressed quit intent' from the transcript.
+  consequence: The bot reports 12% likely churners; the survey the same studio paid for says 31%. The two numbers reach the same deck with no link between them.
+  p_typical: 0.05
+  grounded: inferred
+  evidence: "\"A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast.\" -- anything not in that table, such as survey answers, is outside what the bot can use."
+  already_specified: false
+  proposed: Join survey responses to the session row by player id and expose them as segment fields; show self-report next to extracted intent.
+  shallow: false
+- id: fillA-38
+  title: Self-rated tutorial clarity (1-7) from the questionnaire is not joined, so 'silent but confused' players (silent in transcript, clarity 1-3) cannot be found or counted
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: player
+    speech-shape: silent-player
+    correctness-failure: null-treated-as-no
+  object: Step 2 transcript; session row
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. In a 500-player cohort, about 150 say little; 40 of them rated clarity 1-3 on the survey. Their per-video answers read 'no confusion'.
+  consequence: "'Find players who were confused' returns talkers only; the survey that would show the silent-confused group exists but is in another file."
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"the transcript alone is not enough; what is on screen is largely lost.\" -- for silent players the survey is the remaining signal and it is not joined."
+  already_specified: false
+  proposed: Join survey clarity and confusion items; add a 'self-report vs transcript disagree' flag per session.
+  shallow: false
+- id: fillA-39
+  title: Screener field 'hours per week in mobile strategy games' is not joined, so 'do experienced strategy players churn less in the tutorial?' is answered from the ~15% of players who mention another game aloud
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: cohort
+    correctness-failure: wrong-denominator
+    chatbot-response-behaviour: answers-from-general-game-knowledge
+  object: Unspecified 'who at the studio asks and what they ask'; recruitment screener
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. Recruitment screened 500 players on genre hours (0, 1-5, 6-15, 15+); the bot has only transcript mentions such as 'this is like Clash Royale' for 75 players.
+  consequence: Experience segments are built from 75 self-mentioners, or the bot answers from genre knowledge; the screener's 500 values are unused.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"who at the studio asks and what they ask\" -- a studio asking by player experience is unplanned and the screener data is not joined."
+  already_specified: false
+  proposed: Import screener fields as session attributes at upload; list them in 'what can you answer'.
+  shallow: false
+- id: fillA-40
+  title: Screener age band (18-24, 25-34, 35+) is not joined, so 'segment tutorial churn by age' gets either a refusal or a guess from voice and slang
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: player
+    chatbot-response-behaviour: invents-number
+    correctness-failure: hallucinated-answer
+  object: Step 4 chatbot; recruitment screener
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. The studio's target is 25-34; age band was collected for all 500 at recruitment and sits in the ops tracker.
+  consequence: The bot either refuses an answerable question or infers age from voice ('sounds young'), giving a number with no basis that the studio may use for ad targeting.
+  p_typical: 0.04
+  grounded: inferred
+  evidence: "\"A chatbot for the gaming studio answers the studio's questions from that table, so that a question over, say, 500 players is fast.\" -- age is not in that table even though it was collected at recruitment."
+  already_specified: false
+  proposed: Join age band as a session attribute; forbid the bot from inferring age from voice or speech.
+  shallow: false
+- id: fillA-41
+  title: Survey rows are keyed by tester email and sessions by pseudonymous player_id with no mapping table, so any join is by name or date and mis-matches 2 same-day testers named 'Alex'
+  level: L4
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: player
+    correctness-failure: right-answer-wrong-player
+    session-shape: same-player-multiple-sessions
+  object: Unspecified 'how videos of one session are linked'; survey export
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. An analyst tries a manual join in a spreadsheet; 6 of 500 rows collide on first name and date, and players with two sessions have one survey.
+  consequence: Self-report attached to the wrong player contradicts the transcript and is treated as a finding; the join cannot be audited.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"how videos of one session are linked\" -- linking keys across sources are not defined, including survey to session."
+  already_specified: false
+  proposed: Issue the pseudonymous player_id at recruitment and require it in the survey link; store survey_id on the session row.
+  shallow: false
+- id: fillA-42
+  title: Players who quit in the tutorial skip the post-session questionnaire more often (e.g. 55% response vs 95% for completers), so a joined self-report segment over-represents completers
+  level: L4
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: cohort
+    correctness-failure: wrong-denominator
+    batch-failure-mix: some-sessions-failed-in-cohort
+  object: Step 3 target 'churn in the tutorial'; survey response
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. Once joined, 'would keep playing' is missing for 45% of tutorial quitters and 5% of completers.
+  consequence: A self-report segment such as 'players who disliked the tutorial' is drawn mostly from completers; the churners the target is about are underweighted, with no response-rate line in the answer.
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "\"The targets are mostly detecting churn in the tutorial and just after it.\" -- the players of interest are the ones least likely to answer a survey."
+  already_specified: false
+  proposed: Store survey_response_status per session; print response rate by outcome with any self-report segment.
+  shallow: false
+- id: fillA-43
+  title: Studio telemetry holds per-session FPS and load times, but with no join 'do players on low-end Android devices churn more in the tutorial?' is answered from players who said 'laggy' aloud
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: device-platform
+    correctness-failure: confident-no-evidence
+    speech-shape: continuous-think-aloud
+  object: Unspecified 'whether game telemetry is joined'
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. Telemetry shows 90 of 500 sessions under 20 FPS in the tutorial; 25 players mentioned lag. The bot segments on the 25.
+  consequence: Low-end churn is understated by about 3x; the studio does not fund a performance fix for the tutorial scene.
+  p_typical: 0.04
+  grounded: quote
+  evidence: whether game telemetry is joined
+  already_specified: false
+  proposed: Join per-session device performance telemetry (median FPS, load time) as segment fields keyed by session id.
+  shallow: false
+- id: fillA-44
+  title: "Telemetry event 'tutorial_step_3_start' at 14:32:10 UTC cannot be placed in video 3 of a session because video rows carry no wall-clock start and transcript timestamps reset per video"
+  level: L4
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: timestamp
+    session-shape: 5-20-videos
+    capture-integrity: clock-drift-between-videos
+  object: Unspecified 'whether game telemetry is joined'; Step 1 15-minute videos
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. A telemetry join is attempted to tie step events to utterances; per-video wall-clock starts are not stored and the capture machine clock is 40 s off the game server.
+  consequence: Utterances cannot be tied to the step they were said in; step-level segmentation from telemetry and transcript disagree by a step whenever an utterance is within 40 s of a transition.
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"whether game telemetry is joined\" -- a join also needs both clocks on one timeline, which no field provides."
+  already_specified: false
+  proposed: Store wall-clock start per video from an NTP-synced clock and an offset to the game server time measured at session start.
+  shallow: false
+- id: fillA-45
+  title: Once joined, a player who rated 'would keep playing' 5/5 but whose transcript says 'expressed quit intent' has no precedence rule, so the bot reports whichever source its query read
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: player
+    chatbot-response-behaviour: differs-on-re-ask
+    correctness-failure: inconsistent-across-videos
+  object: Step 4 chatbot; future joined survey field
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. After a join, 70 of 500 players disagree between self-report and extracted intent; text-to-SQL picks one column or the other per question wording.
+  consequence: "'How many players are at risk?' returns 64 on one phrasing and 98 on another; the disagreement itself, the most useful finding, is never shown."
+  p_typical: 0.02
+  grounded: speculative
+  evidence: none
+  already_specified: false
+  proposed: Define per question which source is primary; report disagreement counts as their own answer ('70 players said they'd keep playing but voiced quitting').
+  shallow: false
+- id: fillA-46
+  title: Screener 'Have you played this game before?' (yes for e.g. 40 of 500) is not joined, so players who already know the tutorial are pooled with first-timers in 'segment by build'
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: player
+    session-shape: tutorial-started-before-recording
+    correctness-failure: mixed-version-aggregation
+  object: Step 3 tutorial-churn target; recruitment screener
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. 40 recruits played the soft-launch build at home; their tutorials take half as long and they rarely voice confusion.
+  consequence: Segment-by-build shows the newer build's tutorial as clearer when that build's cohort simply had more prior players (25 vs 15).
+  p_typical: 0.03
+  grounded: inferred
+  evidence: "\"The targets are mostly detecting churn in the tutorial and just after it.\" -- prior play changes tutorial behaviour and the screener records it outside the table."
+  already_specified: false
+  proposed: Import prior-exposure from the screener and default tutorial-churn segments to first-time players.
+  shallow: false
+- id: fillA-47
+  title: Post-session free-text answers ('What confused you?') are never run through the fixed question set, though at ~50 words each they cost under 1% of a transcript to extract and name causes the player never said aloud
+  level: L3
+  cell:
+    stage: build-and-metadata-tagging
+    studio-question-type: segment-by-metadata (device, country, build)
+    data-element: player
+    question-shape: perceptual-cause-not-verbalised
+    correctness-failure: perceptual-cause-attributed-to-verbal-option
+  object: Step 3 fixed question set; Constraint 'Ingestion time and cost are not a concern.'
+  situation: No join exists to the post-session survey / recruitment screener that playtest ops already collects. A player who was silent during play writes 'didn't notice the red door was the exit' in the survey; the transcript-based answer says 'instructions unclear'.
+  consequence: A visual cause the transcript lost is recoverable from text already collected, at almost no ingest cost, and is not used.
+  p_typical: 0.02
+  grounded: inferred
+  evidence: "\"Ingestion time and cost are not a concern.\" -- extracting survey free text costs little and is not done."
+  already_specified: false
+  proposed: Run the question set over survey free text as a second source; store answer_source (transcript | survey) per row.
+  shallow: false
